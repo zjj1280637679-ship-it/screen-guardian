@@ -27,6 +27,10 @@ CaptureAdapter
   capture_window(request)
   analyze_image(request)
   preprocess_image(request)
+  list_audio_devices(request)
+  record_audio(request)
+  analyze_audio(request)
+  extract_audio_track(request)
 ```
 
 All adapters should return normalized result fields:
@@ -65,16 +69,21 @@ Feature flags are the performance boundary. Disabled modules should not import o
 
 Image narration routes can point to a user-provided API or a future Codex subagent handoff. Video narration routes are kept as prior interfaces because practical video-capable models are relatively few; Screen Guardian records provider, model, input expectations, and settings without forcing a provider choice.
 
+Audio capture and extraction use the same approach. Microphone recording, system-loopback recording, WAV analysis, and video audio extraction are optional modules. They can help diagnose whether a program emitted sound, whether a speaker/output path is silent, or whether a video should be summarized through its audio track.
+
 ## Planned Adapters
 
 | Adapter | Role | Why optional |
 | --- | --- | --- |
 | `ffmpeg-gdigrab` | Short screen recording and video fallback | Useful but heavier than screenshots |
+| `ffmpeg-audio-extract` | Extract audio tracks from videos | Useful for lecture/video understanding but requires FFmpeg |
+| `sounddevice` | Microphone and best-effort Windows loopback recording | Useful for sound diagnostics but requires optional PortAudio/sounddevice dependencies |
 | `screen-capture-lite` | High-frequency capture and frame-diff callbacks | Better performance, native build cost |
 | `native-wgc` | Modern Windows Graphics Capture path | Fast on supported systems, fragile on unsupported ones |
 | `ocr-adapter` | Convert text-heavy screenshots into text | Valuable but should not be mandatory |
 | `vision-summary-adapter` | Convert image files into compact descriptions | Useful for context pressure, but model/provider choice should stay modular |
 | `video-summary-adapter` | Convert videos, keyframes, or image sequences into compact descriptions | Useful but provider choices are few and should stay explicit |
+| `audio-transcription-adapter` | Convert recordings or extracted audio into text or summaries | Useful for lectures, explanations, diagnostics, and program sound-effect tests |
 | `route-bridge` | Execute prepared judgment/OCR/narration requests | Keeps model choice, temperature, quality, and follow-up behavior outside the capture core |
 | `external-backend` | User-provided local capture service | Lets advanced users bring their own backend |
 

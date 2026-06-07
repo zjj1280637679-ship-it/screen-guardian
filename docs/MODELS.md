@@ -20,6 +20,10 @@ Capability is split into small modules:
 - OCR routes
 - image narration routes
 - video narration routes
+- audio capture
+- audio analysis
+- audio transcription routes
+- video audio extraction
 - external API handoff
 - Codex subagent handoff
 
@@ -37,6 +41,9 @@ Inactive modules should behave like this:
 - no heuristic image analysis unless requested and `image_analysis` is active
 - no preprocessing unless `image_preprocess` is active
 - no model request file unless `model_request_envelopes` is active
+- no audio device probe or recording unless `audio_capture` is active
+- no WAV analysis unless `audio_analysis` is active
+- no FFmpeg extraction unless `video_audio_extract` is active
 - no OCR, external API, video narration, or subagent handoff unless a future adapter explicitly handles it
 
 ## Route Interfaces
@@ -53,6 +60,13 @@ Video narration providers are fewer, so Screen Guardian keeps a prior interface 
 - input can be a video file, keyframes, or an image sequence
 - settings can include detail, quality, temperature, keyframe policy, language, and token budget
 - execution remains outside the capture core until an adapter is added
+
+Audio is mapped the same way as images and video:
+
+- microphone or system-loopback recording is optional
+- local WAV analysis can detect likely silence, clipping, and basic audio energy
+- video files can expose audio by extracting a WAV track through optional FFmpeg
+- transcription and audio-summary routes can use prepared files, user APIs, local commands, or future Codex subagent handoff
 
 ## Runtime Bounds
 

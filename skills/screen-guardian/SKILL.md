@@ -27,6 +27,7 @@ Use this skill when the user asks to:
 - save captures to multiple local routes
 - register model/program routes or prepare narration/transcription request files
 - enable or disable optional feature modules so inactive features do not slow active capture
+- check optional audio capture support, record short WAV clips, analyze WAV files, or extract video audio tracks
 
 ## Safety defaults
 
@@ -37,6 +38,7 @@ Use this skill when the user asks to:
 - Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
 - Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
 - Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
+- Do not record audio unless the user asks for it. Prefer listing audio adapter/device status first.
 
 ## Tools
 
@@ -55,6 +57,10 @@ Prefer the `screen_guardian` MCP tools:
 - `set_display_name`
 - `apply_display_profile`
 - `list_adapters`
+- `list_audio_devices`
+- `record_audio`
+- `analyze_audio`
+- `extract_audio_track`
 - `list_displays`
 - `list_windows`
 - `capture_screen`

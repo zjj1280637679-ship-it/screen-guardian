@@ -1,12 +1,12 @@
 # Workflow Interface
 
-Screen Guardian `0.1.9` keeps the workflow layer flexible without turning the plugin into a background service.
+Screen Guardian `0.1.10` keeps the workflow layer flexible without turning the plugin into a background service.
 
 ## Feature Flags
 
 Use `set_feature_flags` to enable, disable, or reset optional capability modules. `get_runtime_settings` returns the current flags and a catalog explaining what inactive features avoid doing.
 
-The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, OCR, API calls, video narration, or subagent handoff.
+The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, audio probing, recording, FFmpeg extraction, OCR, API calls, video narration, or subagent handoff.
 
 ## Local Cache
 
@@ -50,6 +50,10 @@ Current default limits:
 - `capture_scale_max`: `1`
 - `jpeg_quality_min`: `1`
 - `jpeg_quality_max`: `95`
+- `audio_duration_seconds_max`: `120`
+- `audio_sample_rate_max`: `48000`
+- `audio_channels_max`: `2`
+- `audio_extract_duration_seconds_max`: `null`
 
 Use `null`, `none`, or `unbounded` to remove a configurable bound where the underlying capture or encoder still makes sense.
 
@@ -75,6 +79,8 @@ Use `set_extension_route` to register future routes for:
 - `ocr`
 - `vision_summary`
 - `video_summary`
+- `audio_summary`
+- `sound_diagnostics`
 - `transcription`
 - `custom`
 
@@ -96,6 +102,19 @@ Routes can also store `handoff_mode`:
 Image narration can use a user-provided API or a future Codex subagent handoff. Video narration has fewer practical providers, so Screen Guardian keeps a prior interface for video files, image sequences, and keyframes without selecting or installing a provider by default.
 
 Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_model_request` writes a local request envelope with the input file, prompt, follow-up questions, route prior, and merged settings. A later adapter, model bridge, or subagent can read that request and write a response.
+
+## Audio Capture And Extraction
+
+Audio follows the same optional interface as screenshots and video:
+
+- `list_audio_devices` can probe optional recording devices only when `audio_capture` is active.
+- `record_audio` can save short WAV clips from a microphone or best-effort Windows WASAPI loopback.
+- `analyze_audio` can inspect 16-bit PCM WAV files for duration, RMS, peak, likely silence, and clipping.
+- `extract_audio_track` can extract a WAV track from a video through optional FFmpeg when `video_audio_extract` is active.
+
+Useful cases include checking whether a program actually emitted sound, distinguishing silent output from a broken external speaker path, recording a user explanation, listening to lecture/video audio through a future transcription route, and testing program sound effects.
+
+Optional recording dependencies live in `scripts/optional-audio-requirements.txt`. Video audio extraction requires FFmpeg on `PATH`.
 
 ## Bounded Change Capture
 

@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.9` replaces separate product-weight thinking with optional capability flags: inactive features do not run optional work, while image/API/subagent and video narration routes can be kept as lightweight interfaces.
+Version `0.1.10` maps audio into the same optional capability model: microphone clips, system-loopback diagnostics, audio analysis, and video audio extraction stay inactive unless enabled, while transcription or narration routes can be prepared for APIs or subagents.
 
 ## Purpose
 
@@ -39,6 +39,9 @@ Screen Guardian treats that as the design problem: AI capability should not depe
 - Future OCR, video, or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
 - Users who want limits, storage paths, model settings, or workflow stages to be configurable instead of hard-coded.
 - Users who want one plugin where optional features can stay inactive without slowing the active capture path.
+- Audio debugging: checking whether sound is actually being emitted, whether an external speaker path is likely silent, or whether a program sound effect was produced.
+- Recording short explanations, lecture/video audio, or test-program sound effects for later transcription or narration.
+- Extracting an audio track from a video before sending it to an audio or transcription route.
 
 ## Compatibility adapter model
 
@@ -72,7 +75,7 @@ See [docs/NAMING.md](docs/NAMING.md) for details.
 
 Screen Guardian no longer needs separate lightweight/practical/heavy plugin variants. It is one compatibility-first plugin with optional capability flags.
 
-Inactive features should avoid optional work: no polling loop, no extra mirror copy, no heuristic image analysis, no preprocessing, no OCR bridge, no external API request, and no subagent handoff unless the user enables or explicitly calls that path.
+Inactive features should avoid optional work: no polling loop, no extra mirror copy, no heuristic image analysis, no preprocessing, no audio-device probe, no recording, no FFmpeg extraction, no OCR bridge, no external API request, and no subagent handoff unless the user enables or explicitly calls that path.
 
 See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
@@ -82,6 +85,10 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 - Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
 - Register judgment/OCR/narration/transcription routes for future adapters
 - Prepare model request files with prompt, questions, temperature, quality, and other settings
+- List optional audio devices when audio capture is enabled
+- Record short microphone or best-effort system-loopback WAV clips
+- Analyze WAV files for duration, RMS, peak, likely silence, and clipping
+- Extract WAV audio tracks from videos through optional FFmpeg
 - Read or set the local display-name profile
 - List compatibility adapters
 - List connected displays
@@ -119,6 +126,14 @@ python -m pip install --user -r scripts/requirements.txt
 ```
 
 The MCP server itself uses Node.js and has no npm dependencies.
+
+Optional audio recording uses:
+
+```powershell
+python -m pip install --user -r scripts/optional-audio-requirements.txt
+```
+
+Video audio extraction requires FFmpeg on `PATH`.
 
 ## Local test
 

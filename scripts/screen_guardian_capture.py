@@ -1,13 +1,16 @@
 import ctypes
 import ctypes.wintypes
+import array
 import copy
 import json
 import locale
 import math
 import os
 import shutil
+import subprocess
 import sys
 import time
+import wave
 from pathlib import Path
 
 
@@ -28,6 +31,10 @@ DEFAULT_LIMITS = {
     "capture_scale_max": 1,
     "jpeg_quality_min": 1,
     "jpeg_quality_max": 95,
+    "audio_duration_seconds_max": 120,
+    "audio_sample_rate_max": 48000,
+    "audio_channels_max": 2,
+    "audio_extract_duration_seconds_max": None,
 }
 
 DEFAULT_FEATURE_FLAGS = {
@@ -43,6 +50,10 @@ DEFAULT_FEATURE_FLAGS = {
     "ocr_routes": False,
     "image_narration_routes": False,
     "video_narration_routes": False,
+    "audio_capture": False,
+    "audio_analysis": True,
+    "audio_transcription_routes": False,
+    "video_audio_extract": False,
     "external_api_handoff": False,
     "codex_subagent_handoff": False,
 }
@@ -96,6 +107,22 @@ FEATURE_CATALOG = {
         "status": "interface",
         "cost_when_inactive": "No video model/API/subagent is invoked.",
     },
+    "audio_capture": {
+        "status": "interface",
+        "cost_when_inactive": "No sounddevice import, device probe, microphone recording, or loopback capture runs.",
+    },
+    "audio_analysis": {
+        "status": "implemented",
+        "cost_when_inactive": "No audio waveform analysis runs.",
+    },
+    "audio_transcription_routes": {
+        "status": "interface",
+        "cost_when_inactive": "No audio transcription model/API/subagent is invoked.",
+    },
+    "video_audio_extract": {
+        "status": "interface",
+        "cost_when_inactive": "No FFmpeg probe or video audio extraction runs.",
+    },
     "external_api_handoff": {
         "status": "interface",
         "cost_when_inactive": "No external API request is made.",
@@ -110,7 +137,9 @@ ROLE_FEATURES = {
     "ocr": "ocr_routes",
     "vision_summary": "image_narration_routes",
     "video_summary": "video_narration_routes",
-    "transcription": "video_narration_routes",
+    "audio_summary": "audio_transcription_routes",
+    "sound_diagnostics": "audio_analysis",
+    "transcription": "audio_transcription_routes",
 }
 
 DEFAULT_CONFIG = {
@@ -762,6 +791,16 @@ def write_metadata_sidecar(path, metadata, args):
     return str(metadata_path)
 
 
+def write_media_metadata_sidecar(path, metadata, args):
+    if not feature_enabled("workflow_metadata", args):
+        return ""
+    if not bool(args.get("write_metadata", True)):
+        return ""
+    metadata_path = Path(path).with_suffix(Path(path).suffix + ".meta.json")
+    write_json_file(metadata_path, metadata)
+    return str(metadata_path)
+
+
 def output_filename(args, fmt):
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     suffix = int((time.time() % 1) * 1000)
@@ -776,6 +815,26 @@ def output_filename(args, fmt):
         parts.append(source_label)
     parts.extend([timestamp, f"{suffix:03d}"])
     return "-".join(parts) + "." + fmt
+
+
+def mirror_media_file(output_path, metadata, args):
+    _primary, mirror_dirs = output_routes(args)
+    mirror_paths = []
+    mirror_metadata_paths = []
+    for mirror_dir in mirror_dirs:
+        mirror_dir = ensure_cache_dir(mirror_dir)
+        mirror_path = mirror_dir / Path(output_path).name
+        shutil.copy2(output_path, mirror_path)
+        mirror_paths.append(str(mirror_path))
+        if feature_enabled("workflow_metadata", args) and bool(args.get("write_metadata", True)):
+            mirror_metadata = copy.deepcopy(metadata)
+            mirror_metadata["path"] = str(mirror_path)
+            mirror_metadata.setdefault("storage", {})["primary_path"] = str(output_path)
+            mirror_metadata["storage"]["is_mirror"] = True
+            mirror_metadata_path = mirror_path.with_suffix(mirror_path.suffix + ".meta.json")
+            write_json_file(mirror_metadata_path, mirror_metadata)
+            mirror_metadata_paths.append(str(mirror_metadata_path))
+    return mirror_paths, mirror_metadata_paths
 
 
 def save_capture_image(image, source, libs, args):
@@ -1031,6 +1090,140 @@ def image_difference_score(a, b, libs):
     return sum(stat.mean) / 3.0
 
 
+def import_audio_libs():
+    try:
+        import sounddevice as sd
+
+        return {"sounddevice": sd}, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def audio_adapter_status(args=None):
+    args = args or {}
+    status = {
+        "id": "sounddevice",
+        "label": "SoundDevice optional audio capture",
+        "role": "audio_capture",
+        "available": False,
+        "dependencies": ["sounddevice", "numpy", "PortAudio"],
+        "capabilities": ["list_audio_devices", "record_microphone", "record_wasapi_loopback_best_effort"],
+        "feature_active": feature_enabled("audio_capture", args),
+        "compatibility_note": "Optional adapter. It is not imported until an audio tool probes or records.",
+    }
+    if not feature_enabled("audio_capture", args):
+        status["import_skipped"] = True
+        status["install_hint"] = "Enable audio_capture with set_feature_flags before probing or recording audio."
+        return status, None
+    libs, import_error = import_audio_libs()
+    status["available"] = import_error is None
+    if import_error:
+        status["import_error"] = import_error
+        status["install_hint"] = f"{sys.executable} -m pip install --user -r scripts/optional-audio-requirements.txt"
+    else:
+        status["version"] = getattr(libs["sounddevice"], "__version__", "unknown")
+    return status, libs
+
+
+def ffmpeg_status():
+    executable = shutil.which("ffmpeg")
+    return {
+        "id": "ffmpeg",
+        "label": "FFmpeg audio extraction",
+        "role": "video_audio_extract",
+        "available": bool(executable),
+        "executable": executable or "",
+        "capabilities": ["extract_audio_track", "pcm_wav"],
+        "install_hint": "Install FFmpeg and make ffmpeg available on PATH." if not executable else "",
+    }
+
+
+def audio_output_path(args, fmt="wav"):
+    output_dir = ensure_cache_dir(output_routes(args)[0])
+    merged = dict(args)
+    merged.setdefault("source_label", args.get("source_label") or "audio")
+    return output_dir / output_filename(merged, fmt)
+
+
+def audio_context_payload(args):
+    context = capture_context(args)
+    return {
+        "project": context["project"],
+        "workflow": context["workflow"],
+        "tags": context["tags"],
+        "note": context["note"],
+        "context_policy": context["context_policy"],
+        "marked_file_only": context["marked_file_only"],
+    }
+
+
+def analyze_wav_file(path, args=None):
+    args = args or {}
+    require_feature("audio_analysis", args)
+    threshold = float(args.get("silence_threshold", 0.01))
+    with wave.open(str(path), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        frames = wav.getnframes()
+        duration = frames / float(sample_rate or 1)
+        if sample_width != 2:
+            return {
+                "duration_seconds": round(duration, 3),
+                "channels": channels,
+                "sample_rate": sample_rate,
+                "sample_width": sample_width,
+                "analysis_limited": True,
+                "note": "Only 16-bit PCM WAV amplitude metrics are currently supported.",
+            }
+        total_samples = 0
+        sum_squares = 0.0
+        peak = 0
+        silent_samples = 0
+        chunk_frames = 4096
+        while True:
+            data = wav.readframes(chunk_frames)
+            if not data:
+                break
+            samples = array.array("h")
+            samples.frombytes(data)
+            if sys.byteorder != "little":
+                samples.byteswap()
+            for sample in samples:
+                value = abs(int(sample))
+                total_samples += 1
+                sum_squares += value * value
+                peak = max(peak, value)
+                if value / 32768.0 <= threshold:
+                    silent_samples += 1
+        rms = math.sqrt(sum_squares / total_samples) if total_samples else 0.0
+        rms_norm = rms / 32768.0
+        peak_norm = peak / 32768.0
+        silent_fraction = silent_samples / float(total_samples or 1)
+    likely_silent = rms_norm < threshold and peak_norm < threshold * 3
+    likely_clipping = peak_norm >= 0.98
+    return {
+        "duration_seconds": round(duration, 3),
+        "channels": channels,
+        "sample_rate": sample_rate,
+        "sample_width": sample_width,
+        "rms": round(rms_norm, 5),
+        "peak": round(peak_norm, 5),
+        "silent_fraction": round(silent_fraction, 4),
+        "likely_silent": likely_silent,
+        "likely_clipping": likely_clipping,
+        "diagnostic_hint": "No meaningful audio detected." if likely_silent else "Audio energy detected.",
+    }
+
+
+def write_wav(path, frames_bytes, sample_rate, channels):
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(int(channels))
+        wav.setsampwidth(2)
+        wav.setframerate(int(sample_rate))
+        wav.writeframes(frames_bytes)
+
+
 def args_with_region_from_flat(args):
     if args.get("region"):
         return dict(args)
@@ -1076,6 +1269,10 @@ def action_get_runtime_settings(args):
                 "capture_scale_max": "multiplier",
                 "jpeg_quality_min": "encoder quality",
                 "jpeg_quality_max": "encoder quality",
+                "audio_duration_seconds_max": "seconds",
+                "audio_sample_rate_max": "Hz",
+                "audio_channels_max": "channels",
+                "audio_extract_duration_seconds_max": "seconds",
             },
             "feature_flags": config.get("feature_flags", {}),
             "feature_catalog": FEATURE_CATALOG,
@@ -1188,9 +1385,9 @@ def normalized_route(args):
     if not route_id:
         raise ValueError("route id is required")
     role = str(args.get("role") or "vision_summary").strip().lower()
-    allowed_roles = ("judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom")
+    allowed_roles = ("judgment", "ocr", "vision_summary", "video_summary", "audio_summary", "sound_diagnostics", "transcription", "custom")
     if role not in allowed_roles:
-        raise ValueError("role must be judgment, ocr, vision_summary, video_summary, transcription, or custom")
+        raise ValueError("role must be judgment, ocr, vision_summary, video_summary, audio_summary, sound_diagnostics, transcription, or custom")
     settings = args.get("settings") or {}
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
@@ -1240,10 +1437,24 @@ def route_prior(role):
             "settings": ["language", "quality", "layout_mode"],
         },
         "transcription": {
-            "feature": "video_narration_routes",
+            "feature": "audio_transcription_routes",
             "input_types": ["audio", "video"],
             "handoff_modes": ["prepared_file", "external_api", "codex_subagent"],
             "settings": ["language", "temperature", "timestamps"],
+        },
+        "audio_summary": {
+            "feature": "audio_transcription_routes",
+            "input_types": ["audio", "extracted_audio"],
+            "handoff_modes": ["prepared_file", "external_api", "codex_subagent", "local_command"],
+            "settings": ["temperature", "quality", "max_tokens", "language", "timestamps"],
+            "note": "Audio summary routes can diagnose recordings, explain lectures, or describe program sound effects.",
+        },
+        "sound_diagnostics": {
+            "feature": "audio_analysis",
+            "input_types": ["audio"],
+            "handoff_modes": ["prepared_file", "local_command"],
+            "settings": ["silence_threshold", "rms_threshold", "clipping_threshold"],
+            "note": "Local diagnostics can detect silence, clipping, and basic energy before a model is used.",
         },
     }
     return priors.get(role, {"feature": "extension_routes", "input_types": ["file"], "handoff_modes": ["prepared_file"]})
@@ -1276,8 +1487,8 @@ def action_list_extension_routes(args):
             "ok": True,
             "routes": routes,
             "contract": {
-                "roles": ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
-                "settings_examples": ["temperature", "quality", "max_tokens", "detail", "language"],
+                "roles": ["judgment", "ocr", "vision_summary", "video_summary", "audio_summary", "sound_diagnostics", "transcription", "custom"],
+                "settings_examples": ["temperature", "quality", "max_tokens", "detail", "language", "timestamps", "keyframe_policy"],
                 "handoff_modes": ["prepared_file", "external_api", "codex_subagent", "local_command"],
                 "feature_flags": flags,
                 "execution": "Routes are registered only in the ultra-light model. External adapters can read prepared request files.",
@@ -1445,7 +1656,7 @@ def action_check(args):
             "pillow_version": getattr(libs["Image"], "__version__", "unknown"),
             "default_cache_dir": str(DEFAULT_CACHE_DIR),
             "active_cache_dir": str(get_cache_dir(args)),
-            "adapters": [status, window_adapter_status()[0]],
+            "adapters": [status, window_adapter_status()[0], audio_adapter_status(args)[0], ffmpeg_status()],
             "privacy": "Captures are saved locally only. No upload or long-term recording is performed by this plugin.",
         }
     )
@@ -1454,11 +1665,13 @@ def action_check(args):
 def action_list_adapters(args):
     mss_status, _libs = mss_adapter_status()
     window_status, _libs2 = window_adapter_status()
+    audio_status, _audio_libs = audio_adapter_status(args)
+    ffmpeg = ffmpeg_status()
     return write_json(
         {
             "ok": True,
             "selected": "auto",
-            "adapters": [mss_status, window_status],
+            "adapters": [mss_status, window_status, audio_status, ffmpeg],
             "contract": {
                 "request_adapter": "Use adapter='auto' unless a specific backend is needed.",
                 "stable_result_fields": [
@@ -1477,6 +1690,186 @@ def action_list_adapters(args):
             },
         }
     )
+
+
+def action_list_audio_devices(args):
+    probe = bool(args.get("probe", True))
+    status, libs = audio_adapter_status(args)
+    if not probe or not status.get("available"):
+        return write_json(
+            {
+                "ok": True,
+                "adapter": status,
+                "devices": [],
+                "note": "Audio device probing is optional and only runs when audio_capture is active.",
+            }
+        )
+    try:
+        sd = libs["sounddevice"]
+        raw_devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+        devices = []
+        for index, device in enumerate(raw_devices):
+            hostapi_index = int(device.get("hostapi", -1))
+            hostapi_name = hostapis[hostapi_index]["name"] if 0 <= hostapi_index < len(hostapis) else ""
+            devices.append(
+                {
+                    "index": index,
+                    "name": str(device.get("name", "")),
+                    "hostapi": hostapi_name,
+                    "max_input_channels": int(device.get("max_input_channels", 0)),
+                    "max_output_channels": int(device.get("max_output_channels", 0)),
+                    "default_samplerate": float(device.get("default_samplerate", 0)),
+                    "loopback_candidate": "wasapi" in hostapi_name.lower() and int(device.get("max_output_channels", 0)) > 0,
+                }
+            )
+        default_device = sd.default.device
+        return write_json({"ok": True, "adapter": status, "default_device": list(default_device), "devices": devices})
+    except Exception as exc:
+        return error(str(exc), adapter=status)
+
+
+def action_record_audio(args):
+    try:
+        require_feature("audio_capture", args)
+        status, libs = audio_adapter_status(args)
+        if not status.get("available"):
+            return error("Audio capture adapter is unavailable.", adapter=status)
+        limits = runtime_limits(args)
+        duration = float(args.get("duration_seconds", 5))
+        sample_rate = int(args.get("sample_rate", 44100))
+        channels = int(args.get("channels", 1))
+        if duration <= 0:
+            raise ValueError("duration_seconds must be greater than 0")
+        check_min_max(duration, None, limits.get("audio_duration_seconds_max"), "duration_seconds")
+        check_min_max(sample_rate, 1, limits.get("audio_sample_rate_max"), "sample_rate")
+        check_min_max(channels, 1, limits.get("audio_channels_max"), "channels")
+        source = str(args.get("source") or "microphone").lower()
+        loopback = bool(args.get("loopback", False)) or source in ("system", "system_loopback", "speaker", "output")
+        device = args.get("device")
+        sd = libs["sounddevice"]
+        extra_settings = None
+        if loopback:
+            if os.name != "nt" or not hasattr(sd, "WasapiSettings"):
+                return error("System loopback recording requires Windows WASAPI support in sounddevice.", adapter=status)
+            extra_settings = sd.WasapiSettings(loopback=True)
+            if device is None:
+                default_device = sd.default.device
+                if isinstance(default_device, (list, tuple)) and len(default_device) > 1:
+                    device = default_device[1]
+        frames = int(round(duration * sample_rate))
+        output_path = audio_output_path({**args, "source_label": args.get("source_label") or source}, "wav")
+        recording = sd.rec(frames, samplerate=sample_rate, channels=channels, dtype="int16", device=device, extra_settings=extra_settings)
+        sd.wait()
+        write_wav(output_path, recording.tobytes(), sample_rate, channels)
+        analysis = analyze_wav_file(output_path, args) if bool(args.get("analyze", False)) else skipped_analysis("audio analysis not requested")
+        metadata = {
+            "plugin": PLUGIN_NAME,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "type": "audio_recording",
+            "path": str(output_path),
+            "source": {"type": source, "loopback": loopback, "device": device, "adapter": status["id"]},
+            "format": "wav",
+            "duration_seconds": duration,
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "analysis": analysis,
+            "context": audio_context_payload(args),
+            "privacy": "Saved locally only.",
+        }
+        metadata_path = write_media_metadata_sidecar(output_path, metadata, args)
+        mirror_paths, mirror_metadata_paths = mirror_media_file(output_path, metadata, args)
+        return write_json(
+            {
+                "ok": True,
+                "path": str(output_path),
+                "metadata_path": metadata_path,
+                "mirror_paths": mirror_paths,
+                "mirror_metadata_paths": mirror_metadata_paths,
+                "source": metadata["source"],
+                "duration_seconds": duration,
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "analysis": analysis,
+                "privacy": metadata["privacy"],
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
+
+
+def action_analyze_audio(args):
+    try:
+        path = Path(str(args.get("path") or "")).expanduser()
+        if not path.exists():
+            return error("path does not exist")
+        if path.suffix.lower() != ".wav":
+            return error("Only WAV analysis is supported by the lightweight analyzer. Extract or convert audio to WAV first.")
+        analysis = analyze_wav_file(path, args)
+        return write_json({"ok": True, "path": str(path), "analysis": analysis})
+    except Exception as exc:
+        return error(str(exc))
+
+
+def action_extract_audio_track(args):
+    try:
+        require_feature("video_audio_extract", args)
+        input_path = Path(str(args.get("path") or args.get("input_path") or "")).expanduser()
+        if not input_path.exists():
+            return error("input video path does not exist")
+        ffmpeg = ffmpeg_status()
+        if not ffmpeg["available"]:
+            return error("FFmpeg is unavailable.", adapter=ffmpeg)
+        limits = runtime_limits(args)
+        duration = args.get("duration_seconds")
+        if duration is not None:
+            duration = float(duration)
+            check_min_max(duration, None, limits.get("audio_extract_duration_seconds_max"), "duration_seconds")
+        sample_rate = int(args.get("sample_rate", 44100))
+        channels = int(args.get("channels", 1))
+        output_path = audio_output_path({**args, "source_label": args.get("source_label") or f"{input_path.stem}-audio"}, "wav")
+        command = [ffmpeg["executable"], "-y"]
+        if args.get("start_seconds") is not None:
+            command.extend(["-ss", str(float(args.get("start_seconds")))])
+        command.extend(["-i", str(input_path)])
+        if duration is not None:
+            command.extend(["-t", str(duration)])
+        command.extend(["-vn", "-acodec", "pcm_s16le", "-ar", str(sample_rate), "-ac", str(channels), str(output_path)])
+        completed = subprocess.run(command, cwd=str(PLUGIN_ROOT), capture_output=True, text=True, timeout=int(args.get("timeout_seconds", 120)))
+        if completed.returncode != 0:
+            return error("FFmpeg failed to extract audio.", stderr=completed.stderr[-2000:], command=command)
+        analysis = analyze_wav_file(output_path, args) if bool(args.get("analyze", False)) else skipped_analysis("audio analysis not requested")
+        metadata = {
+            "plugin": PLUGIN_NAME,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "type": "video_audio_extract",
+            "path": str(output_path),
+            "source": {"type": "video", "input_path": str(input_path), "adapter": "ffmpeg"},
+            "format": "wav",
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "analysis": analysis,
+            "context": audio_context_payload(args),
+            "privacy": "Saved locally only.",
+        }
+        metadata_path = write_media_metadata_sidecar(output_path, metadata, args)
+        mirror_paths, mirror_metadata_paths = mirror_media_file(output_path, metadata, args)
+        return write_json(
+            {
+                "ok": True,
+                "path": str(output_path),
+                "metadata_path": metadata_path,
+                "mirror_paths": mirror_paths,
+                "mirror_metadata_paths": mirror_metadata_paths,
+                "source": metadata["source"],
+                "sample_rate": sample_rate,
+                "channels": channels,
+                "analysis": analysis,
+                "privacy": metadata["privacy"],
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
 
 
 def action_list_displays(args):
@@ -1701,6 +2094,10 @@ ACTIONS = {
     "set_display_name": action_set_display_name,
     "apply_display_profile": action_apply_display_profile,
     "list_adapters": action_list_adapters,
+    "list_audio_devices": action_list_audio_devices,
+    "record_audio": action_record_audio,
+    "analyze_audio": action_analyze_audio,
+    "extract_audio_track": action_extract_audio_track,
     "list_displays": action_list_displays,
     "list_windows": action_list_windows,
     "capture_screen": action_capture_screen,

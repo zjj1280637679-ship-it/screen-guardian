@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.9";
+const SERVER_VERSION = "0.1.10";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -135,6 +135,27 @@ const windowTargetProperties = {
   },
 };
 
+const audioCommonProperties = {
+  output_dir: imageOutputProperties.output_dir,
+  output_dirs: imageOutputProperties.output_dirs,
+  mirror_dirs: imageOutputProperties.mirror_dirs,
+  project_id: imageOutputProperties.project_id,
+  workflow_id: imageOutputProperties.workflow_id,
+  tags: imageOutputProperties.tags,
+  note: imageOutputProperties.note,
+  context_policy: imageOutputProperties.context_policy,
+  marked_file_only: imageOutputProperties.marked_file_only,
+  write_metadata: imageOutputProperties.write_metadata,
+  source_label: imageOutputProperties.source_label,
+  runtime_limits: imageOutputProperties.runtime_limits,
+  feature_flags: imageOutputProperties.feature_flags,
+  analyze: {
+    type: "boolean",
+    default: false,
+    description: "When true, run lightweight local audio analysis after saving.",
+  },
+};
+
 const tools = [
   {
     name: "check_dependencies",
@@ -250,7 +271,7 @@ const tools = [
       properties: {
         role: {
           type: "string",
-          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "audio_summary", "sound_diagnostics", "transcription", "custom"],
           description: "Optional role filter.",
         },
       },
@@ -273,7 +294,7 @@ const tools = [
         },
         role: {
           type: "string",
-          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "audio_summary", "sound_diagnostics", "transcription", "custom"],
           default: "vision_summary",
         },
         enabled: {
@@ -330,7 +351,7 @@ const tools = [
   },
   {
     name: "prepare_model_request",
-    description: "Write a local request envelope for an external judgment/OCR/narration model, including follow-up questions and model settings.",
+    description: "Write a local request envelope for an external judgment/OCR/narration/transcription model, including follow-up questions and settings.",
     inputSchema: {
       type: "object",
       properties: {
@@ -340,12 +361,12 @@ const tools = [
         },
         role: {
           type: "string",
-          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "audio_summary", "sound_diagnostics", "transcription", "custom"],
           default: "vision_summary",
         },
         path: {
           type: "string",
-          description: "Optional image/video/local file path for the model request.",
+          description: "Optional image/video/audio/local file path for the model request.",
         },
         prompt: {
           type: "string",
@@ -432,10 +453,129 @@ const tools = [
   },
   {
     name: "list_adapters",
-    description: "List available compatibility adapters for local screen and window access.",
+    description: "List available compatibility adapters for local screen, window, audio, and video-audio access.",
     inputSchema: {
       type: "object",
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_audio_devices",
+    description: "Optionally probe local audio capture devices for microphone or best-effort Windows loopback recording.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        probe: {
+          type: "boolean",
+          default: true,
+          description: "When true, import the optional audio adapter and query devices. Requires audio_capture to be active.",
+        },
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "record_audio",
+    description: "Record a short local WAV clip from a microphone or best-effort system loopback source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: {
+          type: "string",
+          enum: ["microphone", "system_loopback", "system", "speaker", "output"],
+          default: "microphone",
+          description: "Audio source. System loopback is best-effort and depends on Windows WASAPI support.",
+        },
+        duration_seconds: {
+          type: "number",
+          minimum: 0.1,
+          default: 5,
+          description: "Recording duration. Bounds are controlled by runtime limits.",
+        },
+        sample_rate: {
+          type: "integer",
+          default: 44100,
+          description: "Sample rate in Hz. Bounds are controlled by runtime limits.",
+        },
+        channels: {
+          type: "integer",
+          default: 1,
+          description: "Number of channels. Bounds are controlled by runtime limits.",
+        },
+        device: {
+          description: "Optional sounddevice device index or name.",
+        },
+        loopback: {
+          type: "boolean",
+          default: false,
+          description: "Force WASAPI loopback behavior for output/system sound capture.",
+        },
+        ...audioCommonProperties,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "analyze_audio",
+    description: "Analyze a local 16-bit PCM WAV file for duration, RMS, peak, silence, and clipping.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Local WAV path to analyze.",
+        },
+        silence_threshold: {
+          type: "number",
+          default: 0.01,
+          description: "Normalized amplitude threshold used for silence detection.",
+        },
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "extract_audio_track",
+    description: "Extract a WAV audio track from a local video file through optional FFmpeg.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Local video file path.",
+        },
+        input_path: {
+          type: "string",
+          description: "Alias for path.",
+        },
+        start_seconds: {
+          type: "number",
+          minimum: 0,
+          description: "Optional start offset.",
+        },
+        duration_seconds: {
+          type: "number",
+          minimum: 0.1,
+          description: "Optional extracted duration. Bounds are controlled by runtime limits.",
+        },
+        sample_rate: {
+          type: "integer",
+          default: 44100,
+        },
+        channels: {
+          type: "integer",
+          default: 1,
+        },
+        timeout_seconds: {
+          type: "integer",
+          default: 120,
+        },
+        ...audioCommonProperties,
+      },
       additionalProperties: false,
     },
   },
@@ -854,6 +994,18 @@ async function callTool(name, args) {
   }
   if (name === "list_adapters") {
     return runPython("list_adapters", args);
+  }
+  if (name === "list_audio_devices") {
+    return runPython("list_audio_devices", args);
+  }
+  if (name === "record_audio") {
+    return runPython("record_audio", args);
+  }
+  if (name === "analyze_audio") {
+    return runPython("analyze_audio", args);
+  }
+  if (name === "extract_audio_track") {
+    return runPython("extract_audio_track", args);
   }
   if (name === "list_displays") {
     return runPython("list_displays", args);
