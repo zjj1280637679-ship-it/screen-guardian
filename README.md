@@ -29,22 +29,40 @@ Screen Guardian treats that as the design problem: AI capability should not depe
 
 ## Concrete use cases
 
+Screen Guardian is useful when a personal AI needs local sensory access, but the user's system, dependencies, context budget, or privacy expectations make one perfect capture path unrealistic. Its concrete uses fall into five practical groups.
+
+### Restore visual access on constrained systems
+
 - Older Windows builds where native screen capture APIs are unavailable or partially unsupported.
 - Machines that cannot be upgraded just to satisfy one AI tool's capture backend.
 - Users who want AI visual access without accepting a heavy always-on screen recording service.
+
+### Control context, storage, and preprocessing
+
 - Agents that need lower-resolution screenshots to understand a UI while keeping context and storage small.
-- Developers who want to swap capture backends without rewriting the whole MCP tool surface.
-- Short workflow observation where a program or region should be captured immediately when it changes.
 - Text-heavy screenshots that should be sharpened, downscaled, tagged, or held as files before entering AI context.
-- Future OCR, video, or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
 - Users who want limits, storage paths, model settings, or workflow stages to be configurable instead of hard-coded.
-- Users who want one plugin where optional features can stay inactive without slowing the active capture path.
+
+### Observe projects when timing matters
+
+- Short workflow observation where a program or region should be captured immediately when it changes.
+- Project monitoring where a webpage, program window, region, audio stream, video file, or custom target should trigger capture when a configured feature appears.
+- Error-aware workflows where a program, parser, or model can mark an error feature and request a screenshot, audio clip, model request, or follow-up decision.
+
+### Extend into audio, video, and model narration
+
 - Audio debugging: checking whether sound is actually being emitted, whether an external speaker path is likely silent, or whether a program sound effect was produced.
 - Recording short explanations, lecture/video audio, or test-program sound effects for later transcription or narration.
 - Extracting an audio track from a video before sending it to an audio or transcription route.
-- Project monitoring where a webpage, program window, region, audio stream, video file, or custom target should trigger capture when a configured feature appears.
-- Error-aware workflows where a program, parser, or model can mark an error feature and request a screenshot, audio clip, model request, or follow-up decision.
+- Future OCR, video, or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
+
+### Keep the system adaptable
+
+- Developers who want to swap capture backends without rewriting the whole MCP tool surface.
+- Users who want one plugin where optional features can stay inactive without slowing the active capture path.
 - Advanced routing where a decision can be a simple table, scoring function, external API, Codex subagent, local command bridge, or prepared request file.
+
+Together, these use cases define Screen Guardian as compatibility infrastructure rather than a heavy recorder. It helps the AI capture what matters, mark why it matters, route it to the right workflow, and keep heavier OCR, audio, video, model, or scheduler paths optional.
 
 ## Compatibility adapter model
 
