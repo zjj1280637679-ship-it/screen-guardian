@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.6+codex.20260607220927",
+  "version": "0.1.7+codex.20260607224933",
   "description": "Ultra-light compatibility-first AI screen access with fallback adapters.",
   "author": {
     "name": "ClaudeUser"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "\u5c4f\u5e55\u5b88\u62a4\u8005",
     "shortDescription": "\u4e0d\u5f3a\u8feb\u5347\u7ea7\u7684\u8d85\u8f7b\u91cf AI \u5c4f\u5e55\u8bbf\u95ee\u3002",
-    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This ultra-light release expands local visual access, keeps compatibility fallbacks, and adds a local naming profile that can follow system language or use a manual alias.",
+    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This ultra-light release expands local visual access with configurable cache paths, workflow metadata, window capture, bounded change-triggered capture, and local image analysis/preprocessing while keeping compatibility fallbacks light.",
     "developerName": "ClaudeUser",
     "category": "Productivity",
     "capabilities": [
@@ -22,7 +22,8 @@
     "defaultPrompt": [
       "Check Screen Guardian dependencies.",
       "Capture my current screen.",
-      "List my connected displays."
+      "List my connected displays.",
+      "Watch a window briefly for visual changes."
     ]
   },
   "mcpServers": "./.mcp.json"

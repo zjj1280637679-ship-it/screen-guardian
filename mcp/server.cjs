@@ -3,20 +3,150 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.6";
+const SERVER_VERSION = "0.1.7";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
+
+const imageOutputProperties = {
+  output_dir: {
+    type: "string",
+    description: "Optional local output folder. Overrides the configured cache path for this call.",
+  },
+  format: {
+    type: "string",
+    enum: ["png", "jpg"],
+    default: "png",
+  },
+  scale: {
+    type: "number",
+    minimum: 0.01,
+    maximum: 1,
+    description: "Optional downscale factor between 0.01 and 1.",
+  },
+  max_width: {
+    type: "integer",
+    minimum: 1,
+    description: "Optional maximum saved image width.",
+  },
+  max_height: {
+    type: "integer",
+    minimum: 1,
+    description: "Optional maximum saved image height.",
+  },
+  quality: {
+    type: "integer",
+    minimum: 1,
+    maximum: 95,
+    default: 90,
+    description: "JPEG quality when format is jpg.",
+  },
+  preprocess: {
+    type: "string",
+    enum: ["none", "auto", "text", "ui", "photo"],
+    default: "none",
+    description: "Optional local preprocessing preset. text sharpens/grayscales text-heavy captures; auto uses image analysis.",
+  },
+  project_id: {
+    type: "string",
+    description: "Optional project marker written into the filename and metadata sidecar.",
+  },
+  workflow_id: {
+    type: "string",
+    description: "Optional workflow marker written into the filename and metadata sidecar.",
+  },
+  tags: {
+    type: "array",
+    items: { type: "string" },
+    description: "Optional local tags for the metadata sidecar.",
+  },
+  note: {
+    type: "string",
+    description: "Optional note for the metadata sidecar.",
+  },
+  context_policy: {
+    type: "string",
+    enum: ["return_path", "hold_file", "analysis_only"],
+    default: "return_path",
+    description: "Local handoff policy. hold_file marks the file for later use instead of immediate context ingestion.",
+  },
+  marked_file_only: {
+    type: "boolean",
+    default: false,
+    description: "When true, save and mark the file without treating it as content to read immediately.",
+  },
+  write_metadata: {
+    type: "boolean",
+    default: true,
+    description: "Write a JSON sidecar with source, workflow, preprocessing, and analysis metadata.",
+  },
+  source_label: {
+    type: "string",
+    description: "Optional short label included in the output filename.",
+  },
+};
+
+const windowTargetProperties = {
+  hwnd: {
+    type: "integer",
+    description: "Windows HWND. Prefer list_windows first when you do not know it.",
+  },
+  title_contains: {
+    type: "string",
+    description: "Pick the first visible window whose title contains this text.",
+  },
+  title_contains_any: {
+    type: "array",
+    items: { type: "string" },
+    description: "Pick the first visible window matching any title fragment.",
+  },
+  exact_title: {
+    type: "string",
+    description: "Pick the first visible window whose title exactly matches this string.",
+  },
+  process_name: {
+    type: "string",
+    description: "Pick the first visible window whose process name contains this text.",
+  },
+  process_names: {
+    type: "array",
+    items: { type: "string" },
+    description: "Pick the first visible window matching any process name fragment.",
+  },
+};
 
 const tools = [
   {
     name: "check_dependencies",
-    description: "Check local Python screenshot dependencies and default cache location.",
+    description: "Check local Python screenshot dependencies, adapters, and cache location.",
     inputSchema: {
       type: "object",
       properties: {
         output_dir: {
           type: "string",
-          description: "Optional local folder for Screen Guardian captures.",
+          description: "Optional local folder for this dependency/cache check.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_runtime_settings",
+    description: "Read local Screen Guardian settings, including configured cache path and display profile.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_cache_path",
+    description: "Set or clear the persistent local cache folder for captures.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cache_dir: {
+          type: "string",
+          description: "Persistent local cache folder. Pass an empty string to return to the default Pictures/ScreenGuardian path.",
         },
       },
       additionalProperties: false,
@@ -40,8 +170,8 @@ const tools = [
         mode: {
           type: "string",
           enum: ["auto", "manual"],
-          description: "Use auto to follow system language, or manual to use a local custom name.",
           default: "auto",
+          description: "Use auto to follow system language, or manual to use a local custom name.",
         },
         display_name: {
           type: "string",
@@ -84,7 +214,7 @@ const tools = [
   },
   {
     name: "list_adapters",
-    description: "List available compatibility adapters for local screen access.",
+    description: "List available compatibility adapters for local screen and window access.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -101,6 +231,27 @@ const tools = [
     },
   },
   {
+    name: "list_windows",
+    description: "List visible Windows application windows with HWND, title, process, and bounds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title_contains: windowTargetProperties.title_contains,
+        title_contains_any: windowTargetProperties.title_contains_any,
+        process_name: windowTargetProperties.process_name,
+        process_names: windowTargetProperties.process_names,
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+          description: "Maximum number of windows to return.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "capture_screen",
     description: "Capture a full display or the full virtual desktop to a local image file.",
     inputSchema: {
@@ -108,8 +259,8 @@ const tools = [
       properties: {
         display_index: {
           type: "integer",
-          description: "Display index. Use 0 for the full virtual desktop; 1+ for individual displays.",
           default: 1,
+          description: "Display index. Use 0 for the full virtual desktop; 1+ for individual displays.",
         },
         adapter: {
           type: "string",
@@ -117,38 +268,7 @@ const tools = [
           default: "auto",
           description: "Capture adapter. Use auto unless a specific backend is needed.",
         },
-        output_dir: {
-          type: "string",
-          description: "Optional local output folder.",
-        },
-        format: {
-          type: "string",
-          enum: ["png", "jpg"],
-          default: "png",
-        },
-        scale: {
-          type: "number",
-          minimum: 0.01,
-          maximum: 1,
-          description: "Optional downscale factor between 0.01 and 1.",
-        },
-        max_width: {
-          type: "integer",
-          minimum: 1,
-          description: "Optional maximum saved image width.",
-        },
-        max_height: {
-          type: "integer",
-          minimum: 1,
-          description: "Optional maximum saved image height.",
-        },
-        quality: {
-          type: "integer",
-          minimum: 1,
-          maximum: 95,
-          description: "JPEG quality when format is jpg.",
-          default: 90,
-        },
+        ...imageOutputProperties,
       },
       additionalProperties: false,
     },
@@ -161,8 +281,8 @@ const tools = [
       properties: {
         display_index: {
           type: "integer",
-          description: "Display index used when relative_to_display is true.",
           default: 1,
+          description: "Display index used when relative_to_display is true.",
         },
         adapter: {
           type: "string",
@@ -193,36 +313,148 @@ const tools = [
           default: true,
           description: "When true, left/top are relative to display_index.",
         },
-        output_dir: {
-          type: "string",
-          description: "Optional local output folder.",
-        },
-        format: {
-          type: "string",
-          enum: ["png", "jpg"],
-          default: "png",
-        },
-        scale: {
-          type: "number",
-          minimum: 0.01,
-          maximum: 1,
-        },
-        max_width: {
-          type: "integer",
-          minimum: 1,
-        },
-        max_height: {
-          type: "integer",
-          minimum: 1,
-        },
-        quality: {
-          type: "integer",
-          minimum: 1,
-          maximum: 95,
-          default: 90,
-        },
+        ...imageOutputProperties,
       },
       required: ["left", "top", "width", "height"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "capture_window",
+    description: "Capture a specified visible program window by HWND, title, or process name, even when best-effort non-topmost capture is available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...windowTargetProperties,
+        ...imageOutputProperties,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "analyze_image",
+    description: "Analyze a local image file and recommend context and preprocessing mode without adding OCR dependencies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Local image path to analyze.",
+        },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "preprocess_image",
+    description: "Create a locally preprocessed copy of an existing image using text, UI, photo, or auto presets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Local image path to preprocess.",
+        },
+        ...imageOutputProperties,
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "watch_screen",
+    description: "Run a bounded local change detector that saves screenshots when a display, region, or matching window changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        display_index: {
+          type: "integer",
+          default: 1,
+          description: "Display index for screen/region watching. Use 0 for virtual desktop.",
+        },
+        adapter: {
+          type: "string",
+          enum: ["auto", "python-mss"],
+          default: "auto",
+        },
+        left: {
+          type: "integer",
+          description: "Optional region left coordinate.",
+        },
+        top: {
+          type: "integer",
+          description: "Optional region top coordinate.",
+        },
+        width: {
+          type: "integer",
+          minimum: 1,
+          description: "Optional region width.",
+        },
+        height: {
+          type: "integer",
+          minimum: 1,
+          description: "Optional region height.",
+        },
+        relative_to_display: {
+          type: "boolean",
+          default: true,
+          description: "When true, left/top are relative to display_index.",
+        },
+        region: {
+          type: "object",
+          properties: {
+            left: { type: "integer" },
+            top: { type: "integer" },
+            width: { type: "integer", minimum: 1 },
+            height: { type: "integer", minimum: 1 },
+            relative_to_display: { type: "boolean", default: true },
+          },
+          additionalProperties: false,
+          description: "Optional region object. Direct left/top/width/height are also accepted.",
+        },
+        ...windowTargetProperties,
+        duration_seconds: {
+          type: "number",
+          minimum: 0.1,
+          maximum: 30,
+          default: 3,
+          description: "Bounded watch duration. Ultra-light mode caps this at 30 seconds.",
+        },
+        interval_seconds: {
+          type: "number",
+          minimum: 0.1,
+          maximum: 5,
+          default: 0.5,
+          description: "Polling interval between samples.",
+        },
+        change_threshold: {
+          type: "number",
+          minimum: 0,
+          default: 8,
+          description: "Average pixel-difference threshold required before saving a changed frame.",
+        },
+        max_captures: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          default: 10,
+          description: "Maximum captures saved during this bounded watch.",
+        },
+        burst_frames: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          default: 1,
+          description: "Number of consecutive frames to save after a detected change.",
+        },
+        save_initial: {
+          type: "boolean",
+          default: false,
+          description: "Save the first sampled frame before waiting for a change.",
+        },
+        ...imageOutputProperties,
+      },
       additionalProperties: false,
     },
   },
@@ -234,7 +466,7 @@ const tools = [
       properties: {
         output_dir: {
           type: "string",
-          description: "Optional local cache folder. Defaults to Pictures/ScreenGuardian.",
+          description: "Optional local cache folder. Defaults to the configured cache path or Pictures/ScreenGuardian.",
         },
         all: {
           type: "boolean",
@@ -374,6 +606,12 @@ async function callTool(name, args) {
   if (name === "check_dependencies") {
     return runPython("check", args);
   }
+  if (name === "get_runtime_settings") {
+    return runPython("get_runtime_settings", args);
+  }
+  if (name === "set_cache_path") {
+    return runPython("set_cache_path", args);
+  }
   if (name === "get_display_profile") {
     return runPython("get_display_profile", args);
   }
@@ -389,11 +627,26 @@ async function callTool(name, args) {
   if (name === "list_displays") {
     return runPython("list_displays", args);
   }
+  if (name === "list_windows") {
+    return runPython("list_windows", args);
+  }
   if (name === "capture_screen") {
     return runPython("capture_screen", args);
   }
   if (name === "capture_region") {
     return runPython("capture_region", args);
+  }
+  if (name === "capture_window") {
+    return runPython("capture_window", args);
+  }
+  if (name === "analyze_image") {
+    return runPython("analyze_image", args);
+  }
+  if (name === "preprocess_image") {
+    return runPython("preprocess_image", args);
+  }
+  if (name === "watch_screen") {
+    return runPython("watch_screen", args);
   }
   if (name === "clear_cache") {
     return runPython("clear_cache", args);

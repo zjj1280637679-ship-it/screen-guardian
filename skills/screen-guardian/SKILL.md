@@ -18,26 +18,39 @@ Use this skill when the user asks to:
 - diagnose whether local screenshot dependencies work
 - inspect compatibility adapters before choosing a capture backend
 - read or set the local display-name profile
+- configure the local cache path
+- list or capture a specific program window
+- run a short bounded change-triggered watch
+- tag captures with project/workflow metadata
+- analyze or preprocess a local image before deciding how much context to spend
 
 ## Safety defaults
 
 - Captures are saved locally under `~/Pictures/ScreenGuardian` unless a specific output folder is provided.
-- Do not start continuous capture or recording in this version.
+- Only start bounded watch capture when the user asks for it; keep duration and capture-count limits small.
 - Do not upload screenshots automatically.
 - Mention the saved file path when a capture succeeds.
+- Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
 
 ## Tools
 
 Prefer the `screen_guardian` MCP tools:
 
 - `check_dependencies`
+- `get_runtime_settings`
+- `set_cache_path`
 - `get_display_profile`
 - `set_display_name`
 - `apply_display_profile`
 - `list_adapters`
 - `list_displays`
+- `list_windows`
 - `capture_screen`
 - `capture_region`
+- `capture_window`
+- `watch_screen`
+- `analyze_image`
+- `preprocess_image`
 - `clear_cache`
 
-Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` when the user only needs a quick visual summary.
+Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width`, `scale`, or `preprocess` when the user only needs a quick visual summary. Use `watch_screen` only as a short foreground task, not as a background monitor.

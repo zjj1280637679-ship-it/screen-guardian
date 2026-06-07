@@ -10,6 +10,9 @@ The current version is intentionally smaller than the planned product models. It
 - incompatible native capture paths can have a fallback
 - low-resolution images can reduce context pressure
 - dependency state can be reported instead of hidden
+- project/workflow metadata can mark files before they enter context
+- short bounded change detection can catch UI changes without becoming a background recorder
+- local image heuristics can choose text/UI/photo preprocessing before optional OCR or narration exists
 
 This stage should stay easy to understand and easy to rewrite.
 
@@ -21,9 +24,10 @@ Expected features:
 
 - multiple screenshot adapters behind one stable tool contract
 - adapter diagnostics and install hints
-- monitor and region presets
+- monitor, region, and window presets
 - stronger cache cleanup controls
 - simple safety prompts for sensitive capture contexts
+- richer project/workflow handoff conventions
 
 Dependency policy:
 
@@ -37,9 +41,10 @@ The Practical model should help AI observe short workflows, not only isolated sc
 
 Expected features:
 
-- bounded continuous screenshots
-- frame-difference detection
+- longer bounded continuous screenshots
+- stronger frame-difference detection
 - short screen recordings
+- OCR for text-heavy screenshots
 - image summarization bridge
 - optional video summarization bridge
 - context-pressure controls such as downscaling and key-frame selection
