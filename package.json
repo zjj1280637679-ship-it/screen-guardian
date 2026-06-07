@@ -1,0 +1,11 @@
+{
+  "name": "screen-guardian",
+  "version": "0.1.0",
+  "description": "Local screenshot helpers for Codex on Windows.",
+  "private": false,
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "mcp": "node ./mcp/server.cjs"
+  }
+}

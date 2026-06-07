@@ -1,0 +1,26 @@
+{
+  "name": "screen-guardian",
+  "version": "0.1.0",
+  "description": "Local screen capture helpers for Codex on Windows.",
+  "author": {
+    "name": "ClaudeUser"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Screen Guardian",
+    "shortDescription": "Give Codex a lightweight local screenshot path.",
+    "longDescription": "Screen Guardian provides local-only screenshot tools for Codex, including display listing, full-screen capture, region capture, optional downscaling, and cache cleanup.",
+    "developerName": "ClaudeUser",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Check Screen Guardian dependencies.",
+      "Capture my current screen.",
+      "List my connected displays."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,22 @@
+# Local caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node/package manager output
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local capture output
+ScreenGuardian/
+screen-guardian-*.png
+screen-guardian-*.jpg
+screen-guardian-*.jpeg
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
