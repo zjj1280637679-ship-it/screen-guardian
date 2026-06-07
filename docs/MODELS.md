@@ -1,83 +1,63 @@
-# Product Models
+# Capability Activation Model
 
-Screen Guardian is designed to grow through three planned models while keeping the current ultra-light release as the foundation.
+Screen Guardian is one plugin, not a family of separate lightweight/practical/heavy plugins.
 
-## Current: Ultra-light Foundation
+The design goal is to keep capability broad while making each nonessential path optional. A feature that is inactive should avoid optional runtime cost for the features that remain active.
 
-The current version is intentionally smaller than the planned product models. It proves the core idea:
+## Principle
 
-- local screenshot access can be exposed through a stable MCP surface
-- incompatible native capture paths can have a fallback
-- low-resolution images can reduce context pressure
-- dependency state can be reported instead of hidden
-- project/workflow metadata can mark files before they enter context
-- short bounded change detection can catch UI changes without becoming a background recorder
-- local image heuristics can choose text/UI/photo preprocessing before optional OCR or narration exists
-- runtime limits and storage routes can be changed without rewriting capture tools
-- model/program routes can be registered before heavy adapters exist
+Capability is split into small modules:
 
-This stage should stay easy to understand and easy to rewrite.
+- screen capture
+- window capture
+- bounded watch
+- workflow metadata
+- multi-route storage
+- image analysis
+- image preprocessing
+- extension route registry
+- model request envelopes
+- OCR routes
+- image narration routes
+- video narration routes
+- external API handoff
+- Codex subagent handoff
 
-## Planned Model 1: Lightweight
+Implemented modules can be used directly. Interface modules can be registered and prepared without forcing their heavy dependencies into the capture core.
 
-The Lightweight model should become the dependable daily fallback.
+## Feature Flags
 
-Expected features:
+`set_feature_flags` can enable, disable, or reset optional modules. `get_runtime_settings` returns the active flags and the feature catalog.
 
-- multiple screenshot adapters behind one stable tool contract
-- adapter diagnostics and install hints
-- monitor, region, and window presets
-- stronger cache cleanup controls
-- simple safety prompts for sensitive capture contexts
-- richer project/workflow handoff conventions
-- presets for common storage routes and runtime-limit profiles
+Inactive modules should behave like this:
 
-Dependency policy:
+- no polling loop unless `bounded_watch` is active and `watch_screen` is called
+- no mirror copy unless `multi_storage_routes` is active
+- no metadata sidecar unless `workflow_metadata` is active
+- no heuristic image analysis unless requested and `image_analysis` is active
+- no preprocessing unless `image_preprocess` is active
+- no model request file unless `model_request_envelopes` is active
+- no OCR, external API, video narration, or subagent handoff unless a future adapter explicitly handles it
 
-- keep dependencies minimal
-- prefer pure Python or small native helpers
-- make every extra capability optional
+## Route Interfaces
 
-## Planned Model 2: Practical
+Image narration can be handled by:
 
-The Practical model should help AI observe short workflows, not only isolated screenshots.
+- a user-provided API route
+- a prepared local request file
+- a future Codex subagent handoff
+- a future local command adapter
 
-Expected features:
+Video narration providers are fewer, so Screen Guardian keeps a prior interface for them:
 
-- longer bounded continuous screenshots
-- stronger frame-difference detection
-- short screen recordings
-- OCR for text-heavy screenshots
-- image summarization bridge
-- optional video summarization bridge
-- follow-up question handling for narration or transcription routes
-- context-pressure controls such as downscaling and key-frame selection
+- input can be a video file, keyframes, or an image sequence
+- settings can include detail, quality, temperature, keyframe policy, language, and token budget
+- execution remains outside the capture core until an adapter is added
 
-Dependency policy:
+## Runtime Bounds
 
-- allow optional FFmpeg or vision helpers
-- keep long-running behavior bounded by duration, frame rate, and storage limits
-- keep the same adapter result contract where possible
-
-## Planned Model 3: Heavy
-
-The Heavy model is for users who intentionally want a local visual memory or agent workstation.
-
-Expected features:
-
-- longer capture sessions
-- OCR and searchable timelines
-- app and window filters
-- storage policies and retention limits
-- subagent routing for image and video interpretation
-- local-first visual history tools
-
-Dependency policy:
-
-- heavier dependencies are acceptable only when explicit
-- privacy and storage controls become first-class requirements
-- no always-on behavior without clear user intent
+Bounds such as watch duration, maximum captures, burst frames, scale, and JPEG quality are runtime policy. They can be changed or removed with `set_runtime_limits` where the underlying encoder or capture backend permits it.
 
 ## Design Rule
 
-Every model should preserve the same principle: expand what the user's AI can do while avoiding forced upgrades, forced background services, and one-path lock-in.
+The project should expand what the user's AI can do while avoiding forced upgrades, forced background services, one-path lock-in, and hidden performance cost from inactive features.

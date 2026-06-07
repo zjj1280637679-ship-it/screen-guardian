@@ -1,6 +1,12 @@
 # Workflow Interface
 
-Screen Guardian `0.1.8` keeps the workflow layer flexible without turning the plugin into a background service.
+Screen Guardian `0.1.9` keeps the workflow layer flexible without turning the plugin into a background service.
+
+## Feature Flags
+
+Use `set_feature_flags` to enable, disable, or reset optional capability modules. `get_runtime_settings` returns the current flags and a catalog explaining what inactive features avoid doing.
+
+The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, OCR, API calls, video narration, or subagent handoff.
 
 ## Local Cache
 
@@ -27,7 +33,7 @@ Capture tools accept:
 - `output_dirs`
 - `mirror_dirs`
 
-When metadata is enabled, Screen Guardian writes a `.meta.json` sidecar next to the image. This lets agents leave marked files on disk, inspect their type, and decide later whether to load the image, downscale it, preprocess it, or wait for OCR/model narration.
+When metadata is enabled through `workflow_metadata`, Screen Guardian writes a `.meta.json` sidecar next to the image. This lets agents leave marked files on disk, inspect their type, and decide later whether to load the image, downscale it, preprocess it, or wait for OCR/model narration.
 
 ## Runtime Limits
 
@@ -49,7 +55,9 @@ Use `null`, `none`, or `unbounded` to remove a configurable bound where the unde
 
 ## Image Context Strategy
 
-`analyze_image` estimates whether a local image is likely text, UI, photo, or mixed content. `preprocess_image` and capture-time `preprocess` can apply:
+`analyze_image` estimates whether a local image is likely text, UI, photo, or mixed content. Normal capture saves do not run this analysis unless `analyze: true` is passed or `preprocess: auto` needs it.
+
+`preprocess_image` and capture-time `preprocess` can apply:
 
 - `none`
 - `auto`
@@ -78,7 +86,16 @@ Routes can store provider names, model names, endpoints, command descriptors, an
 - `detail`
 - `language`
 
-Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_model_request` writes a local request envelope with the input file, prompt, follow-up questions, and merged settings. A later adapter, model bridge, or subagent can read that request and write a response.
+Routes can also store `handoff_mode`:
+
+- `prepared_file`
+- `external_api`
+- `codex_subagent`
+- `local_command`
+
+Image narration can use a user-provided API or a future Codex subagent handoff. Video narration has fewer practical providers, so Screen Guardian keeps a prior interface for video files, image sequences, and keyframes without selecting or installing a provider by default.
+
+Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_model_request` writes a local request envelope with the input file, prompt, follow-up questions, route prior, and merged settings. A later adapter, model bridge, or subagent can read that request and write a response.
 
 ## Bounded Change Capture
 

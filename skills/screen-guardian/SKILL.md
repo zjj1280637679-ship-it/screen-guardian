@@ -26,6 +26,7 @@ Use this skill when the user asks to:
 - change or remove runtime limits when the user explicitly wants different bounds
 - save captures to multiple local routes
 - register model/program routes or prepare narration/transcription request files
+- enable or disable optional feature modules so inactive features do not slow active capture
 
 ## Safety defaults
 
@@ -35,6 +36,7 @@ Use this skill when the user asks to:
 - Mention the saved file path when a capture succeeds.
 - Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
 - Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
+- Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
 
 ## Tools
 
@@ -45,6 +47,7 @@ Prefer the `screen_guardian` MCP tools:
 - `set_cache_path`
 - `set_storage_routes`
 - `set_runtime_limits`
+- `set_feature_flags`
 - `list_extension_routes`
 - `set_extension_route`
 - `prepare_model_request`
@@ -62,4 +65,4 @@ Prefer the `screen_guardian` MCP tools:
 - `preprocess_image`
 - `clear_cache`
 
-Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width`, `scale`, or `preprocess` when the user only needs a quick visual summary. Use `watch_screen` only as a short foreground task, not as a background monitor.
+Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Use `watch_screen` only as a short foreground task, not as a background monitor.

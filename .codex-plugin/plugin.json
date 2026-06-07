@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.8+codex.20260607230332",
+  "version": "0.1.9+codex.20260607231614",
   "description": "Ultra-light compatibility-first AI screen access with fallback adapters.",
   "author": {
     "name": "ClaudeUser"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "\u5c4f\u5e55\u5b88\u62a4\u8005",
     "shortDescription": "\u4e0d\u5f3a\u8feb\u5347\u7ea7\u7684\u8d85\u8f7b\u91cf AI \u5c4f\u5e55\u8bbf\u95ee\u3002",
-    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This ultra-light release keeps limits, storage routes, and model/program routes configurable so users can add paths, adjust workflow bounds, and prepare requests for judgment, OCR, image narration, video narration, or transcription adapters without forcing heavy dependencies.",
+    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This release uses optional capability flags instead of separate plugin weights: inactive features do not run optional work, while image/API/subagent and scarce video-narration routes can be registered as lightweight interfaces.",
     "developerName": "ClaudeUser",
     "category": "Productivity",
     "capabilities": [
@@ -24,7 +24,8 @@
       "Capture my current screen.",
       "List my connected displays.",
       "Watch a window briefly for visual changes.",
-      "Register a narration model route."
+      "Register a narration model route.",
+      "Turn an optional capability on or off."
     ]
   },
   "mcpServers": "./.mcp.json"

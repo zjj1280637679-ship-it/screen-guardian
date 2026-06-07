@@ -30,6 +30,89 @@ DEFAULT_LIMITS = {
     "jpeg_quality_max": 95,
 }
 
+DEFAULT_FEATURE_FLAGS = {
+    "screen_capture": True,
+    "window_capture": True,
+    "bounded_watch": True,
+    "workflow_metadata": True,
+    "multi_storage_routes": True,
+    "image_analysis": True,
+    "image_preprocess": True,
+    "extension_routes": True,
+    "model_request_envelopes": True,
+    "ocr_routes": False,
+    "image_narration_routes": False,
+    "video_narration_routes": False,
+    "external_api_handoff": False,
+    "codex_subagent_handoff": False,
+}
+
+FEATURE_CATALOG = {
+    "screen_capture": {
+        "status": "implemented",
+        "cost_when_inactive": "No screenshot adapter is imported unless a screen capture action runs.",
+    },
+    "window_capture": {
+        "status": "implemented",
+        "cost_when_inactive": "No window enumeration or Pillow window capture runs unless requested.",
+    },
+    "bounded_watch": {
+        "status": "implemented",
+        "cost_when_inactive": "No polling loop runs unless watch_screen is called.",
+    },
+    "workflow_metadata": {
+        "status": "implemented",
+        "cost_when_inactive": "No metadata sidecar is written.",
+    },
+    "multi_storage_routes": {
+        "status": "implemented",
+        "cost_when_inactive": "No mirror copy is attempted.",
+    },
+    "image_analysis": {
+        "status": "implemented",
+        "cost_when_inactive": "Capture saving skips heuristic image analysis.",
+    },
+    "image_preprocess": {
+        "status": "implemented",
+        "cost_when_inactive": "No preprocessing preset is applied.",
+    },
+    "extension_routes": {
+        "status": "implemented",
+        "cost_when_inactive": "Route registry is not read or changed except by route tools.",
+    },
+    "model_request_envelopes": {
+        "status": "implemented",
+        "cost_when_inactive": "No request envelope is written.",
+    },
+    "ocr_routes": {
+        "status": "interface",
+        "cost_when_inactive": "No OCR adapter is invoked.",
+    },
+    "image_narration_routes": {
+        "status": "interface",
+        "cost_when_inactive": "No image narration model/API/subagent is invoked.",
+    },
+    "video_narration_routes": {
+        "status": "interface",
+        "cost_when_inactive": "No video model/API/subagent is invoked.",
+    },
+    "external_api_handoff": {
+        "status": "interface",
+        "cost_when_inactive": "No external API request is made.",
+    },
+    "codex_subagent_handoff": {
+        "status": "interface",
+        "cost_when_inactive": "No subagent handoff is started.",
+    },
+}
+
+ROLE_FEATURES = {
+    "ocr": "ocr_routes",
+    "vision_summary": "image_narration_routes",
+    "video_summary": "video_narration_routes",
+    "transcription": "video_narration_routes",
+}
+
 DEFAULT_CONFIG = {
     "mode": "auto",
     "manual_name": "",
@@ -37,6 +120,7 @@ DEFAULT_CONFIG = {
     "cache_dir": "",
     "extra_output_dirs": [],
     "runtime_limits": DEFAULT_LIMITS,
+    "feature_flags": DEFAULT_FEATURE_FLAGS,
     "extension_routes": [],
 }
 
@@ -129,6 +213,10 @@ def load_config():
         config["runtime_limits"] = copy.deepcopy(DEFAULT_LIMITS)
     else:
         config["runtime_limits"] = deep_merge(DEFAULT_LIMITS, config["runtime_limits"])
+    if not isinstance(config.get("feature_flags"), dict):
+        config["feature_flags"] = copy.deepcopy(DEFAULT_FEATURE_FLAGS)
+    else:
+        config["feature_flags"] = deep_merge(DEFAULT_FEATURE_FLAGS, config["feature_flags"])
     if not isinstance(config.get("extension_routes"), list):
         config["extension_routes"] = []
     return config
@@ -159,6 +247,28 @@ def runtime_limits(args=None):
     if isinstance(args.get("limit_overrides"), dict):
         limits = deep_merge(limits, args["limit_overrides"])
     return limits
+
+
+def feature_flags(args=None):
+    config = load_config()
+    flags = deep_merge(DEFAULT_FEATURE_FLAGS, config.get("feature_flags") or {})
+    args = args or {}
+    if isinstance(args.get("feature_flags"), dict):
+        flags = deep_merge(flags, args["feature_flags"])
+    return flags
+
+
+def feature_enabled(name, args=None):
+    return bool(feature_flags(args).get(name, False))
+
+
+def require_feature(name, args=None):
+    if not feature_enabled(name, args):
+        raise RuntimeError(f"Feature '{name}' is inactive. Enable it with set_feature_flags before using this path.")
+
+
+def skipped_analysis(reason):
+    return {"available": False, "skipped": True, "reason": reason}
 
 
 def check_min_max(value, min_value, max_value, label):
@@ -391,6 +501,8 @@ def output_routes(args=None):
     args = args or {}
     primary = get_cache_dir(args)
     mirrors = []
+    if not feature_enabled("multi_storage_routes", args):
+        return primary, mirrors
     explicit_dirs = normalize_path_list(args.get("output_dirs"))
     if explicit_dirs:
         if args.get("output_dir") or args.get("cache_dir"):
@@ -641,6 +753,8 @@ def capture_context(args):
 
 
 def write_metadata_sidecar(path, metadata, args):
+    if not feature_enabled("workflow_metadata", args):
+        return ""
     if not bool(args.get("write_metadata", True)):
         return ""
     metadata_path = path.with_suffix(path.suffix + ".meta.json")
@@ -670,12 +784,25 @@ def save_capture_image(image, source, libs, args):
     output_dir = ensure_cache_dir(output_dir)
     output_path = output_dir / output_filename(args, fmt)
     original_width, original_height = image.size
-    analysis_before = analyze_image_object(image, libs)
-    processed, applied_preprocess = apply_preprocess(image, args.get("preprocess", "none"), analysis_before, libs)
+    requested_preprocess = str(args.get("preprocess", "none") or "none").lower()
+    if requested_preprocess != "none":
+        require_feature("image_preprocess", args)
+    analysis_requested = bool(args.get("analyze", False))
+    needs_analysis_before = analysis_requested or requested_preprocess == "auto"
+    if needs_analysis_before:
+        require_feature("image_analysis", args)
+        analysis_before = analyze_image_object(image, libs)
+    else:
+        analysis_before = skipped_analysis("image analysis not requested")
+    processed, applied_preprocess = apply_preprocess(image, requested_preprocess, analysis_before, libs)
     target_width, target_height = resize_dimensions(processed.size[0], processed.size[1], args)
     if (target_width, target_height) != processed.size:
         processed = processed.resize((target_width, target_height), libs["Image"].Resampling.LANCZOS)
-    analysis_after = analyze_image_object(processed, libs)
+    if analysis_requested:
+        require_feature("image_analysis", args)
+        analysis_after = analyze_image_object(processed, libs)
+    else:
+        analysis_after = skipped_analysis("image analysis not requested")
 
     limits = runtime_limits(args)
     quality = int(args.get("quality", 90))
@@ -950,6 +1077,8 @@ def action_get_runtime_settings(args):
                 "jpeg_quality_min": "encoder quality",
                 "jpeg_quality_max": "encoder quality",
             },
+            "feature_flags": config.get("feature_flags", {}),
+            "feature_catalog": FEATURE_CATALOG,
             "extension_routes": config.get("extension_routes", []),
             "display_profile": build_display_profile(config),
         }
@@ -1030,6 +1159,30 @@ def action_set_runtime_limits(args):
     )
 
 
+def action_set_feature_flags(args):
+    config = load_config()
+    if bool(args.get("reset", False)):
+        config["feature_flags"] = copy.deepcopy(DEFAULT_FEATURE_FLAGS)
+    updates = args.get("flags") or {}
+    if not isinstance(updates, dict):
+        return error("flags must be an object")
+    allowed = set(DEFAULT_FEATURE_FLAGS.keys())
+    for key, value in updates.items():
+        if key not in allowed:
+            return error(f"Unknown feature flag: {key}", allowed=sorted(allowed))
+        config["feature_flags"][key] = bool(value)
+    save_config(config)
+    return write_json(
+        {
+            "ok": True,
+            "config_path": str(CONFIG_PATH),
+            "feature_flags": config["feature_flags"],
+            "feature_catalog": FEATURE_CATALOG,
+            "note": "Inactive features return at the tool boundary or skip their optional work so they do not drag the active capture path.",
+        }
+    )
+
+
 def normalized_route(args):
     route_id = safe_filename_part(args.get("id") or args.get("route_id") or "", "")
     if not route_id:
@@ -1041,26 +1194,83 @@ def normalized_route(args):
     settings = args.get("settings") or {}
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
+    handoff_mode = str(args.get("handoff_mode") or "prepared_file").strip().lower()
+    allowed_handoff_modes = ("prepared_file", "external_api", "codex_subagent", "local_command")
+    if handoff_mode not in allowed_handoff_modes:
+        raise ValueError("handoff_mode must be prepared_file, external_api, codex_subagent, or local_command")
+    activation_feature = ROLE_FEATURES.get(role, "extension_routes")
     return {
         "id": route_id,
         "role": role,
+        "activation_feature": activation_feature,
+        "active": feature_enabled(activation_feature),
         "enabled": bool(args.get("enabled", True)),
+        "handoff_mode": handoff_mode,
         "provider": str(args.get("provider") or "").strip(),
         "model": str(args.get("model") or "").strip(),
         "endpoint": str(args.get("endpoint") or "").strip(),
+        "api_key_env": str(args.get("api_key_env") or "").strip(),
         "command": str(args.get("command") or "").strip(),
+        "capabilities": normalized_tags(args.get("capabilities")),
         "settings": settings,
         "notes": str(args.get("notes") or "").strip(),
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 
+def route_prior(role):
+    priors = {
+        "vision_summary": {
+            "feature": "image_narration_routes",
+            "input_types": ["image"],
+            "handoff_modes": ["prepared_file", "external_api", "codex_subagent"],
+            "settings": ["temperature", "quality", "max_tokens", "detail", "language"],
+        },
+        "video_summary": {
+            "feature": "video_narration_routes",
+            "input_types": ["video", "image_sequence", "keyframes"],
+            "handoff_modes": ["prepared_file", "external_api", "codex_subagent"],
+            "settings": ["temperature", "quality", "max_tokens", "detail", "fps", "keyframe_policy", "language"],
+            "note": "Video narration providers are relatively few; this interface keeps provider/model choice outside the capture core.",
+        },
+        "ocr": {
+            "feature": "ocr_routes",
+            "input_types": ["image"],
+            "handoff_modes": ["prepared_file", "external_api", "codex_subagent", "local_command"],
+            "settings": ["language", "quality", "layout_mode"],
+        },
+        "transcription": {
+            "feature": "video_narration_routes",
+            "input_types": ["audio", "video"],
+            "handoff_modes": ["prepared_file", "external_api", "codex_subagent"],
+            "settings": ["language", "temperature", "timestamps"],
+        },
+    }
+    return priors.get(role, {"feature": "extension_routes", "input_types": ["file"], "handoff_modes": ["prepared_file"]})
+
+
+def route_with_current_activation(route, args=None):
+    if not isinstance(route, dict):
+        return route
+    decorated = copy.deepcopy(route)
+    activation_feature = decorated.get("activation_feature") or ROLE_FEATURES.get(decorated.get("role"), "extension_routes")
+    decorated["activation_feature"] = activation_feature
+    decorated["active"] = bool(decorated.get("enabled", True)) and feature_enabled(activation_feature, args)
+    return decorated
+
+
 def action_list_extension_routes(args):
+    try:
+        require_feature("extension_routes", args)
+    except Exception as exc:
+        return error(str(exc), feature="extension_routes")
     config = load_config()
+    flags = feature_flags(args)
     role = str(args.get("role") or "").strip().lower()
     routes = config.get("extension_routes", [])
     if role:
         routes = [route for route in routes if str(route.get("role", "")).lower() == role]
+    routes = [route_with_current_activation(route, args) for route in routes]
     return write_json(
         {
             "ok": True,
@@ -1068,6 +1278,8 @@ def action_list_extension_routes(args):
             "contract": {
                 "roles": ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
                 "settings_examples": ["temperature", "quality", "max_tokens", "detail", "language"],
+                "handoff_modes": ["prepared_file", "external_api", "codex_subagent", "local_command"],
+                "feature_flags": flags,
                 "execution": "Routes are registered only in the ultra-light model. External adapters can read prepared request files.",
             },
         }
@@ -1075,6 +1287,10 @@ def action_list_extension_routes(args):
 
 
 def action_set_extension_route(args):
+    try:
+        require_feature("extension_routes", args)
+    except Exception as exc:
+        return error(str(exc), feature="extension_routes")
     config = load_config()
     route_id = safe_filename_part(args.get("id") or args.get("route_id") or "", "")
     if bool(args.get("remove", False)):
@@ -1094,17 +1310,21 @@ def action_set_extension_route(args):
     return write_json({"ok": True, "route": route, "routes": routes})
 
 
-def route_by_id(config, route_id):
+def route_by_id(config, route_id, args=None):
     for route in config.get("extension_routes", []):
         if route.get("id") == route_id:
-            return route
+            return route_with_current_activation(route, args)
     return None
 
 
 def action_prepare_model_request(args):
+    try:
+        require_feature("model_request_envelopes", args)
+    except Exception as exc:
+        return error(str(exc), feature="model_request_envelopes")
     config = load_config()
     route_id = str(args.get("route_id") or "").strip()
-    route = route_by_id(config, route_id) if route_id else None
+    route = route_by_id(config, route_id, args) if route_id else None
     role = str(args.get("role") or (route or {}).get("role") or "vision_summary").strip().lower()
     settings = {}
     if route and isinstance(route.get("settings"), dict):
@@ -1125,6 +1345,8 @@ def action_prepare_model_request(args):
         "followup_of": str(args.get("followup_of") or "").strip(),
         "questions": normalized_tags(args.get("questions")),
         "settings": settings,
+        "route_prior": route_prior(role),
+        "feature_flags": feature_flags(args),
         "context": capture_context(args),
         "execution": {
             "status": "prepared",
@@ -1278,6 +1500,7 @@ def action_list_displays(args):
 
 def action_list_windows(args):
     try:
+        require_feature("window_capture", args)
         windows = enum_windows(args)
         limit = int(args.get("limit", 50))
         return write_json({"ok": True, "windows": windows[: max(1, min(limit, 200))], "count": len(windows)})
@@ -1286,6 +1509,7 @@ def action_list_windows(args):
 
 
 def save_capture_from_args(args, region=None):
+    require_feature("screen_capture", args)
     args = dict(args)
     if region is not None:
         args["region"] = region
@@ -1317,6 +1541,7 @@ def action_capture_region(args):
 
 def action_capture_window(args):
     try:
+        require_feature("window_capture", args)
         image, source, libs = grab_window_image(args)
         return write_json(save_capture_image(image, source, libs, args))
     except Exception as exc:
@@ -1324,6 +1549,10 @@ def action_capture_window(args):
 
 
 def action_analyze_image(args):
+    try:
+        require_feature("image_analysis", args)
+    except Exception as exc:
+        return error(str(exc), feature="image_analysis")
     path = Path(str(args.get("path") or "")).expanduser()
     if not path.exists():
         return error("path does not exist")
@@ -1336,6 +1565,10 @@ def action_analyze_image(args):
 
 
 def action_preprocess_image(args):
+    try:
+        require_feature("image_preprocess", args)
+    except Exception as exc:
+        return error(str(exc), feature="image_preprocess")
     path = Path(str(args.get("path") or "")).expanduser()
     if not path.exists():
         return error("path does not exist")
@@ -1351,6 +1584,7 @@ def action_preprocess_image(args):
 
 def action_watch_screen(args):
     try:
+        require_feature("bounded_watch", args)
         watch_args = args_with_region_from_flat(args)
         limits = runtime_limits(args)
         duration = float(args.get("duration_seconds", 3))
@@ -1459,6 +1693,7 @@ ACTIONS = {
     "set_cache_path": action_set_cache_path,
     "set_storage_routes": action_set_storage_routes,
     "set_runtime_limits": action_set_runtime_limits,
+    "set_feature_flags": action_set_feature_flags,
     "list_extension_routes": action_list_extension_routes,
     "set_extension_route": action_set_extension_route,
     "prepare_model_request": action_prepare_model_request,

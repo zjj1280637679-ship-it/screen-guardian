@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.8` adds policy and route extensibility: runtime limits can be changed or removed, captures can be saved to multiple local routes, and model/program routes can be registered for future judgment, OCR, image narration, video narration, transcription, and follow-up questions.
+Version `0.1.9` replaces separate product-weight thinking with optional capability flags: inactive features do not run optional work, while image/API/subagent and video narration routes can be kept as lightweight interfaces.
 
 ## Purpose
 
@@ -38,6 +38,7 @@ Screen Guardian treats that as the design problem: AI capability should not depe
 - Text-heavy screenshots that should be sharpened, downscaled, tagged, or held as files before entering AI context.
 - Future OCR, video, or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
 - Users who want limits, storage paths, model settings, or workflow stages to be configurable instead of hard-coded.
+- Users who want one plugin where optional features can stay inactive without slowing the active capture path.
 
 ## Compatibility adapter model
 
@@ -67,25 +68,18 @@ Codex reads plugin card metadata from the manifest, so a manifest-applied rename
 
 See [docs/NAMING.md](docs/NAMING.md) for details.
 
-## Product model roadmap
+## Capability activation
 
-Screen Guardian is planned as a family of capability models. The current repository is still the ultra-light foundation: small enough to validate compatibility, useful enough to solve the first real problem, and simple enough to rewrite when a better adapter appears.
+Screen Guardian no longer needs separate lightweight/practical/heavy plugin variants. It is one compatibility-first plugin with optional capability flags.
 
-| Model | Status | Intended user | Capability shape | Dependency stance |
-| --- | --- | --- | --- | --- |
-| Ultra-light foundation | Current | Users blocked by one missing or incompatible screenshot path | Single screenshots, region/window capture, display listing, configurable bounded change capture, image preprocessing, workflow sidecars, multi-route saves, extension-route registry, cache cleanup, adapter probing | Minimal, local, easy to inspect |
-| Lightweight | Planned | Users who need a dependable daily fallback for AI screen access | More capture adapters, better diagnostics, preset regions, safer cache controls, simple privacy prompts | Still light; optional extras only |
-| Practical | Planned | Users who want AI to observe short workflows, not just one screen | Bounded continuous screenshots, frame-diff detection, short recording, summarization bridge, context-saving image descriptions | Medium; FFmpeg and vision helpers are optional adapters |
-| Heavy | Planned | Users building a local visual memory or agent workstation | Longer capture sessions, OCR, timeline search, video summaries, app/window filters, subagent routing, storage policies | Heavier, but explicit and modular |
+Inactive features should avoid optional work: no polling loop, no extra mirror copy, no heuristic image analysis, no preprocessing, no OCR bridge, no external API request, and no subagent handoff unless the user enables or explicitly calls that path.
 
-The goal is not to make everyone run the Heavy model. The goal is to let users choose how much capability they want without losing compatibility or control.
-
-See [docs/MODELS.md](docs/MODELS.md) for the model roadmap in more detail.
+See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Current tools
 
 - Check screenshot dependencies
-- Read or set runtime settings, persistent cache path, mirror storage routes, and configurable limits
+- Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
 - Register judgment/OCR/narration/transcription routes for future adapters
 - Prepare model request files with prompt, questions, temperature, quality, and other settings
 - Read or set the local display-name profile
@@ -109,7 +103,7 @@ Captures are saved locally by default:
 ~/Pictures/ScreenGuardian
 ```
 
-See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, project/workflow markers, runtime limits, multi-route saves, model request envelopes, preprocessing, and bounded watch details.
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, preprocessing, and bounded watch details.
 
 ## Dependencies
 

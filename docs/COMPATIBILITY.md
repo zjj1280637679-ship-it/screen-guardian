@@ -61,6 +61,10 @@ Runtime limits, storage routes, and model/program routes are intentionally confi
 
 The route registry does not execute arbitrary commands in the ultra-light model. It records provider/model/settings metadata and can produce local request envelopes for another adapter, subagent, or model bridge to handle.
 
+Feature flags are the performance boundary. Disabled modules should not import optional dependencies, start loops, copy mirrors, run image heuristics, call APIs, or trigger subagents. This lets one plugin expose many possible paths without making every path part of the hot capture path.
+
+Image narration routes can point to a user-provided API or a future Codex subagent handoff. Video narration routes are kept as prior interfaces because practical video-capable models are relatively few; Screen Guardian records provider, model, input expectations, and settings without forcing a provider choice.
+
 ## Planned Adapters
 
 | Adapter | Role | Why optional |
@@ -69,7 +73,8 @@ The route registry does not execute arbitrary commands in the ultra-light model.
 | `screen-capture-lite` | High-frequency capture and frame-diff callbacks | Better performance, native build cost |
 | `native-wgc` | Modern Windows Graphics Capture path | Fast on supported systems, fragile on unsupported ones |
 | `ocr-adapter` | Convert text-heavy screenshots into text | Valuable but should not be mandatory |
-| `vision-summary-adapter` | Convert image/video files into compact descriptions | Useful for context pressure, but model/provider choice should stay modular |
+| `vision-summary-adapter` | Convert image files into compact descriptions | Useful for context pressure, but model/provider choice should stay modular |
+| `video-summary-adapter` | Convert videos, keyframes, or image sequences into compact descriptions | Useful but provider choices are few and should stay explicit |
 | `route-bridge` | Execute prepared judgment/OCR/narration requests | Keeps model choice, temperature, quality, and follow-up behavior outside the capture core |
 | `external-backend` | User-provided local capture service | Lets advanced users bring their own backend |
 
@@ -81,6 +86,7 @@ The route registry does not execute arbitrary commands in the ultra-light model.
 4. Keep tool inputs stable across backend changes.
 5. Return structured dependency hints when no backend is available.
 6. Keep bounded watch capture short and explicit.
-7. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
+7. Gate optional work through feature flags.
+8. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
 
 This keeps positive freedom high by expanding what personal AI can do, while preserving negative freedom by avoiding forced upgrades, forced background services, and one-path lock-in.

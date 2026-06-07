@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.8";
+const SERVER_VERSION = "0.1.9";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -93,6 +93,16 @@ const imageOutputProperties = {
     type: "object",
     description: "Optional per-call runtime limit overrides.",
     additionalProperties: true,
+  },
+  feature_flags: {
+    type: "object",
+    description: "Optional per-call feature flag overrides.",
+    additionalProperties: true,
+  },
+  analyze: {
+    type: "boolean",
+    default: false,
+    description: "When true, run local heuristic image analysis for this saved capture.",
   },
 };
 
@@ -213,6 +223,26 @@ const tools = [
     },
   },
   {
+    name: "set_feature_flags",
+    description: "Enable, disable, or reset optional capability modules so inactive features do not run optional work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reset: {
+          type: "boolean",
+          default: false,
+          description: "Reset feature flags to defaults before applying updates.",
+        },
+        flags: {
+          type: "object",
+          description: "Feature flag updates such as image_analysis:false or video_narration_routes:true.",
+          additionalProperties: true,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "list_extension_routes",
     description: "List registered judgment, OCR, image narration, video narration, transcription, or custom adapter routes.",
     inputSchema: {
@@ -250,6 +280,12 @@ const tools = [
           type: "boolean",
           default: true,
         },
+        handoff_mode: {
+          type: "string",
+          enum: ["prepared_file", "external_api", "codex_subagent", "local_command"],
+          default: "prepared_file",
+          description: "How a future adapter should hand off this route. Ultra-light mode only records this choice.",
+        },
         provider: {
           type: "string",
           description: "Provider or adapter family name.",
@@ -262,9 +298,18 @@ const tools = [
           type: "string",
           description: "Optional endpoint for a future adapter bridge.",
         },
+        api_key_env: {
+          type: "string",
+          description: "Optional environment-variable name that a future external API bridge can read.",
+        },
         command: {
           type: "string",
           description: "Optional local command descriptor for a future adapter bridge. Ultra-light mode does not execute it.",
+        },
+        capabilities: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional route capabilities, such as keyframes, timestamps, ocr, or followups.",
         },
         settings: {
           type: "object",
@@ -785,6 +830,9 @@ async function callTool(name, args) {
   }
   if (name === "set_runtime_limits") {
     return runPython("set_runtime_limits", args);
+  }
+  if (name === "set_feature_flags") {
+    return runPython("set_feature_flags", args);
   }
   if (name === "list_extension_routes") {
     return runPython("list_extension_routes", args);
