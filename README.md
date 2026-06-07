@@ -4,9 +4,22 @@
 
 Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
-It is meant to provide an independent visual input path when Computer Use screenshot capture is unavailable or incompatible.
+It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.2` upgrades the plugin artwork to a glowing sprite-style icon while keeping the smallest useful surface: local screenshots, monitor listing, region capture, downscaling, and cache cleanup.
+Version `0.1.3` reframes the project purpose around freedom-preserving AI capability while keeping the smallest useful surface: local screenshots, monitor listing, region capture, downscaling, and cache cleanup.
+
+## Purpose
+
+Screen Guardian is not only a screenshot helper. Its broader goal is to help users reach positive freedom with AI: more practical capability, more ways for their AI to perceive local work, and more room to build personal workflows.
+
+At the same time, it should not reduce negative freedom. Users should not have to upgrade Windows, replace their environment, accept heavy background services, or install a long chain of dependencies just to give their AI basic visual access.
+
+The project is guided by four principles:
+
+- Expand user agency by giving personal AI more useful local capabilities.
+- Preserve user control through local-only defaults and explicit capture actions.
+- Prefer compatibility paths that work on older or constrained systems.
+- Keep dependencies light, optional, and explainable.
 
 ## Current tools
 
