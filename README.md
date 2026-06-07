@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide an independent visual input path when Computer Use screenshot capture is unavailable or incompatible.
 
-Version `0.1.1` adds branded icon artwork for the Codex plugin card while keeping the smallest useful surface: local screenshots, monitor listing, region capture, downscaling, and cache cleanup.
+Version `0.1.2` upgrades the plugin artwork to a glowing sprite-style icon while keeping the smallest useful surface: local screenshots, monitor listing, region capture, downscaling, and cache cleanup.
 
 ## Current tools
 

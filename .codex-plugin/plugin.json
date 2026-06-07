@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.1+codex.20260607211150",
+  "version": "0.1.2+codex.20260607212754",
   "description": "Local screen capture helpers for Codex on Windows.",
   "author": {
     "name": "ClaudeUser"
@@ -16,7 +16,7 @@
       "Interactive",
       "Read"
     ],
-    "brandColor": "#635BFF",
+    "brandColor": "#6D63FF",
     "composerIcon": "./assets/composer-icon.png",
     "logo": "./assets/logo.png",
     "defaultPrompt": [
