@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.4` adds a compatibility adapter surface so screen access can degrade gracefully when one capture path fails.
+Version `0.1.5` documents the product model roadmap. The current release is the ultra-light foundation, with future planning split into Lightweight, Practical, and Heavy models.
 
 ## Purpose
 
@@ -49,6 +49,21 @@ The contract is intentionally simple:
 - Report missing dependencies with install hints instead of failing silently.
 
 See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for the planned dependency-compromise interface.
+
+## Product model roadmap
+
+Screen Guardian is planned as a family of capability models. The current repository is still the ultra-light foundation: small enough to validate compatibility, useful enough to solve the first real problem, and simple enough to rewrite when a better adapter appears.
+
+| Model | Status | Intended user | Capability shape | Dependency stance |
+| --- | --- | --- | --- | --- |
+| Ultra-light foundation | Current | Users blocked by one missing or incompatible screenshot path | Single screenshots, region capture, display listing, downscaling, cache cleanup, adapter probing | Minimal, local, easy to inspect |
+| Lightweight | Planned | Users who need a dependable daily fallback for AI screen access | More capture adapters, better diagnostics, preset regions, safer cache controls, simple privacy prompts | Still light; optional extras only |
+| Practical | Planned | Users who want AI to observe short workflows, not just one screen | Bounded continuous screenshots, frame-diff detection, short recording, summarization bridge, context-saving image descriptions | Medium; FFmpeg and vision helpers are optional adapters |
+| Heavy | Planned | Users building a local visual memory or agent workstation | Longer capture sessions, OCR, timeline search, video summaries, app/window filters, subagent routing, storage policies | Heavier, but explicit and modular |
+
+The goal is not to make everyone run the Heavy model. The goal is to let users choose how much capability they want without losing compatibility or control.
+
+See [docs/MODELS.md](docs/MODELS.md) for the model roadmap in more detail.
 
 ## Current tools
 
