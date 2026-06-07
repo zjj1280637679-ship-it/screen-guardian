@@ -57,6 +57,10 @@ The current ultra-light model can write metadata sidecars for project IDs, workf
 
 Image analysis and preprocessing are local Pillow-based heuristics. They can recommend whether a capture looks more like text, UI, photo, or mixed content, then apply presets such as text sharpening or UI sharpening. OCR and model-based image/video narration remain optional future adapters, not required dependencies.
 
+Runtime limits, storage routes, and model/program routes are intentionally configurable. The default ultra-light limits protect ordinary use, but users can change or remove configurable bounds, save captures to multiple local folders, and register adapter routes for judgment, OCR, image narration, video narration, transcription, or custom workflows.
+
+The route registry does not execute arbitrary commands in the ultra-light model. It records provider/model/settings metadata and can produce local request envelopes for another adapter, subagent, or model bridge to handle.
+
 ## Planned Adapters
 
 | Adapter | Role | Why optional |
@@ -66,6 +70,7 @@ Image analysis and preprocessing are local Pillow-based heuristics. They can rec
 | `native-wgc` | Modern Windows Graphics Capture path | Fast on supported systems, fragile on unsupported ones |
 | `ocr-adapter` | Convert text-heavy screenshots into text | Valuable but should not be mandatory |
 | `vision-summary-adapter` | Convert image/video files into compact descriptions | Useful for context pressure, but model/provider choice should stay modular |
+| `route-bridge` | Execute prepared judgment/OCR/narration requests | Keeps model choice, temperature, quality, and follow-up behavior outside the capture core |
 | `external-backend` | User-provided local capture service | Lets advanced users bring their own backend |
 
 ## Fallback Strategy

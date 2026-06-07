@@ -23,6 +23,9 @@ Use this skill when the user asks to:
 - run a short bounded change-triggered watch
 - tag captures with project/workflow metadata
 - analyze or preprocess a local image before deciding how much context to spend
+- change or remove runtime limits when the user explicitly wants different bounds
+- save captures to multiple local routes
+- register model/program routes or prepare narration/transcription request files
 
 ## Safety defaults
 
@@ -31,6 +34,7 @@ Use this skill when the user asks to:
 - Do not upload screenshots automatically.
 - Mention the saved file path when a capture succeeds.
 - Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
+- Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
 
 ## Tools
 
@@ -39,6 +43,11 @@ Prefer the `screen_guardian` MCP tools:
 - `check_dependencies`
 - `get_runtime_settings`
 - `set_cache_path`
+- `set_storage_routes`
+- `set_runtime_limits`
+- `list_extension_routes`
+- `set_extension_route`
+- `prepare_model_request`
 - `get_display_profile`
 - `set_display_name`
 - `apply_display_profile`

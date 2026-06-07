@@ -13,6 +13,8 @@ The current version is intentionally smaller than the planned product models. It
 - project/workflow metadata can mark files before they enter context
 - short bounded change detection can catch UI changes without becoming a background recorder
 - local image heuristics can choose text/UI/photo preprocessing before optional OCR or narration exists
+- runtime limits and storage routes can be changed without rewriting capture tools
+- model/program routes can be registered before heavy adapters exist
 
 This stage should stay easy to understand and easy to rewrite.
 
@@ -28,6 +30,7 @@ Expected features:
 - stronger cache cleanup controls
 - simple safety prompts for sensitive capture contexts
 - richer project/workflow handoff conventions
+- presets for common storage routes and runtime-limit profiles
 
 Dependency policy:
 
@@ -47,6 +50,7 @@ Expected features:
 - OCR for text-heavy screenshots
 - image summarization bridge
 - optional video summarization bridge
+- follow-up question handling for narration or transcription routes
 - context-pressure controls such as downscaling and key-frame selection
 
 Dependency policy:

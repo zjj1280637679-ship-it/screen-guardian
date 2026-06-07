@@ -1,9 +1,11 @@
 import ctypes
 import ctypes.wintypes
+import copy
 import json
 import locale
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -16,11 +18,26 @@ PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "ScreenGuardian"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
+DEFAULT_LIMITS = {
+    "watch_duration_seconds_max": 30,
+    "watch_interval_seconds_min": 0.1,
+    "watch_interval_seconds_max": 5,
+    "watch_max_captures_max": 50,
+    "watch_burst_frames_max": 10,
+    "capture_scale_min": 0.01,
+    "capture_scale_max": 1,
+    "jpeg_quality_min": 1,
+    "jpeg_quality_max": 95,
+}
+
 DEFAULT_CONFIG = {
     "mode": "auto",
     "manual_name": "",
     "manual_short_description": "",
     "cache_dir": "",
+    "extra_output_dirs": [],
+    "runtime_limits": DEFAULT_LIMITS,
+    "extension_routes": [],
 }
 
 DISPLAY_PROFILES = {
@@ -69,19 +86,29 @@ def error(message, **extra):
     return 1
 
 
+def deep_merge(default, data):
+    result = copy.deepcopy(default)
+    if not isinstance(data, dict):
+        return result
+    for key, value in data.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def read_json_file(path, default):
     try:
         if not path.exists():
-            return dict(default)
+            return copy.deepcopy(default)
         with path.open("r", encoding="utf-8") as file:
             data = json.load(file)
         if not isinstance(data, dict):
-            return dict(default)
-        merged = dict(default)
-        merged.update(data)
-        return merged
+            return copy.deepcopy(default)
+        return deep_merge(default, data)
     except Exception:
-        return dict(default)
+        return copy.deepcopy(default)
 
 
 def write_json_file(path, data):
@@ -96,12 +123,80 @@ def load_config():
     mode = str(config.get("mode", "auto")).lower()
     if mode not in ("auto", "manual"):
         config["mode"] = "auto"
+    if not isinstance(config.get("extra_output_dirs"), list):
+        config["extra_output_dirs"] = []
+    if not isinstance(config.get("runtime_limits"), dict):
+        config["runtime_limits"] = copy.deepcopy(DEFAULT_LIMITS)
+    else:
+        config["runtime_limits"] = deep_merge(DEFAULT_LIMITS, config["runtime_limits"])
+    if not isinstance(config.get("extension_routes"), list):
+        config["extension_routes"] = []
     return config
 
 
 def save_config(config):
     config["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     write_json_file(CONFIG_PATH, config)
+
+
+def parse_unbounded_number(value):
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in ("", "none", "null", "unbounded", "off", "disabled"):
+        return None
+    number = float(value)
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def runtime_limits(args=None):
+    config = load_config()
+    limits = deep_merge(DEFAULT_LIMITS, config.get("runtime_limits") or {})
+    args = args or {}
+    if isinstance(args.get("runtime_limits"), dict):
+        limits = deep_merge(limits, args["runtime_limits"])
+    if isinstance(args.get("limit_overrides"), dict):
+        limits = deep_merge(limits, args["limit_overrides"])
+    return limits
+
+
+def check_min_max(value, min_value, max_value, label):
+    if min_value is not None and value < float(min_value):
+        raise ValueError(f"{label} must be at least {min_value}")
+    if max_value is not None and value > float(max_value):
+        raise ValueError(f"{label} must be no more than {max_value}")
+
+
+def normalize_path_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = str(value).split(",")
+    paths = []
+    for item in raw:
+        text = str(item or "").strip()
+        if text:
+            paths.append(Path(text).expanduser())
+    return paths
+
+
+def serialize_paths(paths):
+    return [str(path) for path in paths]
+
+
+def dedupe_paths(paths):
+    seen = set()
+    result = []
+    for path in paths:
+        key = str(path.resolve() if path.exists() else path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
 
 
 def normalize_locale_key(raw):
@@ -275,6 +370,9 @@ def window_adapter_status():
 
 def get_cache_dir(args=None):
     args = args or {}
+    output_dirs = normalize_path_list(args.get("output_dirs"))
+    if output_dirs and not (args.get("output_dir") or args.get("cache_dir")):
+        return output_dirs[0]
     output_dir = args.get("output_dir") or args.get("cache_dir")
     if output_dir:
         return Path(output_dir).expanduser()
@@ -287,6 +385,22 @@ def get_cache_dir(args=None):
 def ensure_cache_dir(path):
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def output_routes(args=None):
+    args = args or {}
+    primary = get_cache_dir(args)
+    mirrors = []
+    explicit_dirs = normalize_path_list(args.get("output_dirs"))
+    if explicit_dirs:
+        if args.get("output_dir") or args.get("cache_dir"):
+            mirrors.extend(explicit_dirs)
+        else:
+            mirrors.extend(explicit_dirs[1:])
+    mirrors.extend(normalize_path_list(args.get("mirror_dirs")))
+    mirrors.extend(normalize_path_list(load_config().get("extra_output_dirs")))
+    mirrors = [path for path in dedupe_paths(mirrors) if str(path).lower() != str(primary).lower()]
+    return primary, mirrors
 
 
 def safe_filename_part(value, fallback="capture"):
@@ -359,6 +473,7 @@ def capture_box(sct, args):
 
 
 def resize_dimensions(width, height, args):
+    limits = runtime_limits(args)
     scale = args.get("scale")
     max_width = args.get("max_width")
     max_height = args.get("max_height")
@@ -368,8 +483,9 @@ def resize_dimensions(width, height, args):
 
     if scale is not None:
         scale = float(scale)
-        if scale <= 0 or scale > 1:
-            raise ValueError("scale must be greater than 0 and no more than 1")
+        if scale <= 0:
+            raise ValueError("scale must be greater than 0")
+        check_min_max(scale, limits.get("capture_scale_min"), limits.get("capture_scale_max"), "scale")
         new_width = max(1, round(new_width * scale))
         new_height = max(1, round(new_height * scale))
 
@@ -550,7 +666,8 @@ def output_filename(args, fmt):
 
 def save_capture_image(image, source, libs, args):
     fmt = normalized_format(args.get("format", "png"))
-    output_dir = ensure_cache_dir(get_cache_dir(args))
+    output_dir, mirror_dirs = output_routes(args)
+    output_dir = ensure_cache_dir(output_dir)
     output_path = output_dir / output_filename(args, fmt)
     original_width, original_height = image.size
     analysis_before = analyze_image_object(image, libs)
@@ -560,12 +677,20 @@ def save_capture_image(image, source, libs, args):
         processed = processed.resize((target_width, target_height), libs["Image"].Resampling.LANCZOS)
     analysis_after = analyze_image_object(processed, libs)
 
+    limits = runtime_limits(args)
     quality = int(args.get("quality", 90))
     if fmt == "jpg":
-        quality = max(1, min(95, quality))
+        check_min_max(quality, limits.get("jpeg_quality_min"), limits.get("jpeg_quality_max"), "quality")
         processed.convert("RGB").save(output_path, "JPEG", quality=quality)
     else:
         processed.save(output_path, "PNG")
+
+    mirror_paths = []
+    for mirror_dir in mirror_dirs:
+        mirror_dir = ensure_cache_dir(mirror_dir)
+        mirror_path = mirror_dir / output_path.name
+        shutil.copy2(output_path, mirror_path)
+        mirror_paths.append(str(mirror_path))
 
     metadata = {
         "plugin": PLUGIN_NAME,
@@ -579,15 +704,31 @@ def save_capture_image(image, source, libs, args):
         "preprocess": {"requested": str(args.get("preprocess", "none")), "applied": applied_preprocess},
         "analysis": analysis_after,
         "analysis_before_preprocess": analysis_before,
+        "storage": {
+            "primary_path": str(output_path),
+            "mirror_paths": mirror_paths,
+        },
         "privacy": "Saved locally only.",
     }
     metadata_path = write_metadata_sidecar(output_path, metadata, args)
+    mirror_metadata_paths = []
+    if metadata_path:
+        for mirror_path in mirror_paths:
+            mirror_metadata = copy.deepcopy(metadata)
+            mirror_metadata["path"] = mirror_path
+            mirror_metadata["storage"]["primary_path"] = str(output_path)
+            mirror_metadata["storage"]["is_mirror"] = True
+            mirror_metadata_path = Path(mirror_path).with_suffix(Path(mirror_path).suffix + ".meta.json")
+            write_json_file(mirror_metadata_path, mirror_metadata)
+            mirror_metadata_paths.append(str(mirror_metadata_path))
 
     result = {
         "ok": True,
         "adapter": source.get("adapter"),
         "path": str(output_path),
         "metadata_path": metadata_path,
+        "mirror_paths": mirror_paths,
+        "mirror_metadata_paths": mirror_metadata_paths,
         "format": fmt,
         "source": source,
         "display": source.get("display"),
@@ -788,13 +929,28 @@ def grab_watch_image(args):
 
 def action_get_runtime_settings(args):
     config = load_config()
+    primary, mirrors = output_routes({})
     return write_json(
         {
             "ok": True,
             "config_path": str(CONFIG_PATH),
             "default_cache_dir": str(DEFAULT_CACHE_DIR),
-            "active_cache_dir": str(get_cache_dir({})),
+            "active_cache_dir": str(primary),
             "cache_dir_configured": str(config.get("cache_dir") or ""),
+            "extra_output_dirs": serialize_paths(mirrors),
+            "runtime_limits": config.get("runtime_limits", {}),
+            "runtime_limit_units": {
+                "watch_duration_seconds_max": "seconds",
+                "watch_interval_seconds_min": "seconds",
+                "watch_interval_seconds_max": "seconds",
+                "watch_max_captures_max": "frames",
+                "watch_burst_frames_max": "frames",
+                "capture_scale_min": "multiplier",
+                "capture_scale_max": "multiplier",
+                "jpeg_quality_min": "encoder quality",
+                "jpeg_quality_max": "encoder quality",
+            },
+            "extension_routes": config.get("extension_routes", []),
             "display_profile": build_display_profile(config),
         }
     )
@@ -817,6 +973,169 @@ def action_set_cache_path(args):
             "cache_dir_configured": str(config.get("cache_dir") or ""),
         }
     )
+
+
+def action_set_storage_routes(args):
+    config = load_config()
+    if "cache_dir" in args:
+        cache_dir = str(args.get("cache_dir") or "").strip()
+        if cache_dir:
+            config["cache_dir"] = str(ensure_cache_dir(Path(cache_dir).expanduser()))
+        else:
+            config["cache_dir"] = ""
+    if bool(args.get("clear_extra_output_dirs", False)):
+        config["extra_output_dirs"] = []
+    if "extra_output_dirs" in args:
+        dirs = []
+        for path in normalize_path_list(args.get("extra_output_dirs")):
+            if bool(args.get("create_dirs", True)):
+                path = ensure_cache_dir(path)
+            dirs.append(str(path))
+        config["extra_output_dirs"] = dirs
+    save_config(config)
+    primary, mirrors = output_routes({})
+    return write_json(
+        {
+            "ok": True,
+            "config_path": str(CONFIG_PATH),
+            "active_cache_dir": str(primary),
+            "extra_output_dirs": serialize_paths(mirrors),
+        }
+    )
+
+
+def action_set_runtime_limits(args):
+    config = load_config()
+    if bool(args.get("reset", False)):
+        config["runtime_limits"] = copy.deepcopy(DEFAULT_LIMITS)
+    updates = args.get("limits") or {}
+    if not isinstance(updates, dict):
+        return error("limits must be an object")
+    allowed = set(DEFAULT_LIMITS.keys())
+    for key, value in updates.items():
+        if key not in allowed:
+            return error(f"Unknown runtime limit: {key}", allowed=sorted(allowed))
+        try:
+            config["runtime_limits"][key] = parse_unbounded_number(value)
+        except Exception:
+            return error(f"Invalid numeric value for {key}")
+    save_config(config)
+    return write_json(
+        {
+            "ok": True,
+            "config_path": str(CONFIG_PATH),
+            "runtime_limits": config["runtime_limits"],
+            "note": "Use null, 'none', or 'unbounded' to remove a configurable upper/lower limit where the underlying encoder or geometry still permits it.",
+        }
+    )
+
+
+def normalized_route(args):
+    route_id = safe_filename_part(args.get("id") or args.get("route_id") or "", "")
+    if not route_id:
+        raise ValueError("route id is required")
+    role = str(args.get("role") or "vision_summary").strip().lower()
+    allowed_roles = ("judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom")
+    if role not in allowed_roles:
+        raise ValueError("role must be judgment, ocr, vision_summary, video_summary, transcription, or custom")
+    settings = args.get("settings") or {}
+    if not isinstance(settings, dict):
+        raise ValueError("settings must be an object")
+    return {
+        "id": route_id,
+        "role": role,
+        "enabled": bool(args.get("enabled", True)),
+        "provider": str(args.get("provider") or "").strip(),
+        "model": str(args.get("model") or "").strip(),
+        "endpoint": str(args.get("endpoint") or "").strip(),
+        "command": str(args.get("command") or "").strip(),
+        "settings": settings,
+        "notes": str(args.get("notes") or "").strip(),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def action_list_extension_routes(args):
+    config = load_config()
+    role = str(args.get("role") or "").strip().lower()
+    routes = config.get("extension_routes", [])
+    if role:
+        routes = [route for route in routes if str(route.get("role", "")).lower() == role]
+    return write_json(
+        {
+            "ok": True,
+            "routes": routes,
+            "contract": {
+                "roles": ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+                "settings_examples": ["temperature", "quality", "max_tokens", "detail", "language"],
+                "execution": "Routes are registered only in the ultra-light model. External adapters can read prepared request files.",
+            },
+        }
+    )
+
+
+def action_set_extension_route(args):
+    config = load_config()
+    route_id = safe_filename_part(args.get("id") or args.get("route_id") or "", "")
+    if bool(args.get("remove", False)):
+        if not route_id:
+            return error("route id is required when remove is true")
+        config["extension_routes"] = [route for route in config.get("extension_routes", []) if route.get("id") != route_id]
+        save_config(config)
+        return write_json({"ok": True, "removed": route_id, "routes": config["extension_routes"]})
+    try:
+        route = normalized_route(args)
+    except Exception as exc:
+        return error(str(exc))
+    routes = [item for item in config.get("extension_routes", []) if item.get("id") != route["id"]]
+    routes.append(route)
+    config["extension_routes"] = routes
+    save_config(config)
+    return write_json({"ok": True, "route": route, "routes": routes})
+
+
+def route_by_id(config, route_id):
+    for route in config.get("extension_routes", []):
+        if route.get("id") == route_id:
+            return route
+    return None
+
+
+def action_prepare_model_request(args):
+    config = load_config()
+    route_id = str(args.get("route_id") or "").strip()
+    route = route_by_id(config, route_id) if route_id else None
+    role = str(args.get("role") or (route or {}).get("role") or "vision_summary").strip().lower()
+    settings = {}
+    if route and isinstance(route.get("settings"), dict):
+        settings.update(route["settings"])
+    if isinstance(args.get("settings"), dict):
+        settings.update(args["settings"])
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        prompt = "Describe this visual artifact compactly for an AI agent."
+    request = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "role": role,
+        "route_id": route_id,
+        "route": route,
+        "input_path": str(Path(str(args.get("path") or "")).expanduser()) if args.get("path") else "",
+        "prompt": prompt,
+        "followup_of": str(args.get("followup_of") or "").strip(),
+        "questions": normalized_tags(args.get("questions")),
+        "settings": settings,
+        "context": capture_context(args),
+        "execution": {
+            "status": "prepared",
+            "note": "Ultra-light Screen Guardian writes a request envelope only. A model/subagent adapter can execute it and write a response.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": f"model-request-{role}", **args}, "json")
+    request_path = output_dir / filename
+    write_json_file(request_path, request)
+    return write_json({"ok": True, "request_path": str(request_path), "request": request})
 
 
 def action_get_display_profile(args):
@@ -1033,22 +1352,25 @@ def action_preprocess_image(args):
 def action_watch_screen(args):
     try:
         watch_args = args_with_region_from_flat(args)
+        limits = runtime_limits(args)
         duration = float(args.get("duration_seconds", 3))
         interval = float(args.get("interval_seconds", 0.5))
         threshold = float(args.get("change_threshold", 8.0))
         max_captures = int(args.get("max_captures", 10))
         burst_frames = int(args.get("burst_frames", 1))
         save_initial = bool(args.get("save_initial", False))
-        if duration <= 0 or duration > 30:
-            raise ValueError("duration_seconds must be greater than 0 and no more than 30 in the ultra-light model")
-        if interval < 0.1 or interval > 5:
-            raise ValueError("interval_seconds must be between 0.1 and 5")
+        if duration <= 0:
+            raise ValueError("duration_seconds must be greater than 0")
+        check_min_max(duration, None, limits.get("watch_duration_seconds_max"), "duration_seconds")
+        check_min_max(interval, limits.get("watch_interval_seconds_min"), limits.get("watch_interval_seconds_max"), "interval_seconds")
         if threshold < 0:
             raise ValueError("change_threshold must be zero or greater")
-        if max_captures < 1 or max_captures > 50:
-            raise ValueError("max_captures must be between 1 and 50")
-        if burst_frames < 1 or burst_frames > 10:
-            raise ValueError("burst_frames must be between 1 and 10")
+        if max_captures < 1:
+            raise ValueError("max_captures must be at least 1")
+        check_min_max(max_captures, None, limits.get("watch_max_captures_max"), "max_captures")
+        if burst_frames < 1:
+            raise ValueError("burst_frames must be at least 1")
+        check_min_max(burst_frames, None, limits.get("watch_burst_frames_max"), "burst_frames")
 
         deadline = time.time() + duration
         captures = []
@@ -1096,6 +1418,7 @@ def action_watch_screen(args):
                 "interval_seconds": interval,
                 "change_threshold": threshold,
                 "burst_frames": burst_frames,
+                "runtime_limits": limits,
                 "privacy": "Bounded local watch only; no background service remains running.",
             }
         )
@@ -1134,6 +1457,11 @@ ACTIONS = {
     "check": action_check,
     "get_runtime_settings": action_get_runtime_settings,
     "set_cache_path": action_set_cache_path,
+    "set_storage_routes": action_set_storage_routes,
+    "set_runtime_limits": action_set_runtime_limits,
+    "list_extension_routes": action_list_extension_routes,
+    "set_extension_route": action_set_extension_route,
+    "prepare_model_request": action_prepare_model_request,
     "get_display_profile": action_get_display_profile,
     "set_display_name": action_set_display_name,
     "apply_display_profile": action_apply_display_profile,

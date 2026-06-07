@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.7";
+const SERVER_VERSION = "0.1.8";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -19,9 +19,7 @@ const imageOutputProperties = {
   },
   scale: {
     type: "number",
-    minimum: 0.01,
-    maximum: 1,
-    description: "Optional downscale factor between 0.01 and 1.",
+    description: "Optional scale factor. Bounds are controlled by runtime limits.",
   },
   max_width: {
     type: "integer",
@@ -35,10 +33,8 @@ const imageOutputProperties = {
   },
   quality: {
     type: "integer",
-    minimum: 1,
-    maximum: 95,
     default: 90,
-    description: "JPEG quality when format is jpg.",
+    description: "JPEG quality when format is jpg. Bounds are controlled by runtime limits.",
   },
   preprocess: {
     type: "string",
@@ -82,6 +78,21 @@ const imageOutputProperties = {
   source_label: {
     type: "string",
     description: "Optional short label included in the output filename.",
+  },
+  output_dirs: {
+    type: "array",
+    items: { type: "string" },
+    description: "Optional route list. When output_dir is not set, the first path becomes primary and later paths become mirrors.",
+  },
+  mirror_dirs: {
+    type: "array",
+    items: { type: "string" },
+    description: "Optional per-call mirror output folders.",
+  },
+  runtime_limits: {
+    type: "object",
+    description: "Optional per-call runtime limit overrides.",
+    additionalProperties: true,
   },
 };
 
@@ -148,6 +159,168 @@ const tools = [
           type: "string",
           description: "Persistent local cache folder. Pass an empty string to return to the default Pictures/ScreenGuardian path.",
         },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_storage_routes",
+    description: "Set persistent primary cache and extra mirror output folders.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cache_dir: {
+          type: "string",
+          description: "Persistent primary cache folder. Pass an empty string to return to the default.",
+        },
+        extra_output_dirs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Persistent mirror folders. Captures are copied there after the primary save.",
+        },
+        clear_extra_output_dirs: {
+          type: "boolean",
+          default: false,
+          description: "Clear persistent mirror folders.",
+        },
+        create_dirs: {
+          type: "boolean",
+          default: true,
+          description: "Create configured folders when possible.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_runtime_limits",
+    description: "Set, remove, or reset configurable bounds such as watch duration, capture count, scale, and JPEG quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reset: {
+          type: "boolean",
+          default: false,
+          description: "Reset limits to ultra-light defaults before applying updates.",
+        },
+        limits: {
+          type: "object",
+          description: "Limit updates. Use null, 'none', or 'unbounded' to remove a configurable bound.",
+          additionalProperties: true,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_extension_routes",
+    description: "List registered judgment, OCR, image narration, video narration, transcription, or custom adapter routes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        role: {
+          type: "string",
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          description: "Optional role filter.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_extension_route",
+    description: "Register, update, disable, or remove a model/program route for future judgment, OCR, or narration adapters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Stable route id.",
+        },
+        route_id: {
+          type: "string",
+          description: "Alias for id.",
+        },
+        role: {
+          type: "string",
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          default: "vision_summary",
+        },
+        enabled: {
+          type: "boolean",
+          default: true,
+        },
+        provider: {
+          type: "string",
+          description: "Provider or adapter family name.",
+        },
+        model: {
+          type: "string",
+          description: "Model name or local adapter model id.",
+        },
+        endpoint: {
+          type: "string",
+          description: "Optional endpoint for a future adapter bridge.",
+        },
+        command: {
+          type: "string",
+          description: "Optional local command descriptor for a future adapter bridge. Ultra-light mode does not execute it.",
+        },
+        settings: {
+          type: "object",
+          description: "Route defaults such as temperature, quality, max_tokens, detail, or language.",
+          additionalProperties: true,
+        },
+        notes: {
+          type: "string",
+        },
+        remove: {
+          type: "boolean",
+          default: false,
+          description: "Remove the route matching id/route_id.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_model_request",
+    description: "Write a local request envelope for an external judgment/OCR/narration model, including follow-up questions and model settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        route_id: {
+          type: "string",
+          description: "Optional registered extension route id.",
+        },
+        role: {
+          type: "string",
+          enum: ["judgment", "ocr", "vision_summary", "video_summary", "transcription", "custom"],
+          default: "vision_summary",
+        },
+        path: {
+          type: "string",
+          description: "Optional image/video/local file path for the model request.",
+        },
+        prompt: {
+          type: "string",
+          description: "Primary model instruction.",
+        },
+        followup_of: {
+          type: "string",
+          description: "Optional prior request or response id/path this question follows.",
+        },
+        questions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Follow-up questions for the narration/transcription model.",
+        },
+        settings: {
+          type: "object",
+          description: "Per-request settings such as temperature, quality, max_tokens, detail, or language.",
+          additionalProperties: true,
+        },
+        ...imageOutputProperties,
       },
       additionalProperties: false,
     },
@@ -417,16 +590,13 @@ const tools = [
         duration_seconds: {
           type: "number",
           minimum: 0.1,
-          maximum: 30,
           default: 3,
-          description: "Bounded watch duration. Ultra-light mode caps this at 30 seconds.",
+          description: "Bounded watch duration in seconds. Default runtime limits cap this, but set_runtime_limits can change or remove that cap.",
         },
         interval_seconds: {
           type: "number",
-          minimum: 0.1,
-          maximum: 5,
           default: 0.5,
-          description: "Polling interval between samples.",
+          description: "Polling interval between samples. Bounds are controlled by runtime limits.",
         },
         change_threshold: {
           type: "number",
@@ -437,16 +607,14 @@ const tools = [
         max_captures: {
           type: "integer",
           minimum: 1,
-          maximum: 50,
           default: 10,
-          description: "Maximum captures saved during this bounded watch.",
+          description: "Maximum captures saved during this bounded watch. Bounds are controlled by runtime limits.",
         },
         burst_frames: {
           type: "integer",
           minimum: 1,
-          maximum: 10,
           default: 1,
-          description: "Number of consecutive frames to save after a detected change.",
+          description: "Number of consecutive frames to save after a detected change. Bounds are controlled by runtime limits.",
         },
         save_initial: {
           type: "boolean",
@@ -611,6 +779,21 @@ async function callTool(name, args) {
   }
   if (name === "set_cache_path") {
     return runPython("set_cache_path", args);
+  }
+  if (name === "set_storage_routes") {
+    return runPython("set_storage_routes", args);
+  }
+  if (name === "set_runtime_limits") {
+    return runPython("set_runtime_limits", args);
+  }
+  if (name === "list_extension_routes") {
+    return runPython("list_extension_routes", args);
+  }
+  if (name === "set_extension_route") {
+    return runPython("set_extension_route", args);
+  }
+  if (name === "prepare_model_request") {
+    return runPython("prepare_model_request", args);
   }
   if (name === "get_display_profile") {
     return runPython("get_display_profile", args);

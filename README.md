@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.7` adds the first workflow layer: configurable local cache paths, project/workflow metadata, best-effort window capture, bounded change-triggered capture, and local image analysis/preprocessing presets for context-pressure control.
+Version `0.1.8` adds policy and route extensibility: runtime limits can be changed or removed, captures can be saved to multiple local routes, and model/program routes can be registered for future judgment, OCR, image narration, video narration, transcription, and follow-up questions.
 
 ## Purpose
 
@@ -37,6 +37,7 @@ Screen Guardian treats that as the design problem: AI capability should not depe
 - Short workflow observation where a program or region should be captured immediately when it changes.
 - Text-heavy screenshots that should be sharpened, downscaled, tagged, or held as files before entering AI context.
 - Future OCR, video, or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
+- Users who want limits, storage paths, model settings, or workflow stages to be configurable instead of hard-coded.
 
 ## Compatibility adapter model
 
@@ -72,7 +73,7 @@ Screen Guardian is planned as a family of capability models. The current reposit
 
 | Model | Status | Intended user | Capability shape | Dependency stance |
 | --- | --- | --- | --- | --- |
-| Ultra-light foundation | Current | Users blocked by one missing or incompatible screenshot path | Single screenshots, region/window capture, display listing, bounded change capture, image preprocessing, workflow sidecars, cache cleanup, adapter probing | Minimal, local, easy to inspect |
+| Ultra-light foundation | Current | Users blocked by one missing or incompatible screenshot path | Single screenshots, region/window capture, display listing, configurable bounded change capture, image preprocessing, workflow sidecars, multi-route saves, extension-route registry, cache cleanup, adapter probing | Minimal, local, easy to inspect |
 | Lightweight | Planned | Users who need a dependable daily fallback for AI screen access | More capture adapters, better diagnostics, preset regions, safer cache controls, simple privacy prompts | Still light; optional extras only |
 | Practical | Planned | Users who want AI to observe short workflows, not just one screen | Bounded continuous screenshots, frame-diff detection, short recording, summarization bridge, context-saving image descriptions | Medium; FFmpeg and vision helpers are optional adapters |
 | Heavy | Planned | Users building a local visual memory or agent workstation | Longer capture sessions, OCR, timeline search, video summaries, app/window filters, subagent routing, storage policies | Heavier, but explicit and modular |
@@ -84,7 +85,9 @@ See [docs/MODELS.md](docs/MODELS.md) for the model roadmap in more detail.
 ## Current tools
 
 - Check screenshot dependencies
-- Read or set the persistent local cache path
+- Read or set runtime settings, persistent cache path, mirror storage routes, and configurable limits
+- Register judgment/OCR/narration/transcription routes for future adapters
+- Prepare model request files with prompt, questions, temperature, quality, and other settings
 - Read or set the local display-name profile
 - List compatibility adapters
 - List connected displays
@@ -106,7 +109,7 @@ Captures are saved locally by default:
 ~/Pictures/ScreenGuardian
 ```
 
-See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, project/workflow markers, preprocessing, and bounded watch details.
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, project/workflow markers, runtime limits, multi-route saves, model request envelopes, preprocessing, and bounded watch details.
 
 ## Dependencies
 
@@ -138,7 +141,7 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 
 ## Privacy model
 
-This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request with duration and capture-count limits.
+This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Bounds are configurable because the project treats limits as policy, not permanent product walls.
 
 ## Upgrade path
 
