@@ -1,7 +1,7 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.3+codex.20260607213558",
-  "description": "Compatibility-first AI capability infrastructure for local screen access.",
+  "version": "0.1.4+codex.20260607214704",
+  "description": "Compatibility-first AI screen access with fallback adapters.",
   "author": {
     "name": "ClaudeUser"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Screen Guardian",
     "shortDescription": "Give AI more local capability without forcing upgrades.",
-    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. It expands what a user's AI can do through local visual access while preserving user control, local-only operation, broad compatibility, and lightweight dependencies.",
+    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. It expands local visual access while providing compatibility fallbacks for older systems, constrained environments, and native capture paths that fail without graceful downgrade options.",
     "developerName": "ClaudeUser",
     "category": "Productivity",
     "capabilities": [

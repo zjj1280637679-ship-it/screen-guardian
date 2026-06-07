@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.0";
+const SERVER_VERSION = "0.1.4";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -19,6 +19,15 @@ const tools = [
           description: "Optional local folder for Screen Guardian captures.",
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_adapters",
+    description: "List available compatibility adapters for local screen access.",
+    inputSchema: {
+      type: "object",
+      properties: {},
       additionalProperties: false,
     },
   },
@@ -41,6 +50,12 @@ const tools = [
           type: "integer",
           description: "Display index. Use 0 for the full virtual desktop; 1+ for individual displays.",
           default: 1,
+        },
+        adapter: {
+          type: "string",
+          enum: ["auto", "python-mss"],
+          default: "auto",
+          description: "Capture adapter. Use auto unless a specific backend is needed.",
         },
         output_dir: {
           type: "string",
@@ -88,6 +103,12 @@ const tools = [
           type: "integer",
           description: "Display index used when relative_to_display is true.",
           default: 1,
+        },
+        adapter: {
+          type: "string",
+          enum: ["auto", "python-mss"],
+          default: "auto",
+          description: "Capture adapter. Use auto unless a specific backend is needed.",
         },
         left: {
           type: "integer",
@@ -291,6 +312,9 @@ function runPython(action, args) {
 async function callTool(name, args) {
   if (name === "check_dependencies") {
     return runPython("check", args);
+  }
+  if (name === "list_adapters") {
+    return runPython("list_adapters", args);
   }
   if (name === "list_displays") {
     return runPython("list_displays", args);

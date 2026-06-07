@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.3` reframes the project purpose around freedom-preserving AI capability while keeping the smallest useful surface: local screenshots, monitor listing, region capture, downscaling, and cache cleanup.
+Version `0.1.4` adds a compatibility adapter surface so screen access can degrade gracefully when one capture path fails.
 
 ## Purpose
 
@@ -21,9 +21,39 @@ The project is guided by four principles:
 - Prefer compatibility paths that work on older or constrained systems.
 - Keep dependencies light, optional, and explainable.
 
+## Why this exists
+
+The first real use case came from an older Windows system where a native Computer Use screenshot path was limited by OS-level capture API support. The AI could still read some accessibility text, but native screenshots failed, so the whole visual workflow became fragile.
+
+Screen Guardian treats that as the design problem: AI capability should not depend on one perfect system path. When a native interface, OS version, driver, or dependency is unavailable, the user should get a fallback path instead of losing the feature entirely.
+
+## Concrete use cases
+
+- Older Windows builds where native screen capture APIs are unavailable or partially unsupported.
+- Machines that cannot be upgraded just to satisfy one AI tool's capture backend.
+- Users who want AI visual access without accepting a heavy always-on screen recording service.
+- Agents that need lower-resolution screenshots to understand a UI while keeping context and storage small.
+- Developers who want to swap capture backends without rewriting the whole MCP tool surface.
+- Future video or continuous-capture workflows that need bounded, optional dependencies instead of mandatory heavy installs.
+
+## Compatibility adapter model
+
+Screen Guardian now exposes a small adapter surface through `list_adapters`. The current adapter is `python-mss`, selected through `adapter="auto"` by default.
+
+The contract is intentionally simple:
+
+- Probe available adapters before assuming a capture path works.
+- Keep MCP tool inputs stable even when the backend changes.
+- Return normalized result fields such as `adapter`, `path`, `display`, `capture_box`, and `saved_size`.
+- Prefer lightweight fallbacks first, and make heavier dependencies optional.
+- Report missing dependencies with install hints instead of failing silently.
+
+See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for the planned dependency-compromise interface.
+
 ## Current tools
 
 - Check screenshot dependencies
+- List compatibility adapters
 - List connected displays
 - Capture a full display or virtual desktop
 - Capture a rectangular region

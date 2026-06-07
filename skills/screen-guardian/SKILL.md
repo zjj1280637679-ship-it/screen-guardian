@@ -16,6 +16,7 @@ Use this skill when the user asks to:
 - capture a screen region
 - downscale a screenshot for lower context pressure
 - diagnose whether local screenshot dependencies work
+- inspect compatibility adapters before choosing a capture backend
 
 ## Safety defaults
 
@@ -29,9 +30,10 @@ Use this skill when the user asks to:
 Prefer the `screen_guardian` MCP tools:
 
 - `check_dependencies`
+- `list_adapters`
 - `list_displays`
 - `capture_screen`
 - `capture_region`
 - `clear_cache`
 
-Use `capture_screen` with `max_width` or `scale` when the user only needs a quick visual summary.
+Use `list_adapters` when diagnosing compatibility. Use `capture_screen` with `max_width` or `scale` when the user only needs a quick visual summary.

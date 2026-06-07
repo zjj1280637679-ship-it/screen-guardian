@@ -30,6 +30,74 @@ def import_capture_libs():
         return None, None, str(exc)
 
 
+def mss_adapter_status():
+    mss, Image, import_error = import_capture_libs()
+    status = {
+        "id": "python-mss",
+        "label": "Python MSS",
+        "role": "screen_capture",
+        "priority": 10,
+        "available": import_error is None,
+        "dependencies": ["mss", "Pillow"],
+        "capabilities": [
+            "list_displays",
+            "capture_screen",
+            "capture_region",
+            "downscale",
+            "png",
+            "jpg",
+        ],
+        "compatibility_note": "Pure Python/ctypes path used as the current lightweight fallback for older or constrained Windows systems.",
+    }
+    if import_error:
+        status["import_error"] = import_error
+        status["install_hint"] = f"{sys.executable} -m pip install --user -r scripts/requirements.txt"
+    else:
+        status["versions"] = {
+            "mss": getattr(mss, "__version__", "unknown"),
+            "Pillow": getattr(Image, "__version__", "unknown"),
+        }
+    return status, mss, Image
+
+
+def action_list_adapters(args):
+    status, _mss, _Image = mss_adapter_status()
+    return write_json(
+        {
+            "ok": True,
+            "selected": "auto",
+            "adapters": [status],
+            "contract": {
+                "request_adapter": "Use adapter='auto' unless a specific backend is needed.",
+                "stable_result_fields": [
+                    "ok",
+                    "adapter",
+                    "path",
+                    "display",
+                    "capture_box",
+                    "original_size",
+                    "saved_size",
+                    "privacy",
+                ],
+            },
+        }
+    )
+
+
+def resolve_capture_adapter(args):
+    requested = str(args.get("adapter", "auto")).lower()
+    if requested not in ("auto", "python-mss", "mss"):
+        raise ValueError("adapter must be auto or python-mss")
+
+    status, mss, Image = mss_adapter_status()
+    if not status["available"]:
+        raise RuntimeError(
+            "No capture adapter is available. Install the lightweight dependencies with: "
+            + status["install_hint"]
+        )
+    return status["id"], mss, Image
+
+
 def get_cache_dir(args):
     output_dir = args.get("output_dir")
     if output_dir:
@@ -53,14 +121,15 @@ def monitor_to_dict(index, monitor):
 
 
 def action_check(args):
-    mss, Image, import_error = import_capture_libs()
+    status, mss, Image = mss_adapter_status()
     python_path = sys.executable
-    if import_error:
+    if not status["available"]:
         return error(
             "Python screenshot dependencies are missing.",
             python=python_path,
-            install_hint=f"{python_path} -m pip install --user -r scripts/requirements.txt",
-            import_error=import_error,
+            install_hint=status["install_hint"],
+            import_error=status.get("import_error"),
+            adapters=[status],
         )
 
     cache_dir = get_cache_dir(args)
@@ -71,15 +140,17 @@ def action_check(args):
             "mss_version": getattr(mss, "__version__", "unknown"),
             "pillow_version": getattr(Image, "__version__", "unknown"),
             "default_cache_dir": str(cache_dir),
+            "adapters": [status],
             "privacy": "Captures are saved locally only. No upload or long-term recording is performed by this plugin.",
         }
     )
 
 
 def action_list_displays(args):
-    mss, _Image, import_error = import_capture_libs()
-    if import_error:
-        return error("Python screenshot dependencies are missing.", import_error=import_error)
+    try:
+        adapter_id, mss, _Image = resolve_capture_adapter(args)
+    except Exception as exc:
+        return error(str(exc))
 
     with mss.MSS() as sct:
         monitors = [monitor_to_dict(i, monitor) for i, monitor in enumerate(sct.monitors)]
@@ -87,6 +158,7 @@ def action_list_displays(args):
     return write_json(
         {
             "ok": True,
+            "adapter": adapter_id,
             "displays": monitors,
             "note": "Index 0 is the full virtual desktop. Index 1 and above are individual displays.",
         }
@@ -156,15 +228,12 @@ def resize_dimensions(width, height, args):
 
 
 def save_capture(args, region=None):
-    mss, Image, import_error = import_capture_libs()
-    if import_error:
-        return error("Python screenshot dependencies are missing.", import_error=import_error)
-
     args = dict(args)
     if region is not None:
         args["region"] = region
 
     try:
+        adapter_id, mss, Image = resolve_capture_adapter(args)
         fmt = normalized_format(args.get("format", "png"))
         output_dir = ensure_cache_dir(get_cache_dir(args))
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -192,6 +261,7 @@ def save_capture(args, region=None):
         return write_json(
             {
                 "ok": True,
+                "adapter": adapter_id,
                 "path": str(output_path),
                 "format": fmt,
                 "display": display,
@@ -262,6 +332,7 @@ def action_clear_cache(args):
 
 ACTIONS = {
     "check": action_check,
+    "list_adapters": action_list_adapters,
     "list_displays": action_list_displays,
     "capture_screen": action_capture_screen,
     "capture_region": action_capture_region,
