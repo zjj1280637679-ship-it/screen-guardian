@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.5";
+const SERVER_VERSION = "0.1.6";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -17,6 +17,66 @@ const tools = [
         output_dir: {
           type: "string",
           description: "Optional local folder for Screen Guardian captures.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_display_profile",
+    description: "Read the active localized or manual display name profile.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_display_name",
+    description: "Set display-name mode to system-language auto mode or a local manual alias.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["auto", "manual"],
+          description: "Use auto to follow system language, or manual to use a local custom name.",
+          default: "auto",
+        },
+        display_name: {
+          type: "string",
+          maxLength: 64,
+          description: "Manual display name, required when mode is manual.",
+        },
+        short_description: {
+          type: "string",
+          maxLength: 128,
+          description: "Optional manual short description.",
+        },
+        clear_manual: {
+          type: "boolean",
+          default: false,
+          description: "When switching to auto, clear the saved manual name.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "apply_display_profile",
+    description: "Write the active display profile into the local plugin manifest. Codex must reload the plugin to show it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        display_name: {
+          type: "string",
+          maxLength: 64,
+          description: "Optional display name override. Defaults to the active display profile.",
+        },
+        short_description: {
+          type: "string",
+          maxLength: 128,
+          description: "Optional short-description override. Defaults to the active display profile.",
         },
       },
       additionalProperties: false,
@@ -259,6 +319,7 @@ function runPython(action, args) {
       const childArgs = [...candidate.prefixArgs, CAPTURE_SCRIPT, request];
       const child = spawn(candidate.command, childArgs, {
         cwd: ROOT,
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" },
         windowsHide: true,
       });
 
@@ -312,6 +373,15 @@ function runPython(action, args) {
 async function callTool(name, args) {
   if (name === "check_dependencies") {
     return runPython("check", args);
+  }
+  if (name === "get_display_profile") {
+    return runPython("get_display_profile", args);
+  }
+  if (name === "set_display_name") {
+    return runPython("set_display_name", args);
+  }
+  if (name === "apply_display_profile") {
+    return runPython("apply_display_profile", args);
   }
   if (name === "list_adapters") {
     return runPython("list_adapters", args);

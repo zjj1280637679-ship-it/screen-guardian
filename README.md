@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.5` documents the product model roadmap. The current release is the ultra-light foundation, with future planning split into Lightweight, Practical, and Heavy models.
+Version `0.1.6` adds a naming profile: the plugin can recommend a display name from the system language, store a manual local alias, and explicitly write that alias into the local plugin manifest when the user wants Codex to reload it.
 
 ## Purpose
 
@@ -50,6 +50,20 @@ The contract is intentionally simple:
 
 See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for the planned dependency-compromise interface.
 
+## Naming profile
+
+Screen Guardian can keep its display identity flexible:
+
+- `get_display_profile` reports the active name, detected system language, and current Codex manifest name.
+- `set_display_name` switches between `auto` mode and `manual` mode.
+- `auto` mode chooses a localized name such as `Screen Guardian` or `屏幕守护者`.
+- `manual` mode stores a local alias under the user's app data folder, not in the public repository.
+- `apply_display_profile` writes the active name into the local plugin manifest when the user wants the Codex plugin card to use it.
+
+Codex reads plugin card metadata from the manifest, so a manifest-applied rename requires a plugin reload or reinstall before the UI shows the new name.
+
+See [docs/NAMING.md](docs/NAMING.md) for details.
+
 ## Product model roadmap
 
 Screen Guardian is planned as a family of capability models. The current repository is still the ultra-light foundation: small enough to validate compatibility, useful enough to solve the first real problem, and simple enough to rewrite when a better adapter appears.
@@ -68,6 +82,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the model roadmap in more detail.
 ## Current tools
 
 - Check screenshot dependencies
+- Read or set the local display-name profile
 - List compatibility adapters
 - List connected displays
 - Capture a full display or virtual desktop

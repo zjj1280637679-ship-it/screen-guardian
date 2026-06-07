@@ -17,6 +17,7 @@ Use this skill when the user asks to:
 - downscale a screenshot for lower context pressure
 - diagnose whether local screenshot dependencies work
 - inspect compatibility adapters before choosing a capture backend
+- read or set the local display-name profile
 
 ## Safety defaults
 
@@ -30,10 +31,13 @@ Use this skill when the user asks to:
 Prefer the `screen_guardian` MCP tools:
 
 - `check_dependencies`
+- `get_display_profile`
+- `set_display_name`
+- `apply_display_profile`
 - `list_adapters`
 - `list_displays`
 - `capture_screen`
 - `capture_region`
 - `clear_cache`
 
-Use `list_adapters` when diagnosing compatibility. Use `capture_screen` with `max_width` or `scale` when the user only needs a quick visual summary.
+Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` when the user only needs a quick visual summary.
