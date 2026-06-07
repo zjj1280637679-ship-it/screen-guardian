@@ -3,7 +3,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.10";
+const SERVER_VERSION = "0.1.11";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
 
@@ -387,6 +387,159 @@ const tools = [
           additionalProperties: true,
         },
         ...imageOutputProperties,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_decision_policies",
+    description: "List configurable decision policies for choosing capture, preprocessing, storage, model route, or monitor actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        role: {
+          type: "string",
+          description: "Optional role filter, such as capture_decision, monitor_decision, or model_route_decision.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_decision_policy",
+    description: "Register, update, or remove an arbitrary-complexity decision policy or function route.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Stable decision policy id." },
+        policy_id: { type: "string", description: "Alias for id." },
+        role: { type: "string", default: "capture_decision" },
+        enabled: { type: "boolean", default: true },
+        mode: {
+          type: "string",
+          enum: ["manual", "rule_table", "scoring_function", "function_route", "prepared_file", "codex_subagent", "external_api", "local_command"],
+          default: "function_route",
+          description: "How the policy decides. Arbitrary complexity belongs behind function_route/API/subagent/local command adapters.",
+        },
+        route_id: {
+          type: "string",
+          description: "Optional extension route used by this decision policy.",
+        },
+        objective: {
+          type: "string",
+          description: "Human-readable objective the decision function optimizes.",
+        },
+        input_schema: { type: "object", additionalProperties: true },
+        output_schema: { type: "object", additionalProperties: true },
+        rules: { type: "array", items: { type: "object", additionalProperties: true } },
+        candidates: { type: "array", items: { type: "object", additionalProperties: true } },
+        constraints: { type: "array", items: { type: "object", additionalProperties: true } },
+        settings: { type: "object", additionalProperties: true },
+        notes: { type: "string" },
+        remove: { type: "boolean", default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_decision_request",
+    description: "Write a local decision-request envelope for an arbitrary-complexity policy, route, API, subagent, or caller.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        policy_id: { type: "string", description: "Optional registered decision policy id." },
+        role: { type: "string", default: "capture_decision" },
+        objective: { type: "string" },
+        observation: { type: "object", additionalProperties: true },
+        candidates: { type: "array", items: { type: "object", additionalProperties: true } },
+        constraints: { type: "array", items: { type: "object", additionalProperties: true } },
+        settings: { type: "object", additionalProperties: true },
+        ...audioCommonProperties,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_monitor_profiles",
+    description: "List periodic or feature-triggered monitor profiles for webpages, programs, screens, audio, video, errors, or model-detected features.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Optional project filter." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "set_monitor_profile",
+    description: "Register, update, or remove a periodic/feature-triggered monitor profile.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Stable monitor profile id." },
+        profile_id: { type: "string", description: "Alias for id." },
+        enabled: { type: "boolean", default: true },
+        project_id: { type: "string" },
+        workflow_id: { type: "string" },
+        media: {
+          type: "array",
+          items: { type: "string" },
+          description: "Media channels such as screen, window, webpage, video, audio, or custom.",
+        },
+        schedule: {
+          type: "object",
+          description: "Schedule descriptor, for example {mode:'periodic', interval_seconds:60}.",
+          additionalProperties: true,
+        },
+        interval_seconds: {
+          type: "number",
+          description: "Shortcut used when schedule is omitted.",
+        },
+        targets: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Targets such as webpage URL, window title, process name, region, audio device, or video file.",
+        },
+        triggers: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Triggers such as periodic, visual_change, web_change, error_text, model_feature, audio_energy, audio_silence, or audio_clipping.",
+        },
+        actions: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Actions such as capture_screen, capture_window, record_audio, extract_audio_track, prepare_model_request, or prepare_decision_request.",
+        },
+        decision_policy_id: { type: "string" },
+        settings: { type: "object", additionalProperties: true },
+        notes: { type: "string" },
+        remove: { type: "boolean", default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_monitor_tick",
+    description: "Write a local monitor-tick envelope for a scheduler/caller/future adapter to process one periodic or feature-triggered cycle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        profile_id: { type: "string", description: "Optional registered monitor profile id." },
+        observations: {
+          type: "object",
+          description: "Current observations, such as DOM hash, window state, error text, audio metrics, or model feature results.",
+          additionalProperties: true,
+        },
+        detected_features: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Features detected by a program, route, or agent model.",
+        },
+        candidate_actions: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+        },
+        ...audioCommonProperties,
       },
       additionalProperties: false,
     },
@@ -982,6 +1135,24 @@ async function callTool(name, args) {
   }
   if (name === "prepare_model_request") {
     return runPython("prepare_model_request", args);
+  }
+  if (name === "list_decision_policies") {
+    return runPython("list_decision_policies", args);
+  }
+  if (name === "set_decision_policy") {
+    return runPython("set_decision_policy", args);
+  }
+  if (name === "prepare_decision_request") {
+    return runPython("prepare_decision_request", args);
+  }
+  if (name === "list_monitor_profiles") {
+    return runPython("list_monitor_profiles", args);
+  }
+  if (name === "set_monitor_profile") {
+    return runPython("set_monitor_profile", args);
+  }
+  if (name === "prepare_monitor_tick") {
+    return runPython("prepare_monitor_tick", args);
   }
   if (name === "get_display_profile") {
     return runPython("get_display_profile", args);

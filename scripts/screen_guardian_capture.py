@@ -54,6 +54,8 @@ DEFAULT_FEATURE_FLAGS = {
     "audio_analysis": True,
     "audio_transcription_routes": False,
     "video_audio_extract": False,
+    "decision_policies": True,
+    "monitor_profiles": True,
     "external_api_handoff": False,
     "codex_subagent_handoff": False,
 }
@@ -123,6 +125,14 @@ FEATURE_CATALOG = {
         "status": "interface",
         "cost_when_inactive": "No FFmpeg probe or video audio extraction runs.",
     },
+    "decision_policies": {
+        "status": "interface",
+        "cost_when_inactive": "No decision policy is loaded, evaluated, or prepared.",
+    },
+    "monitor_profiles": {
+        "status": "interface",
+        "cost_when_inactive": "No periodic target, trigger, detector, or action profile is loaded.",
+    },
     "external_api_handoff": {
         "status": "interface",
         "cost_when_inactive": "No external API request is made.",
@@ -151,6 +161,8 @@ DEFAULT_CONFIG = {
     "runtime_limits": DEFAULT_LIMITS,
     "feature_flags": DEFAULT_FEATURE_FLAGS,
     "extension_routes": [],
+    "decision_policies": [],
+    "monitor_profiles": [],
 }
 
 DISPLAY_PROFILES = {
@@ -248,6 +260,10 @@ def load_config():
         config["feature_flags"] = deep_merge(DEFAULT_FEATURE_FLAGS, config["feature_flags"])
     if not isinstance(config.get("extension_routes"), list):
         config["extension_routes"] = []
+    if not isinstance(config.get("decision_policies"), list):
+        config["decision_policies"] = []
+    if not isinstance(config.get("monitor_profiles"), list):
+        config["monitor_profiles"] = []
     return config
 
 
@@ -1277,6 +1293,8 @@ def action_get_runtime_settings(args):
             "feature_flags": config.get("feature_flags", {}),
             "feature_catalog": FEATURE_CATALOG,
             "extension_routes": config.get("extension_routes", []),
+            "decision_policies": config.get("decision_policies", []),
+            "monitor_profiles": config.get("monitor_profiles", []),
             "display_profile": build_display_profile(config),
         }
     )
@@ -1569,6 +1587,237 @@ def action_prepare_model_request(args):
     request_path = output_dir / filename
     write_json_file(request_path, request)
     return write_json({"ok": True, "request_path": str(request_path), "request": request})
+
+
+def normalized_decision_policy(args):
+    policy_id = safe_filename_part(args.get("id") or args.get("policy_id") or "", "")
+    if not policy_id:
+        raise ValueError("decision policy id is required")
+    mode = str(args.get("mode") or "function_route").strip().lower()
+    allowed_modes = ("manual", "rule_table", "scoring_function", "function_route", "prepared_file", "codex_subagent", "external_api", "local_command")
+    if mode not in allowed_modes:
+        raise ValueError("mode must be manual, rule_table, scoring_function, function_route, prepared_file, codex_subagent, external_api, or local_command")
+    role = str(args.get("role") or "capture_decision").strip().lower()
+    settings = args.get("settings") or {}
+    if not isinstance(settings, dict):
+        raise ValueError("settings must be an object")
+    return {
+        "id": policy_id,
+        "role": role,
+        "enabled": bool(args.get("enabled", True)),
+        "mode": mode,
+        "route_id": str(args.get("route_id") or "").strip(),
+        "objective": str(args.get("objective") or "").strip(),
+        "input_schema": args.get("input_schema") if isinstance(args.get("input_schema"), dict) else {},
+        "output_schema": args.get("output_schema") if isinstance(args.get("output_schema"), dict) else {},
+        "rules": args.get("rules") if isinstance(args.get("rules"), list) else [],
+        "candidates": args.get("candidates") if isinstance(args.get("candidates"), list) else [],
+        "constraints": args.get("constraints") if isinstance(args.get("constraints"), list) else [],
+        "settings": settings,
+        "notes": str(args.get("notes") or "").strip(),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def action_list_decision_policies(args):
+    try:
+        require_feature("decision_policies", args)
+    except Exception as exc:
+        return error(str(exc), feature="decision_policies")
+    config = load_config()
+    role = str(args.get("role") or "").strip().lower()
+    policies = config.get("decision_policies", [])
+    if role:
+        policies = [policy for policy in policies if str(policy.get("role", "")).lower() == role]
+    return write_json(
+        {
+            "ok": True,
+            "policies": policies,
+            "contract": {
+                "modes": ["manual", "rule_table", "scoring_function", "function_route", "prepared_file", "codex_subagent", "external_api", "local_command"],
+                "note": "Decision policies are not limited to simple increments. Arbitrary complexity can live behind a route, subagent, API, or local command adapter.",
+            },
+        }
+    )
+
+
+def action_set_decision_policy(args):
+    try:
+        require_feature("decision_policies", args)
+    except Exception as exc:
+        return error(str(exc), feature="decision_policies")
+    config = load_config()
+    policy_id = safe_filename_part(args.get("id") or args.get("policy_id") or "", "")
+    if bool(args.get("remove", False)):
+        if not policy_id:
+            return error("decision policy id is required when remove is true")
+        config["decision_policies"] = [policy for policy in config.get("decision_policies", []) if policy.get("id") != policy_id]
+        save_config(config)
+        return write_json({"ok": True, "removed": policy_id, "policies": config["decision_policies"]})
+    try:
+        policy = normalized_decision_policy(args)
+    except Exception as exc:
+        return error(str(exc))
+    policies = [item for item in config.get("decision_policies", []) if item.get("id") != policy["id"]]
+    policies.append(policy)
+    config["decision_policies"] = policies
+    save_config(config)
+    return write_json({"ok": True, "policy": policy, "policies": policies})
+
+
+def decision_policy_by_id(config, policy_id):
+    for policy in config.get("decision_policies", []):
+        if policy.get("id") == policy_id:
+            return copy.deepcopy(policy)
+    return None
+
+
+def action_prepare_decision_request(args):
+    try:
+        require_feature("decision_policies", args)
+    except Exception as exc:
+        return error(str(exc), feature="decision_policies")
+    config = load_config()
+    policy_id = str(args.get("policy_id") or "").strip()
+    policy = decision_policy_by_id(config, policy_id) if policy_id else None
+    role = str(args.get("role") or (policy or {}).get("role") or "capture_decision").strip().lower()
+    request = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "decision_request",
+        "policy_id": policy_id,
+        "policy": policy,
+        "role": role,
+        "objective": args.get("objective") or (policy or {}).get("objective") or "",
+        "observation": args.get("observation") if isinstance(args.get("observation"), dict) else {},
+        "candidates": args.get("candidates") if isinstance(args.get("candidates"), list) else (policy or {}).get("candidates", []),
+        "constraints": args.get("constraints") if isinstance(args.get("constraints"), list) else (policy or {}).get("constraints", []),
+        "context": audio_context_payload(args),
+        "settings": deep_merge((policy or {}).get("settings", {}), args.get("settings") if isinstance(args.get("settings"), dict) else {}),
+        "expected_output": (policy or {}).get("output_schema", {}),
+        "execution": {
+            "status": "prepared",
+            "note": "Screen Guardian prepares decision inputs. Arbitrary complexity belongs in the selected route, subagent, API, local command, or caller.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": f"decision-request-{role}", **args}, "json")
+    request_path = output_dir / filename
+    write_json_file(request_path, request)
+    return write_json({"ok": True, "request_path": str(request_path), "request": request})
+
+
+def normalized_monitor_profile(args):
+    profile_id = safe_filename_part(args.get("id") or args.get("profile_id") or "", "")
+    if not profile_id:
+        raise ValueError("monitor profile id is required")
+    media = normalized_tags(args.get("media")) or ["screen"]
+    targets = args.get("targets") if isinstance(args.get("targets"), list) else []
+    triggers = args.get("triggers") if isinstance(args.get("triggers"), list) else []
+    actions = args.get("actions") if isinstance(args.get("actions"), list) else []
+    decision_policy_id = str(args.get("decision_policy_id") or "").strip()
+    return {
+        "id": profile_id,
+        "enabled": bool(args.get("enabled", True)),
+        "project_id": str(args.get("project_id") or "").strip(),
+        "workflow_id": str(args.get("workflow_id") or "").strip(),
+        "media": media,
+        "schedule": args.get("schedule") if isinstance(args.get("schedule"), dict) else {"mode": "manual_tick", "interval_seconds": args.get("interval_seconds", 60)},
+        "targets": targets,
+        "triggers": triggers,
+        "actions": actions,
+        "decision_policy_id": decision_policy_id,
+        "settings": args.get("settings") if isinstance(args.get("settings"), dict) else {},
+        "notes": str(args.get("notes") or "").strip(),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def action_list_monitor_profiles(args):
+    try:
+        require_feature("monitor_profiles", args)
+    except Exception as exc:
+        return error(str(exc), feature="monitor_profiles")
+    config = load_config()
+    project_id = str(args.get("project_id") or "").strip()
+    profiles = config.get("monitor_profiles", [])
+    if project_id:
+        profiles = [profile for profile in profiles if profile.get("project_id") == project_id]
+    return write_json(
+        {
+            "ok": True,
+            "profiles": profiles,
+            "contract": {
+                "target_examples": ["webpage", "window", "program", "display", "region", "audio_device", "video_file", "custom"],
+                "trigger_examples": ["periodic", "visual_change", "web_change", "window_change", "error_text", "model_feature", "audio_energy", "audio_silence", "audio_clipping", "custom"],
+                "action_examples": ["capture_screen", "capture_window", "record_audio", "extract_audio_track", "prepare_model_request", "prepare_decision_request"],
+                "execution": "Profiles describe periodic or feature-triggered work. A scheduler, caller, or future adapter performs ticks.",
+            },
+        }
+    )
+
+
+def action_set_monitor_profile(args):
+    try:
+        require_feature("monitor_profiles", args)
+    except Exception as exc:
+        return error(str(exc), feature="monitor_profiles")
+    config = load_config()
+    profile_id = safe_filename_part(args.get("id") or args.get("profile_id") or "", "")
+    if bool(args.get("remove", False)):
+        if not profile_id:
+            return error("monitor profile id is required when remove is true")
+        config["monitor_profiles"] = [profile for profile in config.get("monitor_profiles", []) if profile.get("id") != profile_id]
+        save_config(config)
+        return write_json({"ok": True, "removed": profile_id, "profiles": config["monitor_profiles"]})
+    try:
+        profile = normalized_monitor_profile(args)
+    except Exception as exc:
+        return error(str(exc))
+    profiles = [item for item in config.get("monitor_profiles", []) if item.get("id") != profile["id"]]
+    profiles.append(profile)
+    config["monitor_profiles"] = profiles
+    save_config(config)
+    return write_json({"ok": True, "profile": profile, "profiles": profiles})
+
+
+def monitor_profile_by_id(config, profile_id):
+    for profile in config.get("monitor_profiles", []):
+        if profile.get("id") == profile_id:
+            return copy.deepcopy(profile)
+    return None
+
+
+def action_prepare_monitor_tick(args):
+    try:
+        require_feature("monitor_profiles", args)
+    except Exception as exc:
+        return error(str(exc), feature="monitor_profiles")
+    config = load_config()
+    profile_id = str(args.get("profile_id") or "").strip()
+    profile = monitor_profile_by_id(config, profile_id) if profile_id else None
+    decision_policy = decision_policy_by_id(config, (profile or {}).get("decision_policy_id", ""))
+    tick = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "monitor_tick",
+        "profile_id": profile_id,
+        "profile": profile,
+        "decision_policy": decision_policy,
+        "observations": args.get("observations") if isinstance(args.get("observations"), dict) else {},
+        "detected_features": args.get("detected_features") if isinstance(args.get("detected_features"), list) else [],
+        "candidate_actions": args.get("candidate_actions") if isinstance(args.get("candidate_actions"), list) else (profile or {}).get("actions", []),
+        "context": audio_context_payload(args),
+        "execution": {
+            "status": "prepared",
+            "note": "This tick describes periodic or feature-triggered monitor work. Screen Guardian does not install a background scheduler by default.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": "monitor-tick", **args}, "json")
+    tick_path = output_dir / filename
+    write_json_file(tick_path, tick)
+    return write_json({"ok": True, "tick_path": str(tick_path), "tick": tick})
 
 
 def action_get_display_profile(args):
@@ -2090,6 +2339,12 @@ ACTIONS = {
     "list_extension_routes": action_list_extension_routes,
     "set_extension_route": action_set_extension_route,
     "prepare_model_request": action_prepare_model_request,
+    "list_decision_policies": action_list_decision_policies,
+    "set_decision_policy": action_set_decision_policy,
+    "prepare_decision_request": action_prepare_decision_request,
+    "list_monitor_profiles": action_list_monitor_profiles,
+    "set_monitor_profile": action_set_monitor_profile,
+    "prepare_monitor_tick": action_prepare_monitor_tick,
     "get_display_profile": action_get_display_profile,
     "set_display_name": action_set_display_name,
     "apply_display_profile": action_apply_display_profile,

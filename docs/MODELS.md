@@ -17,6 +17,8 @@ Capability is split into small modules:
 - image preprocessing
 - extension route registry
 - model request envelopes
+- decision policies
+- monitor profiles
 - OCR routes
 - image narration routes
 - video narration routes
@@ -41,6 +43,8 @@ Inactive modules should behave like this:
 - no heuristic image analysis unless requested and `image_analysis` is active
 - no preprocessing unless `image_preprocess` is active
 - no model request file unless `model_request_envelopes` is active
+- no decision envelope unless `decision_policies` is active and explicitly called
+- no monitor profile lookup or monitor tick envelope unless `monitor_profiles` is active and explicitly called
 - no audio device probe or recording unless `audio_capture` is active
 - no WAV analysis unless `audio_analysis` is active
 - no FFmpeg extraction unless `video_audio_extract` is active
@@ -67,6 +71,45 @@ Audio is mapped the same way as images and video:
 - local WAV analysis can detect likely silence, clipping, and basic audio energy
 - video files can expose audio by extracting a WAV track through optional FFmpeg
 - transcription and audio-summary routes can use prepared files, user APIs, local commands, or future Codex subagent handoff
+
+## Decision Policies
+
+`set_decision_policy` stores how a caller should choose between capture, preprocessing, storage, model-route, and monitor actions.
+
+The policy can stay simple:
+
+- `manual`
+- `rule_table`
+- `scoring_function`
+
+Or it can point to arbitrary-complexity logic owned outside the hot capture path:
+
+- `function_route`
+- `prepared_file`
+- `external_api`
+- `codex_subagent`
+- `local_command`
+
+`prepare_decision_request` writes the observation, candidates, constraints, objective, registered route prior, and merged settings into a local envelope. Screen Guardian prepares the decision input; the route, API, subagent, local command bridge, or caller performs the complex decision.
+
+## Monitor Profiles
+
+`set_monitor_profile` stores periodic or feature-triggered monitoring plans for a project or workflow. Profiles can describe targets such as webpages, program windows, processes, displays, regions, audio devices, video files, or custom sources.
+
+Supported trigger descriptions include:
+
+- `periodic`
+- `visual_change`
+- `web_change`
+- `window_change`
+- `error_text`
+- `model_feature`
+- `audio_energy`
+- `audio_silence`
+- `audio_clipping`
+- `custom`
+
+Actions can include screenshot capture, window capture, audio recording, video audio extraction, model request preparation, and decision request preparation. `prepare_monitor_tick` writes one local tick envelope for a caller, scheduler, future adapter, or subagent. It does not start a background scheduler by itself.
 
 ## Runtime Bounds
 

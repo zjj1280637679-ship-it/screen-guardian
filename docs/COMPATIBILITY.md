@@ -31,6 +31,10 @@ CaptureAdapter
   record_audio(request)
   analyze_audio(request)
   extract_audio_track(request)
+  list_decision_policies(request)
+  prepare_decision_request(request)
+  list_monitor_profiles(request)
+  prepare_monitor_tick(request)
 ```
 
 All adapters should return normalized result fields:
@@ -65,6 +69,10 @@ Runtime limits, storage routes, and model/program routes are intentionally confi
 
 The route registry does not execute arbitrary commands in the ultra-light model. It records provider/model/settings metadata and can produce local request envelopes for another adapter, subagent, or model bridge to handle.
 
+Decision policies follow the same pattern. A policy can describe a rule table, scoring function, external API, Codex subagent, local command bridge, or caller-owned function, but Screen Guardian only prepares the structured decision request. Arbitrarily complex logic stays behind the selected route or caller.
+
+Monitor profiles also stay declarative by default. They can describe periodic checks, webpage changes, window/program changes, visual changes, error-text triggers, model-detected features, audio energy, silence, clipping, video/audio workflow events, and custom detectors. `prepare_monitor_tick` writes one local tick envelope for a caller or future scheduler; it does not create a hidden background monitor.
+
 Feature flags are the performance boundary. Disabled modules should not import optional dependencies, start loops, copy mirrors, run image heuristics, call APIs, or trigger subagents. This lets one plugin expose many possible paths without making every path part of the hot capture path.
 
 Image narration routes can point to a user-provided API or a future Codex subagent handoff. Video narration routes are kept as prior interfaces because practical video-capable models are relatively few; Screen Guardian records provider, model, input expectations, and settings without forcing a provider choice.
@@ -84,6 +92,8 @@ Audio capture and extraction use the same approach. Microphone recording, system
 | `vision-summary-adapter` | Convert image files into compact descriptions | Useful for context pressure, but model/provider choice should stay modular |
 | `video-summary-adapter` | Convert videos, keyframes, or image sequences into compact descriptions | Useful but provider choices are few and should stay explicit |
 | `audio-transcription-adapter` | Convert recordings or extracted audio into text or summaries | Useful for lectures, explanations, diagnostics, and program sound-effect tests |
+| `monitor-scheduler` | Consume monitor profiles and run explicit periodic or feature-triggered ticks | Useful for project monitoring but should require visible user activation |
+| `decision-policy-bridge` | Execute complex decision policies through a trusted function, API, subagent, or local command | Keeps policy complexity outside the lightweight capture core |
 | `route-bridge` | Execute prepared judgment/OCR/narration requests | Keeps model choice, temperature, quality, and follow-up behavior outside the capture core |
 | `external-backend` | User-provided local capture service | Lets advanced users bring their own backend |
 
@@ -96,6 +106,7 @@ Audio capture and extraction use the same approach. Microphone recording, system
 5. Return structured dependency hints when no backend is available.
 6. Keep bounded watch capture short and explicit.
 7. Gate optional work through feature flags.
-8. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
+8. Keep decision execution and monitor scheduling explicit.
+9. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
 
 This keeps positive freedom high by expanding what personal AI can do, while preserving negative freedom by avoiding forced upgrades, forced background services, and one-path lock-in.

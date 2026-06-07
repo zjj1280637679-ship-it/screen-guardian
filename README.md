@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.10` maps audio into the same optional capability model: microphone clips, system-loopback diagnostics, audio analysis, and video audio extraction stay inactive unless enabled, while transcription or narration routes can be prepared for APIs or subagents.
+Version `0.1.11` adds arbitrary-complexity decision policies and periodic or feature-triggered monitor profiles. A caller can describe webpage changes, program/window changes, error text, model-detected features, audio events, or video/audio workflow events, then prepare a local decision or monitor envelope without forcing a background service.
 
 ## Purpose
 
@@ -42,6 +42,9 @@ Screen Guardian treats that as the design problem: AI capability should not depe
 - Audio debugging: checking whether sound is actually being emitted, whether an external speaker path is likely silent, or whether a program sound effect was produced.
 - Recording short explanations, lecture/video audio, or test-program sound effects for later transcription or narration.
 - Extracting an audio track from a video before sending it to an audio or transcription route.
+- Project monitoring where a webpage, program window, region, audio stream, video file, or custom target should trigger capture when a configured feature appears.
+- Error-aware workflows where a program, parser, or model can mark an error feature and request a screenshot, audio clip, model request, or follow-up decision.
+- Advanced routing where a decision can be a simple table, scoring function, external API, Codex subagent, local command bridge, or prepared request file.
 
 ## Compatibility adapter model
 
@@ -77,6 +80,8 @@ Screen Guardian no longer needs separate lightweight/practical/heavy plugin vari
 
 Inactive features should avoid optional work: no polling loop, no extra mirror copy, no heuristic image analysis, no preprocessing, no audio-device probe, no recording, no FFmpeg extraction, no OCR bridge, no external API request, and no subagent handoff unless the user enables or explicitly calls that path.
 
+Decision policies and monitor profiles are configuration and envelope interfaces. They can express complex logic, but Screen Guardian does not execute arbitrary decision code or install a background scheduler by default.
+
 See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Current tools
@@ -85,6 +90,10 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 - Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
 - Register judgment/OCR/narration/transcription routes for future adapters
 - Prepare model request files with prompt, questions, temperature, quality, and other settings
+- Register decision policies for capture, preprocessing, storage, model routing, or monitor actions
+- Prepare decision request envelopes for arbitrary-complexity policies, APIs, subagents, local commands, or caller-owned functions
+- Register periodic or feature-triggered monitor profiles for webpages, programs, windows, displays, regions, video, audio, errors, and model-detected features
+- Prepare monitor tick envelopes for one scheduler/caller cycle
 - List optional audio devices when audio capture is enabled
 - Record short microphone or best-effort system-loopback WAV clips
 - Analyze WAV files for duration, RMS, peak, likely silence, and clipping
@@ -110,7 +119,7 @@ Captures are saved locally by default:
 ~/Pictures/ScreenGuardian
 ```
 
-See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, preprocessing, and bounded watch details.
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, decision policies, monitor profiles, preprocessing, and bounded watch details.
 
 ## Dependencies
 
@@ -150,7 +159,7 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 
 ## Privacy model
 
-This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Bounds are configurable because the project treats limits as policy, not permanent product walls.
+This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Monitor profiles describe periodic or feature-triggered work for a caller, scheduler, future adapter, or subagent; they do not silently start a monitor. Bounds are configurable because the project treats limits as policy, not permanent product walls.
 
 ## Upgrade path
 
@@ -160,3 +169,4 @@ The next version can add:
 - OCR adapters for text screenshots
 - image and video summarization helpers
 - stricter privacy filters by app, window, or region
+- scheduler adapters that consume monitor tick envelopes with explicit user approval

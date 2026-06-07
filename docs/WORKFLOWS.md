@@ -1,12 +1,12 @@
 # Workflow Interface
 
-Screen Guardian `0.1.10` keeps the workflow layer flexible without turning the plugin into a background service.
+Screen Guardian `0.1.11` keeps the workflow layer flexible without turning the plugin into a background service.
 
 ## Feature Flags
 
 Use `set_feature_flags` to enable, disable, or reset optional capability modules. `get_runtime_settings` returns the current flags and a catalog explaining what inactive features avoid doing.
 
-The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, audio probing, recording, FFmpeg extraction, OCR, API calls, video narration, or subagent handoff.
+The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, decision-policy preparation, monitor-profile lookup, audio probing, recording, FFmpeg extraction, OCR, API calls, video narration, or subagent handoff.
 
 ## Local Cache
 
@@ -102,6 +102,67 @@ Routes can also store `handoff_mode`:
 Image narration can use a user-provided API or a future Codex subagent handoff. Video narration has fewer practical providers, so Screen Guardian keeps a prior interface for video files, image sequences, and keyframes without selecting or installing a provider by default.
 
 Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_model_request` writes a local request envelope with the input file, prompt, follow-up questions, route prior, and merged settings. A later adapter, model bridge, or subagent can read that request and write a response.
+
+## Decision Policies
+
+Use `set_decision_policy` when the best next action should be chosen by configurable logic instead of a fixed threshold.
+
+Decision policies can describe:
+
+- what objective to optimize, such as "capture only when the UI meaningfully changes"
+- what candidates are available, such as screenshot, window capture, audio clip, model request, or no-op
+- what constraints apply, such as context budget, privacy rules, storage limits, or allowed programs
+- what route owns the logic, such as a rule table, scoring function, prepared file, external API, Codex subagent, local command bridge, or caller-owned function
+
+Use `prepare_decision_request` to write a local JSON envelope for one decision. The envelope includes the observation, candidates, constraints, route prior, policy metadata, and merged settings. This lets a later function become arbitrarily complex without making Screen Guardian execute arbitrary code in the ultra-light core.
+
+Example decision roles:
+
+- `capture_decision`
+- `preprocess_decision`
+- `storage_decision`
+- `model_route_decision`
+- `monitor_decision`
+
+## Monitor Profiles And Feature Triggers
+
+Use `set_monitor_profile` to describe periodic or feature-triggered project monitoring.
+
+Targets can describe:
+
+- a webpage URL, DOM hash, title, or visual viewport
+- a program window by title, HWND, or process name
+- a display or screen region
+- an audio device or system-loopback source
+- a video file or extracted audio track
+- a custom project/workflow source
+
+Triggers can describe:
+
+- `periodic`: run every configured interval
+- `visual_change`: screenshot when a display, region, or window changes
+- `web_change`: screenshot or request narration when a webpage changes
+- `window_change`: screenshot when a program changes state
+- `error_text`: capture when logs, OCR, DOM text, or a parser sees an error
+- `model_feature`: capture when a program or agent model recognizes a configured feature
+- `audio_energy`: record/analyze when sound energy appears
+- `audio_silence`: capture diagnostics when expected sound is silent
+- `audio_clipping`: capture diagnostics when audio peaks suggest clipping
+- `custom`: leave room for project-specific detectors
+
+Actions can describe:
+
+- `capture_screen`
+- `capture_region`
+- `capture_window`
+- `watch_screen`
+- `record_audio`
+- `analyze_audio`
+- `extract_audio_track`
+- `prepare_model_request`
+- `prepare_decision_request`
+
+Use `prepare_monitor_tick` to write one local tick envelope. A scheduler, caller, future adapter, or subagent can read the profile, current observations, detected features, and candidate actions, then choose what to do. Screen Guardian does not silently install a background scheduler.
 
 ## Audio Capture And Extraction
 
