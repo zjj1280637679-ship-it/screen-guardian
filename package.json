@@ -7,6 +7,7 @@
   "type": "commonjs",
   "scripts": {
     "mcp": "node ./mcp/server.cjs",
+    "ark:dry-run": "python ./scripts/volcengine_ark_runner.py --dry-run --prompt \"Screen Guardian Ark runner smoke test.\" --model test-model",
     "validate": "python ./scripts/validate_contracts.py",
     "stress": "python ./scripts/validate_contracts.py --stress"
   }

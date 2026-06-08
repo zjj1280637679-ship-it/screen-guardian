@@ -108,6 +108,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 - Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
 - Register judgment/OCR/narration/transcription routes for future adapters
 - Prepare model request files with prompt, questions, temperature, quality, and other settings
+- Optionally run real Volcengine Ark image, video, or audio experiments from local files or prepared request envelopes
 - Register decision policies for capture, preprocessing, storage, model routing, or monitor actions
 - Prepare decision request envelopes for arbitrary-complexity policies, APIs, subagents, local commands, or caller-owned functions
 - Register periodic or feature-triggered monitor profiles for webpages, programs, windows, displays, regions, video, audio, errors, and model-detected features
@@ -138,6 +139,28 @@ Captures are saved locally by default:
 ```
 
 See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, decision policies, monitor profiles, preprocessing, and bounded watch details.
+
+## Volcengine Ark experiments
+
+`scripts/volcengine_ark_runner.py` is an optional external API bridge for real Ark experiments. It can consume a Screen Guardian model-request envelope or a direct image, video, or audio file. It only calls Ark when you run it and provide an API key through an environment variable.
+
+```powershell
+$env:ARK_API_KEY = "your-ark-api-key"
+$env:ARK_MODEL = "your-model-id"
+
+python .\scripts\volcengine_ark_runner.py `
+  --dry-run `
+  --path "C:\path\to\capture.jpg" `
+  --media-kind image `
+  --detail low `
+  --thinking disabled `
+  --max-tokens 300 `
+  --prompt "请用中文简洁描述这个截图中对排查问题最重要的信息。"
+```
+
+Real runs write redacted request artifacts, responses, summaries, and a JSONL usage ledger under `~/Pictures/ScreenGuardian/ArkRuns` by default.
+
+See [docs/VOLCENGINE_EXPERIMENTS.md](docs/VOLCENGINE_EXPERIMENTS.md) for the quota-aware workflow.
 
 ## Dependencies
 
@@ -201,6 +224,6 @@ The next version can add:
 
 - short FFmpeg recordings
 - OCR adapters for text screenshots
-- image and video summarization helpers
+- more provider-specific image and video summarization helpers
 - stricter privacy filters by app, window, or region
 - scheduler adapters that consume monitor tick envelopes with explicit user approval

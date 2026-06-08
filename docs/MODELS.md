@@ -56,6 +56,7 @@ Image narration can be handled by:
 
 - a user-provided API route
 - a prepared local request file
+- the optional `scripts/volcengine_ark_runner.py` bridge when the user explicitly wants a real Ark API call
 - a future Codex subagent handoff
 - a future local command adapter
 
@@ -122,3 +123,9 @@ Bounds such as watch duration, maximum captures, burst frames, scale, and JPEG q
 ## Design Rule
 
 The project should expand what the user's AI can do while avoiding forced upgrades, forced background services, one-path lock-in, and hidden performance cost from inactive features.
+
+## Real External Experiments
+
+External API experiments stay outside the always-available capture core. The Volcengine Ark runner can execute a prepared request envelope or direct media file, but it is a script the user runs intentionally. It reads API keys only from environment variables, stores redacted request artifacts, and appends local usage records for later reconciliation.
+
+This keeps the default plugin local-only while allowing real image, video, and audio model tests when the user chooses to spend quota.

@@ -11,9 +11,15 @@ yarn-error.log*
 
 # Local capture output
 ScreenGuardian/
+ArkRuns/
+ark-runs/
 screen-guardian-*.png
 screen-guardian-*.jpg
 screen-guardian-*.jpeg
+*.request.redacted.json
+*.response.json
+*.summary.json
+volcengine-ark-ledger.jsonl
 
 # OS/editor files
 .DS_Store

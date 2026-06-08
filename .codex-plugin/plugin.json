@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.11+codex.20260608001309",
+  "version": "0.1.11+codex.20260608020245",
   "description": "Ultra-light compatibility-first AI screen access with fallback adapters.",
   "author": {
     "name": "ClaudeUser"
