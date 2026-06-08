@@ -44,16 +44,41 @@ Use this skill when the user asks to:
 - Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
 - Do not record audio unless the user asks for it. Prefer listing audio adapter/device status first.
 
-## Tools
+## Tool Layers
 
-Prefer the `screen_guardian` MCP tools:
+Prefer the `screen_guardian` MCP tools. Start with the core layer for ordinary help, then add local control or experimental envelopes only when the user asks for those workflows.
+
+Core tools:
 
 - `check_dependencies`
+- `list_adapters`
+- `list_displays`
+- `list_windows`
+- `capture_screen`
+- `capture_region`
+- `capture_window`
+- `watch_screen`
+- `clear_cache`
+
+Local control tools:
+
 - `get_runtime_settings`
 - `set_cache_path`
 - `set_storage_routes`
 - `set_runtime_limits`
 - `set_feature_flags`
+- `get_display_profile`
+- `set_display_name`
+- `apply_display_profile`
+- `list_audio_devices`
+- `record_audio`
+- `analyze_audio`
+- `extract_audio_track`
+- `analyze_image`
+- `preprocess_image`
+
+Experimental envelope tools:
+
 - `list_extension_routes`
 - `set_extension_route`
 - `prepare_model_request`
@@ -63,22 +88,5 @@ Prefer the `screen_guardian` MCP tools:
 - `list_monitor_profiles`
 - `set_monitor_profile`
 - `prepare_monitor_tick`
-- `get_display_profile`
-- `set_display_name`
-- `apply_display_profile`
-- `list_adapters`
-- `list_audio_devices`
-- `record_audio`
-- `analyze_audio`
-- `extract_audio_track`
-- `list_displays`
-- `list_windows`
-- `capture_screen`
-- `capture_region`
-- `capture_window`
-- `watch_screen`
-- `analyze_image`
-- `preprocess_image`
-- `clear_cache`
 
 Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Use `set_decision_policy` when the user wants best-action logic that can become more complex than weights or increments. Use `set_monitor_profile` and `prepare_monitor_tick` for project monitoring contracts such as webpage changes, program/window changes, model-detected features, error triggers, and audio/video events. Use `watch_screen` only as a short foreground task, not as a background monitor.

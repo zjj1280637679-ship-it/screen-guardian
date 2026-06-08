@@ -38,6 +38,12 @@ The public tool surface is split into two layers:
 
 Experimental workflow envelopes are inert until an explicit caller or standalone bridge consumes them.
 
+For first use, treat this as a progressive path:
+
+1. Start with core tools: check dependencies, list displays/windows, and capture a screen, region, or window.
+2. Add local control tools when the user needs cache routing, runtime limits, metadata, preprocessing, display naming, or audio diagnostics.
+3. Add experimental envelope tools only when the user wants another caller, bridge, scheduler, future adapter, or subagent to consume prepared workflow data.
+
 ## Feature Flags
 
 `set_feature_flags` can enable, disable, or reset optional modules. `get_runtime_settings` returns the active flags and the feature catalog.

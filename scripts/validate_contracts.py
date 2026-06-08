@@ -98,6 +98,7 @@ DESIGN_COVERAGE = {
     "context economy": ["context", "downscale", "preprocess"],
     "no hidden scheduler": ["does not silently start", "does not start a background", "no-background-service"],
     "arbitrary decisions": ["arbitrary-complexity", "decision policies", "function_route"],
+    "tool layering": ["core tools", "local control tools", "experimental envelope tools"],
 }
 
 

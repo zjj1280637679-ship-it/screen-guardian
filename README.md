@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-Version `0.1.11` adds arbitrary-complexity decision policies and periodic or feature-triggered monitor profiles. A caller can describe webpage changes, program/window changes, error text, model-detected features, audio events, or video/audio workflow events, then prepare a local decision or monitor envelope without forcing a background service.
+For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
 
 ## Purpose
 
@@ -102,42 +102,45 @@ Decision policies and monitor profiles are configuration and envelope interfaces
 
 See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
-## Current tools
+## Tool layers
 
-Stable core tools:
+New users can start with the core tools and ignore the experimental envelope layer until they need workflow automation.
 
-- Check screenshot dependencies
-- Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
-- List optional audio devices when audio capture is enabled
-- Record short microphone or best-effort system-loopback WAV clips
-- Analyze WAV files for duration, RMS, peak, likely silence, and clipping
-- Extract WAV audio tracks from videos through optional FFmpeg
-- Read or set the local display-name profile
-- List compatibility adapters
-- List connected displays
-- List visible program windows
-- Capture a full display or virtual desktop
-- Capture a rectangular region
-- Capture a visible program window by HWND, title, or process name
-- Briefly watch a display, region, or matching window and save frames when it changes
-- Analyze an image and recommend a context/preprocessing mode
-- Preprocess an image with `none`, `auto`, `text`, `ui`, or `photo` presets
-- Mark captures with project/workflow/tags/notes in a local metadata sidecar
-- Save PNG or JPG
-- Optionally downscale captures
-- Clear Screen Guardian's local cache files
+### Core tools
 
-Experimental workflow tools:
+These are the first-use tools. They perform explicit local checks or captures and save files locally by default:
 
-- Register judgment/OCR/narration/transcription routes for future adapters
-- Prepare model request files with prompt, questions, temperature, quality, and other settings
-- Optionally run real Volcengine Ark image, video, or audio experiments from local files or prepared request envelopes
-- Register decision policies for capture, preprocessing, storage, model routing, or monitor actions
-- Prepare decision request envelopes for arbitrary-complexity policies, APIs, subagents, local commands, or caller-owned functions
-- Register periodic or feature-triggered monitor profiles for webpages, programs, windows, displays, regions, video, audio, errors, and model-detected features
-- Prepare monitor tick envelopes for one scheduler/caller cycle
+| Need | Tools |
+| --- | --- |
+| Check whether Screen Guardian can run | `check_dependencies`, `list_adapters` |
+| See available screens and windows | `list_displays`, `list_windows` |
+| Save a screenshot | `capture_screen`, `capture_region`, `capture_window` |
+| Catch a short visible change | `watch_screen` |
+| Remove local Screen Guardian files | `clear_cache` |
 
-Experimental workflow entries are inert envelopes unless an explicit caller or standalone bridge consumes them.
+Core capture outputs can be downscaled, saved as PNG/JPG, and tagged with project or workflow metadata when those options are enabled.
+
+### Local control tools
+
+These tools tune local behavior without starting background work or calling external services:
+
+- `get_runtime_settings`, `set_feature_flags`, `set_runtime_limits`
+- `set_cache_path`, `set_storage_routes`
+- `analyze_image`, `preprocess_image`
+- `get_display_profile`, `set_display_name`, `apply_display_profile`
+- `list_audio_devices`, `record_audio`, `analyze_audio`, `extract_audio_track`
+
+Audio and video-audio extraction stay optional. They require explicit feature activation and user intent.
+
+### Experimental envelope tools
+
+These tools are advanced workflow interfaces. They store configuration or write local request envelopes for another caller, bridge, scheduler, future adapter, or subagent:
+
+- `list_extension_routes`, `set_extension_route`, `prepare_model_request`
+- `list_decision_policies`, `set_decision_policy`, `prepare_decision_request`
+- `list_monitor_profiles`, `set_monitor_profile`, `prepare_monitor_tick`
+
+Experimental envelope tools do not execute arbitrary decision code, call APIs, invoke subagents, upload files, record media, or start monitoring by themselves.
 
 Captures are saved locally by default:
 
@@ -145,7 +148,7 @@ Captures are saved locally by default:
 ~/Pictures/ScreenGuardian
 ```
 
-See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, decision policies, monitor profiles, preprocessing, and bounded watch details.
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for the same core/local-control/experimental-envelope split with cache, feature flags, project/workflow markers, runtime limits, multi-route saves, model request envelopes, decision policies, monitor profiles, preprocessing, and bounded watch details.
 
 ## Volcengine Ark experiments
 

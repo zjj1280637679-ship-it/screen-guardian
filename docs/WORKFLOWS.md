@@ -2,6 +2,18 @@
 
 Screen Guardian `0.1.11` keeps the workflow layer flexible without turning the plugin into a background service.
 
+## How To Read The Layers
+
+The workflow surface is split so first-time users do not need to understand every future route before taking one screenshot.
+
+| Layer | Use it for | What it does not do |
+| --- | --- | --- |
+| Core tools | Dependency checks, display/window listing, screenshots, window capture, short foreground change capture, and cache cleanup | No background service, no model call, no hidden upload |
+| Local control tools | Feature flags, runtime limits, cache paths, mirror routes, metadata sidecars, image analysis/preprocessing, display naming, and optional audio diagnostics | No automatic scheduler or external API handoff |
+| Experimental envelope tools | Model request envelopes, extension routes, decision policies, and monitor profiles | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
+
+When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
+
 ## Feature Flags
 
 Use `set_feature_flags` to enable, disable, or reset optional capability modules. `get_runtime_settings` returns the current flags and a catalog explaining what inactive features avoid doing.
@@ -75,7 +87,7 @@ Use `null`, `none`, or `unbounded` to remove a configurable bound where the unde
 
 The `text` preset sharpens and increases contrast for text-heavy screenshots. It does not perform OCR yet; OCR is intentionally left as an optional adapter so older systems do not need a heavy dependency chain.
 
-## Extension Routes
+## Experimental Envelope Layer: Extension Routes
 
 Use `set_extension_route` to register future routes for:
 
@@ -109,7 +121,7 @@ Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_mo
 
 The optional Volcengine Ark runner is one such bridge. It is a standalone script, not automatic MCP behavior, and it only makes a real external request when the user runs it with an API key in the environment.
 
-## Decision Policies
+## Experimental Envelope Layer: Decision Policies
 
 Use `set_decision_policy` when the best next action should be chosen by configurable logic instead of a fixed threshold.
 
@@ -132,7 +144,7 @@ Example decision roles:
 - `model_route_decision`
 - `monitor_decision`
 
-## Monitor Profiles And Feature Triggers
+## Experimental Envelope Layer: Monitor Profiles And Feature Triggers
 
 Use `set_monitor_profile` to describe periodic or feature-triggered project monitoring.
 
