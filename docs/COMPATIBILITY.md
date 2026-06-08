@@ -100,13 +100,27 @@ Audio capture and extraction use the same approach. Microphone recording, system
 ## Fallback Strategy
 
 1. Probe adapters with `list_adapters`.
-2. Use `adapter="auto"` for ordinary calls.
-3. Prefer the lightest working backend.
-4. Keep tool inputs stable across backend changes.
-5. Return structured dependency hints when no backend is available.
-6. Keep bounded watch capture short and explicit.
-7. Gate optional work through feature flags.
-8. Keep decision execution and monitor scheduling explicit.
-9. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
+2. Set `SCREEN_GUARDIAN_PYTHON` when the MCP server should use a specific Python runtime.
+3. Use `adapter="auto"` for ordinary calls.
+4. Prefer the lightest working backend.
+5. Keep tool inputs stable across backend changes.
+6. Return structured dependency hints when no backend is available.
+7. Keep bounded watch capture short and explicit.
+8. Gate optional work through feature flags.
+9. Keep decision execution and monitor scheduling explicit.
+10. Add heavier features, such as recording, OCR, or model narration, as optional adapters rather than mandatory dependencies.
+
+## Python Runtime Selection
+
+The MCP server uses this runtime order:
+
+1. `SCREEN_GUARDIAN_PYTHON`
+2. `PYTHON`
+3. common local Python install paths
+4. Windows `py` launcher
+5. `python`
+6. `python3`
+
+Prefer `SCREEN_GUARDIAN_PYTHON` for predictable local development and support sessions. The server does not rely on `npm_config_python`; recent npm versions can warn about an unknown `python` config before running package scripts, and that warning is separate from Screen Guardian's runtime discovery.
 
 This keeps positive freedom high by expanding what personal AI can do, while preserving negative freedom by avoiding forced upgrades, forced background services, and one-path lock-in.

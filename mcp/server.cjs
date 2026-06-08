@@ -1023,7 +1023,6 @@ function pythonCandidates() {
   for (const [source, value] of [
     ["SCREEN_GUARDIAN_PYTHON", process.env.SCREEN_GUARDIAN_PYTHON],
     ["PYTHON", process.env.PYTHON],
-    ["npm_config_python", process.env.npm_config_python],
   ]) {
     if (value) {
       addPythonCandidate(candidates, value, [], source);
@@ -1107,7 +1106,7 @@ function runPython(action, args) {
         attempts,
         runtime_strategy: {
           preferred_env: "SCREEN_GUARDIAN_PYTHON",
-          fallback_order: ["PYTHON", "npm_config_python", "common install paths", "py launcher", "python", "python3"],
+          fallback_order: ["PYTHON", "common install paths", "py launcher", "python", "python3"],
         },
       });
     };

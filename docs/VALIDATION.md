@@ -53,6 +53,8 @@ or:
 npm run smoke:windows
 ```
 
+If npm prints `npm warn Unknown env config "python"`, the smoke result is still valid when the command exits successfully. That warning comes from npm's own config handling. Prefer `SCREEN_GUARDIAN_PYTHON` rather than npm's `python` config when pinning Screen Guardian's runtime.
+
 The smoke test uses the MCP server, so it exercises Python runtime discovery instead of importing the capture script directly. It checks:
 
 - explicit `SCREEN_GUARDIAN_PYTHON`

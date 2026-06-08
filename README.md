@@ -184,6 +184,14 @@ python -m pip install --user -r scripts/requirements.txt
 
 The MCP server itself uses Node.js and has no npm dependencies.
 
+For predictable MCP runtime discovery, set `SCREEN_GUARDIAN_PYTHON` to the Python executable you want Screen Guardian to use:
+
+```powershell
+$env:SCREEN_GUARDIAN_PYTHON = "C:\Path\To\python.exe"
+```
+
+This is preferred over npm's legacy `python` config. If `npm run ...` prints `npm warn Unknown env config "python"`, the warning is from npm configuration and does not mean Screen Guardian failed when the script exits successfully.
+
 Optional audio recording uses:
 
 ```powershell
