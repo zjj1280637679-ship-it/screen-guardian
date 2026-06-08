@@ -31,6 +31,13 @@ Capability is split into small modules:
 
 Implemented modules can be used directly. Interface modules can be registered and prepared without forcing their heavy dependencies into the capture core.
 
+The public tool surface is split into two layers:
+
+- core capture and local diagnostics: stable paths that perform local capture, preprocessing, audio analysis, and cache management
+- experimental workflow envelopes: declarative model routes, decision policies, monitor profiles, external API handoff descriptors, and subagent handoff descriptors
+
+Experimental workflow envelopes are inert until an explicit caller or standalone bridge consumes them.
+
 ## Feature Flags
 
 `set_feature_flags` can enable, disable, or reset optional modules. `get_runtime_settings` returns the active flags and the feature catalog.

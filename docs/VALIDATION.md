@@ -39,8 +39,33 @@ python scripts/validate_contracts.py --stress --stress-loops 100
 
 The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles to exercise the real MCP persistence path. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
 
+## Windows Smoke Test
+
+Run:
+
+```powershell
+python scripts/windows_smoke_test.py
+```
+
+or:
+
+```powershell
+npm run smoke:windows
+```
+
+The smoke test uses the MCP server, so it exercises Python runtime discovery instead of importing the capture script directly. It checks:
+
+- explicit `SCREEN_GUARDIAN_PYTHON`
+- fallback from a broken Python candidate to a working candidate
+- `check_dependencies`
+- `list_displays`
+- `list_windows`
+- a tiny `capture_region` when the screen adapter is available
+
+This is a behavior smoke test for a local Windows machine. It may skip the tiny capture when optional screenshot dependencies are missing, but Python discovery and the MCP tool path must still work.
+
 ## Interpretation
 
-A passing validation means the current public design is internally consistent and the lightweight MCP contract can survive repeated interface calls. It does not prove that every future adapter is implemented; interface-only modules are intentionally validated as declarative contracts until an adapter is added.
+A passing validation means the current public design is internally consistent and the lightweight MCP contract can survive repeated interface calls. It does not prove that every future adapter is implemented; interface-only modules are intentionally validated as declarative contracts until an adapter is added. Use the Windows smoke test for local behavior coverage.
 
 The validation script intentionally mixes structural checks with documentation coverage checks. Structural checks are strict; documentation checks use curated terms and should be updated when the project adds new docs, localized wording, or new capability families.

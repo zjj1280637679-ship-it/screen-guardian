@@ -91,12 +91,12 @@ const imageOutputProperties = {
   },
   runtime_limits: {
     type: "object",
-    description: "Optional per-call runtime limit overrides.",
+    description: "Optional per-call runtime limit overrides. Per-call values can only tighten configured limits, never loosen or remove them.",
     additionalProperties: true,
   },
   feature_flags: {
     type: "object",
-    description: "Optional per-call feature flag overrides.",
+    description: "Optional per-call feature flag overrides. Per-call values can only disable features for this call, never enable features disabled in persistent settings.",
     additionalProperties: true,
   },
   analyze: {
@@ -113,7 +113,7 @@ const windowTargetProperties = {
   },
   title_contains: {
     type: "string",
-    description: "Pick the first visible window whose title contains this text.",
+    description: "Match visible windows whose title contains this text. Ambiguous matches require hwnd, exact_title, or allow_first_match.",
   },
   title_contains_any: {
     type: "array",
@@ -122,16 +122,21 @@ const windowTargetProperties = {
   },
   exact_title: {
     type: "string",
-    description: "Pick the first visible window whose title exactly matches this string.",
+    description: "Match visible windows whose title exactly matches this string. Multiple exact matches still require hwnd or allow_first_match.",
   },
   process_name: {
     type: "string",
-    description: "Pick the first visible window whose process name contains this text.",
+    description: "Match visible windows whose process name contains this text. Ambiguous matches require hwnd, exact_title, or allow_first_match.",
   },
   process_names: {
     type: "array",
     items: { type: "string" },
-    description: "Pick the first visible window matching any process name fragment.",
+    description: "Match visible windows matching any process name fragment.",
+  },
+  allow_first_match: {
+    type: "boolean",
+    default: false,
+    description: "When true, use the first matching window if a filter is ambiguous. Prefer hwnd from list_windows for repeatable captures.",
   },
 };
 
@@ -966,13 +971,13 @@ const tools = [
   },
   {
     name: "clear_cache",
-    description: "Delete Screen Guardian images from the local cache folder only.",
+    description: "Delete Screen Guardian-owned files from the default or configured local cache folders only.",
     inputSchema: {
       type: "object",
       properties: {
         output_dir: {
           type: "string",
-          description: "Optional local cache folder. Defaults to the configured cache path or Pictures/ScreenGuardian.",
+          description: "Optional configured local cache or storage-route folder. Arbitrary directories are rejected.",
         },
         all: {
           type: "boolean",
@@ -1002,38 +1007,88 @@ function sendError(id, code, message) {
   send({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
-function pythonCandidates() {
-  const candidates = [];
-  for (const value of [process.env.PYTHON, process.env.npm_config_python]) {
-    if (value) {
-      candidates.push({ command: value, prefixArgs: [] });
-    }
-  }
-  if (process.env.LOCALAPPDATA) {
-    candidates.push({
-      command: path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python312", "python.exe"),
-      prefixArgs: [],
-    });
-    candidates.push({
-      command: path.join(process.env.LOCALAPPDATA, "Programs", "Python", "Python311", "python.exe"),
-      prefixArgs: [],
-    });
+function addPythonCandidate(candidates, command, prefixArgs, source) {
+  if (!command) {
+    return;
   }
   candidates.push({
-    command: path.join(process.env.USERPROFILE || "", "AppData", "Local", "Programs", "Python", "Python312", "python.exe"),
-    prefixArgs: [],
+    command,
+    prefixArgs: prefixArgs || [],
+    source,
   });
-  candidates.push({ command: "py", prefixArgs: ["-3.12"] });
-  candidates.push({ command: "python", prefixArgs: [] });
-  candidates.push({ command: "python3", prefixArgs: [] });
-  const seen = new Set();
-  return candidates.filter((candidate) => {
-    if (!candidate.command || seen.has(candidate.command)) {
-      return false;
+}
+
+function pythonCandidates() {
+  const candidates = [];
+  for (const [source, value] of [
+    ["SCREEN_GUARDIAN_PYTHON", process.env.SCREEN_GUARDIAN_PYTHON],
+    ["PYTHON", process.env.PYTHON],
+    ["npm_config_python", process.env.npm_config_python],
+  ]) {
+    if (value) {
+      addPythonCandidate(candidates, value, [], source);
     }
-    seen.add(candidate.command);
-    return !candidate.command.endsWith(".exe") || fs.existsSync(candidate.command);
-  });
+  }
+
+  const versionDirs = ["Python313", "Python312", "Python311", "Python310"];
+  for (const base of [
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Programs", "Python"),
+    process.env.USERPROFILE && path.join(process.env.USERPROFILE, "AppData", "Local", "Programs", "Python"),
+    process.env.ProgramFiles && path.join(process.env.ProgramFiles, "Python"),
+    process.env["ProgramFiles(x86)"] && path.join(process.env["ProgramFiles(x86)"], "Python"),
+  ]) {
+    if (!base) {
+      continue;
+    }
+    for (const versionDir of versionDirs) {
+      addPythonCandidate(candidates, path.join(base, versionDir, "python.exe"), [], "common-install-path");
+    }
+  }
+
+  addPythonCandidate(candidates, "py", ["-3.13"], "windows-launcher");
+  addPythonCandidate(candidates, "py", ["-3.12"], "windows-launcher");
+  addPythonCandidate(candidates, "py", ["-3.11"], "windows-launcher");
+  addPythonCandidate(candidates, "py", ["-3"], "windows-launcher");
+  addPythonCandidate(candidates, "python", [], "PATH");
+  addPythonCandidate(candidates, "python3", [], "PATH");
+
+  const seen = new Set();
+  return candidates
+    .map((candidate) => {
+      const key = `${candidate.command}\0${candidate.prefixArgs.join(" ")}`;
+      if (seen.has(key)) {
+        return null;
+      }
+      seen.add(key);
+      const isExplicitPath = candidate.command.includes(path.sep) || candidate.command.endsWith(".exe");
+      if (isExplicitPath && !fs.existsSync(candidate.command)) {
+        return {
+          ...candidate,
+          skipped: true,
+          skipReason: "path does not exist",
+        };
+      }
+      return candidate;
+    })
+    .filter(Boolean);
+}
+
+function summarizeAttempt(candidate, status, extra) {
+  return {
+    command: candidate.command,
+    prefix_args: candidate.prefixArgs,
+    source: candidate.source,
+    status,
+    ...(extra || {}),
+  };
+}
+
+function safeTextTail(value, maxLength = 2000) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return text.slice(text.length - maxLength);
 }
 
 function runPython(action, args) {
@@ -1042,18 +1097,34 @@ function runPython(action, args) {
 
   return new Promise((resolve) => {
     let index = 0;
+    const attempts = [];
 
-    const tryNext = (lastError) => {
+    const failAll = (detail) => {
+      resolve({
+        ok: false,
+        error: "Unable to start Python.",
+        detail: detail || "No Python executable candidate succeeded.",
+        attempts,
+        runtime_strategy: {
+          preferred_env: "SCREEN_GUARDIAN_PYTHON",
+          fallback_order: ["PYTHON", "npm_config_python", "common install paths", "py launcher", "python", "python3"],
+        },
+      });
+    };
+
+    const tryNext = () => {
       if (index >= candidates.length) {
-        resolve({
-          ok: false,
-          error: "Unable to start Python.",
-          detail: lastError || "No Python executable was found.",
-        });
-        return;
+        failAll("All Python candidates failed or were skipped.");
+        return false;
       }
 
       const candidate = candidates[index++];
+      if (candidate.skipped) {
+        attempts.push(summarizeAttempt(candidate, "skipped", { detail: candidate.skipReason }));
+        tryNext();
+        return;
+      }
+
       const childArgs = [...candidate.prefixArgs, CAPTURE_SCRIPT, request];
       const child = spawn(candidate.command, childArgs, {
         cwd: ROOT,
@@ -1063,25 +1134,38 @@ function runPython(action, args) {
 
       let stdout = "";
       let stderr = "";
-      let started = false;
+      let sawOutput = false;
+      let finished = false;
 
       child.stdout.on("data", (chunk) => {
-        started = true;
+        sawOutput = true;
         stdout += chunk.toString();
       });
       child.stderr.on("data", (chunk) => {
+        sawOutput = true;
         stderr += chunk.toString();
       });
       child.on("error", (err) => {
-        if (!started) {
-          tryNext(`${candidate.command}: ${err.message}`);
-        } else {
-          resolve({ ok: false, error: err.message });
+        if (finished) {
+          return;
         }
+        finished = true;
+        attempts.push(summarizeAttempt(candidate, "error", { detail: err.message, saw_output: sawOutput }));
+        tryNext();
       });
       child.on("close", (code) => {
+        if (finished) {
+          return;
+        }
+        finished = true;
         if (!stdout && code !== 0) {
-          tryNext(`${candidate.command}: exit ${code}${stderr.trim() ? `, ${stderr.trim()}` : ""}`);
+          attempts.push(
+            summarizeAttempt(candidate, "failed", {
+              exit_code: code,
+              stderr: safeTextTail(stderr),
+            })
+          );
+          tryNext();
           return;
         }
 
@@ -1090,16 +1174,23 @@ function runPython(action, args) {
           if (stderr.trim()) {
             parsed.stderr = stderr.trim();
           }
+          parsed.python_runtime = {
+            command: candidate.command,
+            prefix_args: candidate.prefixArgs,
+            source: candidate.source,
+            skipped_or_failed_candidates: attempts,
+          };
           resolve(parsed);
         } catch (err) {
-          resolve({
-            ok: false,
-            error: "Python capture script returned invalid JSON.",
-            command: candidate.command,
-            exit_code: code,
-            stdout,
-            stderr: stderr.trim(),
-          });
+          attempts.push(
+            summarizeAttempt(candidate, "invalid-json", {
+              exit_code: code,
+              stdout: safeTextTail(stdout),
+              stderr: safeTextTail(stderr),
+              detail: err.message,
+            })
+          );
+          tryNext();
         }
       });
     };

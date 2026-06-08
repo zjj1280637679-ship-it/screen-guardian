@@ -104,15 +104,10 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Current tools
 
+Stable core tools:
+
 - Check screenshot dependencies
 - Read or set runtime settings, optional capability flags, persistent cache path, mirror storage routes, and configurable limits
-- Register judgment/OCR/narration/transcription routes for future adapters
-- Prepare model request files with prompt, questions, temperature, quality, and other settings
-- Optionally run real Volcengine Ark image, video, or audio experiments from local files or prepared request envelopes
-- Register decision policies for capture, preprocessing, storage, model routing, or monitor actions
-- Prepare decision request envelopes for arbitrary-complexity policies, APIs, subagents, local commands, or caller-owned functions
-- Register periodic or feature-triggered monitor profiles for webpages, programs, windows, displays, regions, video, audio, errors, and model-detected features
-- Prepare monitor tick envelopes for one scheduler/caller cycle
 - List optional audio devices when audio capture is enabled
 - Record short microphone or best-effort system-loopback WAV clips
 - Analyze WAV files for duration, RMS, peak, likely silence, and clipping
@@ -131,6 +126,18 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 - Save PNG or JPG
 - Optionally downscale captures
 - Clear Screen Guardian's local cache files
+
+Experimental workflow tools:
+
+- Register judgment/OCR/narration/transcription routes for future adapters
+- Prepare model request files with prompt, questions, temperature, quality, and other settings
+- Optionally run real Volcengine Ark image, video, or audio experiments from local files or prepared request envelopes
+- Register decision policies for capture, preprocessing, storage, model routing, or monitor actions
+- Prepare decision request envelopes for arbitrary-complexity policies, APIs, subagents, local commands, or caller-owned functions
+- Register periodic or feature-triggered monitor profiles for webpages, programs, windows, displays, regions, video, audio, errors, and model-detected features
+- Prepare monitor tick envelopes for one scheduler/caller cycle
+
+Experimental workflow entries are inert envelopes unless an explicit caller or standalone bridge consumes them.
 
 Captures are saved locally by default:
 
@@ -213,6 +220,12 @@ python scripts/validate_contracts.py --stress
 ```
 
 See [docs/VALIDATION.md](docs/VALIDATION.md) for what these checks prove and what they intentionally leave to future adapters.
+
+Run the Windows smoke test on a local Windows machine:
+
+```powershell
+npm run smoke:windows
+```
 
 ## Privacy model
 

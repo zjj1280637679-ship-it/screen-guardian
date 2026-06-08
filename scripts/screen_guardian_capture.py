@@ -287,10 +287,23 @@ def runtime_limits(args=None):
     config = load_config()
     limits = deep_merge(DEFAULT_LIMITS, config.get("runtime_limits") or {})
     args = args or {}
-    if isinstance(args.get("runtime_limits"), dict):
-        limits = deep_merge(limits, args["runtime_limits"])
-    if isinstance(args.get("limit_overrides"), dict):
-        limits = deep_merge(limits, args["limit_overrides"])
+    for source_key in ("runtime_limits", "limit_overrides"):
+        overrides = args.get(source_key)
+        if not isinstance(overrides, dict):
+            continue
+        for key, value in overrides.items():
+            if key not in DEFAULT_LIMITS:
+                raise ValueError(f"Unknown per-call runtime limit: {key}")
+            requested = parse_unbounded_number(value)
+            current = limits.get(key)
+            if requested is None:
+                continue
+            if key.endswith("_max"):
+                if current is None or requested < current:
+                    limits[key] = requested
+            elif key.endswith("_min"):
+                if current is None or requested > current:
+                    limits[key] = requested
     return limits
 
 
@@ -299,7 +312,11 @@ def feature_flags(args=None):
     flags = deep_merge(DEFAULT_FEATURE_FLAGS, config.get("feature_flags") or {})
     args = args or {}
     if isinstance(args.get("feature_flags"), dict):
-        flags = deep_merge(flags, args["feature_flags"])
+        for key, value in args["feature_flags"].items():
+            if key not in DEFAULT_FEATURE_FLAGS:
+                raise ValueError(f"Unknown per-call feature flag: {key}")
+            if value is False:
+                flags[key] = False
     return flags
 
 
@@ -352,6 +369,25 @@ def dedupe_paths(paths):
         seen.add(key)
         result.append(path)
     return result
+
+
+def path_key(path):
+    return str(Path(path).expanduser().resolve()).lower()
+
+
+def configured_cache_dirs():
+    config = load_config()
+    dirs = [DEFAULT_CACHE_DIR]
+    config_cache_dir = str(config.get("cache_dir") or "").strip()
+    if config_cache_dir:
+        dirs.append(Path(config_cache_dir).expanduser())
+    dirs.extend(normalize_path_list(config.get("extra_output_dirs")))
+    return dedupe_paths(dirs)
+
+
+def is_configured_cache_dir(path):
+    target = path_key(path)
+    return any(path_key(candidate) == target for candidate in configured_cache_dirs())
 
 
 def normalize_locale_key(raw):
@@ -1049,6 +1085,20 @@ def find_window(args):
         windows = [w for w in windows if w["title"].lower() == exact_title]
     if not windows:
         raise ValueError("No matching window found")
+    if len(windows) > 1 and not bool(args.get("allow_first_match", False)):
+        sample = [
+            {
+                "hwnd": item.get("hwnd"),
+                "title": item.get("title"),
+                "process_name": item.get("process_name"),
+                "pid": item.get("pid"),
+            }
+            for item in windows[:10]
+        ]
+        raise ValueError(
+            "Multiple matching windows found; pass hwnd from list_windows, use a more specific exact_title/process filter, "
+            f"or set allow_first_match=true. Matches: {json.dumps(sample, ensure_ascii=False)}"
+        )
     return windows[0]
 
 
@@ -1369,7 +1419,7 @@ def action_set_runtime_limits(args):
             "ok": True,
             "config_path": str(CONFIG_PATH),
             "runtime_limits": config["runtime_limits"],
-            "note": "Use null, 'none', or 'unbounded' to remove a configurable upper/lower limit where the underlying encoder or geometry still permits it.",
+            "note": "Persistent limits are the hard boundary. Per-call runtime_limits can only tighten these values; use null, 'none', or 'unbounded' here to remove a configurable persistent limit where the backend still permits it.",
         }
     )
 
@@ -1393,7 +1443,7 @@ def action_set_feature_flags(args):
             "config_path": str(CONFIG_PATH),
             "feature_flags": config["feature_flags"],
             "feature_catalog": FEATURE_CATALOG,
-            "note": "Inactive features return at the tool boundary or skip their optional work so they do not drag the active capture path.",
+            "note": "Inactive persistent features return at the tool boundary or skip optional work. Per-call feature_flags can only disable features for one call, not enable disabled features.",
         }
     )
 
@@ -2302,8 +2352,37 @@ def action_watch_screen(args):
         return error(str(exc))
 
 
+def read_plugin_metadata(path):
+    try:
+        with Path(path).open("r", encoding="utf-8") as file:
+            data = json.load(file)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def cache_file_owned_by_plugin(path):
+    path = Path(path)
+    if path.name.endswith(".meta.json"):
+        return read_plugin_metadata(path).get("plugin") == PLUGIN_NAME
+    metadata_path = path.with_suffix(path.suffix + ".meta.json")
+    if metadata_path.exists():
+        return read_plugin_metadata(metadata_path).get("plugin") == PLUGIN_NAME
+    return path.name.startswith(f"{PLUGIN_NAME}-")
+
+
 def action_clear_cache(args):
-    cache_dir = get_cache_dir(args)
+    explicit_dir = str(args.get("output_dir") or args.get("cache_dir") or "").strip()
+    if explicit_dir:
+        cache_dir = Path(explicit_dir).expanduser()
+        if not is_configured_cache_dir(cache_dir):
+            return error(
+                "clear_cache only accepts the default cache path or a path already configured with set_cache_path/set_storage_routes.",
+                requested=str(cache_dir),
+                allowed=serialize_paths(configured_cache_dirs()),
+            )
+    else:
+        cache_dir = get_cache_dir({})
     if not cache_dir.exists():
         return write_json({"ok": True, "deleted": 0, "cache_dir": str(cache_dir)})
 
@@ -2314,10 +2393,29 @@ def action_clear_cache(args):
         cutoff = time.time() - float(older_than_days) * 86400
 
     deleted = 0
-    patterns = [f"{PLUGIN_NAME}-*.png", f"{PLUGIN_NAME}-*.jpg", f"{PLUGIN_NAME}-*.jpeg", f"{PLUGIN_NAME}-*.png.meta.json", f"{PLUGIN_NAME}-*.jpg.meta.json"]
+    skipped = 0
+    seen = set()
+    patterns = [
+        f"{PLUGIN_NAME}-*.png",
+        f"{PLUGIN_NAME}-*.jpg",
+        f"{PLUGIN_NAME}-*.jpeg",
+        f"{PLUGIN_NAME}-*.wav",
+        f"{PLUGIN_NAME}-*.json",
+        f"{PLUGIN_NAME}-*.png.meta.json",
+        f"{PLUGIN_NAME}-*.jpg.meta.json",
+        f"{PLUGIN_NAME}-*.jpeg.meta.json",
+        f"{PLUGIN_NAME}-*.wav.meta.json",
+    ]
     for pattern in patterns:
         for path in cache_dir.glob(pattern):
             if not path.is_file():
+                continue
+            key = path_key(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not cache_file_owned_by_plugin(path):
+                skipped += 1
                 continue
             if not all_files and cutoff is not None and path.stat().st_mtime > cutoff:
                 continue
@@ -2326,7 +2424,16 @@ def action_clear_cache(args):
             path.unlink()
             deleted += 1
 
-    return write_json({"ok": True, "deleted": deleted, "cache_dir": str(cache_dir)})
+    return write_json(
+        {
+            "ok": True,
+            "deleted": deleted,
+            "skipped_not_owned": skipped,
+            "cache_dir": str(cache_dir),
+            "allowed_cache_dirs": serialize_paths(configured_cache_dirs()),
+            "scope": "default-or-configured-cache-only",
+        }
+    )
 
 
 ACTIONS = {

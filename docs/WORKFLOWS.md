@@ -8,6 +8,8 @@ Use `set_feature_flags` to enable, disable, or reset optional capability modules
 
 The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, decision-policy preparation, monitor-profile lookup, audio probing, recording, FFmpeg extraction, OCR, API calls, video narration, or subagent handoff.
 
+Persistent feature flags are also the safety boundary. Per-call `feature_flags` can temporarily disable a feature for one request, but they cannot enable a feature that persistent settings have disabled. High-risk paths such as audio capture, video audio extraction, OCR routes, external API handoff, and subagent handoff must be enabled persistently through `set_feature_flags`.
+
 ## Local Cache
 
 Use `get_runtime_settings` to inspect the active cache path and `set_cache_path` to set or clear a persistent local cache folder. Per-call `output_dir` still overrides the configured path.
@@ -38,6 +40,8 @@ When metadata is enabled through `workflow_metadata`, Screen Guardian writes a `
 ## Runtime Limits
 
 Upper and lower bounds are treated as runtime policy. `set_runtime_limits` can update, reset, or remove configurable limits.
+
+Per-call `runtime_limits` can only tighten persistent bounds. For example, a call may reduce `watch_duration_seconds_max` or increase `watch_interval_seconds_min`, but it may not remove a bound or raise a maximum above the configured value.
 
 Current default limits:
 
@@ -102,6 +106,8 @@ Routes can also store `handoff_mode`:
 Image narration can use a user-provided API or a future Codex subagent handoff. Video narration has fewer practical providers, so Screen Guardian keeps a prior interface for video files, image sequences, and keyframes without selecting or installing a provider by default.
 
 Ultra-light mode does not execute arbitrary model commands. Instead, `prepare_model_request` writes a local request envelope with the input file, prompt, follow-up questions, route prior, and merged settings. A later adapter, model bridge, or subagent can read that request and write a response.
+
+The optional Volcengine Ark runner is one such bridge. It is a standalone script, not automatic MCP behavior, and it only makes a real external request when the user runs it with an API key in the environment.
 
 ## Decision Policies
 
