@@ -175,9 +175,25 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 '@ | node .\mcp\server.cjs
 ```
 
+## Validation
+
+Run static contract validation:
+
+```powershell
+python scripts/validate_contracts.py
+```
+
+Run the bounded MCP stress test:
+
+```powershell
+python scripts/validate_contracts.py --stress
+```
+
+See [docs/VALIDATION.md](docs/VALIDATION.md) for what these checks prove and what they intentionally leave to future adapters.
+
 ## Privacy model
 
-This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Monitor profiles describe periodic or feature-triggered work for a caller, scheduler, future adapter, or subagent; they do not silently start a monitor. Bounds are configurable because the project treats limits as policy, not permanent product walls.
+This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Monitor profiles describe periodic or feature-triggered work for a caller, scheduler, future adapter, or subagent; they do not silently start a monitor or scheduler. Bounds are configurable because the project treats limits as policy, not permanent product walls.
 
 ## Upgrade path
 
