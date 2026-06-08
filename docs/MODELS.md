@@ -92,6 +92,8 @@ Or it can point to arbitrary-complexity logic owned outside the hot capture path
 
 `prepare_decision_request` writes the observation, candidates, constraints, objective, registered route prior, and merged settings into a local envelope. Screen Guardian prepares the decision input; the route, API, subagent, local command bridge, or caller performs the complex decision.
 
+Registering a decision policy is configuration, not execution. It does not call an API, run a local command, invoke a subagent, or choose an action until an explicit caller or future adapter consumes the prepared request.
+
 ## Monitor Profiles
 
 `set_monitor_profile` stores periodic or feature-triggered monitoring plans for a project or workflow. Profiles can describe targets such as webpages, program windows, processes, displays, regions, audio devices, video files, or custom sources.
@@ -110,6 +112,8 @@ Supported trigger descriptions include:
 - `custom`
 
 Actions can include screenshot capture, window capture, audio recording, video audio extraction, model request preparation, and decision request preparation. `prepare_monitor_tick` writes one local tick envelope for a caller, scheduler, future adapter, or subagent. It does not start a background scheduler by itself.
+
+Registering a monitor profile is also configuration, not monitoring. It stores targets, triggers, and candidate actions so an explicit scheduler, caller, foreground watch, or future adapter can decide what to do.
 
 ## Runtime Bounds
 

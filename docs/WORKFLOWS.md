@@ -116,6 +116,8 @@ Decision policies can describe:
 
 Use `prepare_decision_request` to write a local JSON envelope for one decision. The envelope includes the observation, candidates, constraints, route prior, policy metadata, and merged settings. This lets a later function become arbitrarily complex without making Screen Guardian execute arbitrary code in the ultra-light core.
 
+`set_decision_policy` only stores configuration. It does not execute a function route, local command, API call, or subagent. Execution requires a separate explicit caller or adapter.
+
 Example decision roles:
 
 - `capture_decision`
@@ -163,6 +165,8 @@ Actions can describe:
 - `prepare_decision_request`
 
 Use `prepare_monitor_tick` to write one local tick envelope. A scheduler, caller, future adapter, or subagent can read the profile, current observations, detected features, and candidate actions, then choose what to do. Screen Guardian does not silently install a background scheduler.
+
+`set_monitor_profile` only stores configuration. It does not start polling, screenshots, recording, API calls, subagent work, or a background service.
 
 ## Audio Capture And Extraction
 

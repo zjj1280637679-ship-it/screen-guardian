@@ -31,14 +31,16 @@ python scripts/validate_contracts.py --stress
 
 The stress test sends repeated newline-delimited JSON-RPC calls through the MCP server. It registers temporary decision policies and monitor profiles, prepares decision and monitor envelopes, lists the temporary profiles, and removes them again.
 
-Default stress size is 25 loops. Override it with:
+Default stress size is 25 loops. The maximum accepted value is 200 loops so a typo cannot create an unbounded local run. Override it with:
 
 ```powershell
 python scripts/validate_contracts.py --stress --stress-loops 100
 ```
 
-The stress test writes temporary envelope files under the system temp directory and removes them automatically. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
+The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles to exercise the real MCP persistence path. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
 
 ## Interpretation
 
 A passing validation means the current public design is internally consistent and the lightweight MCP contract can survive repeated interface calls. It does not prove that every future adapter is implemented; interface-only modules are intentionally validated as declarative contracts until an adapter is added.
+
+The validation script intentionally mixes structural checks with documentation coverage checks. Structural checks are strict; documentation checks use curated terms and should be updated when the project adds new docs, localized wording, or new capability families.

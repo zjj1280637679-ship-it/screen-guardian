@@ -9,6 +9,7 @@ runs a bounded MCP stress test for decision and monitor envelopes.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -24,6 +25,7 @@ PYTHON_PATH = ROOT / "scripts" / "screen_guardian_capture.py"
 MANIFEST_PATH = ROOT / ".codex-plugin" / "plugin.json"
 PACKAGE_PATH = ROOT / "package.json"
 MCP_PATH = ROOT / ".mcp.json"
+MAX_STRESS_LOOPS = 200
 
 
 REQUIRED_TOOLS = [
@@ -153,11 +155,21 @@ def all_project_text() -> str:
     return "\n".join(read_text(path) for path in parts if path.exists()).lower()
 
 
-def regex_keys(block_name: str, source: str) -> set[str]:
-    match = re.search(rf"{re.escape(block_name)}\s*=\s*\{{(.*?)\n\}}", source, re.S)
-    if not match:
-        return set()
-    return set(re.findall(r'"([^"]+)"\s*:', match.group(1)))
+def python_dict_keys(name: str, source: str) -> set[str]:
+    tree = ast.parse(source)
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        if not isinstance(node.value, ast.Dict):
+            return set()
+        keys: set[str] = set()
+        for key in node.value.keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                keys.add(key.value)
+        return keys
+    return set()
 
 
 def server_tools(source: str) -> set[str]:
@@ -200,7 +212,13 @@ def check_static_contracts() -> CheckSet:
         bool(server_version) and server_version.group(1) == package["version"],
         "server version matches package version",
     )
-    checks.check("screen_guardian" in mcp.get("mcpServers", {}), "MCP config exposes screen_guardian server")
+    mcp_server = mcp.get("mcpServers", {}).get("screen_guardian")
+    checks.check(bool(mcp_server), "MCP config exposes screen_guardian server")
+    if mcp_server:
+        checks.check(mcp_server.get("command") == "node", "MCP config uses node command")
+        args = mcp_server.get("args") or []
+        entry = ROOT / args[0] if args else None
+        checks.check(bool(entry and entry.exists()), "MCP config entrypoint exists", str(entry) if entry else "")
 
     tools = server_tools(server)
     mappings = server_call_mappings(server)
@@ -214,8 +232,8 @@ def check_static_contracts() -> CheckSet:
         ", ".join(sorted(set(mappings.values()) - actions)),
     )
 
-    flags = regex_keys("DEFAULT_FEATURE_FLAGS", py_source)
-    catalog = regex_keys("FEATURE_CATALOG", py_source)
+    flags = python_dict_keys("DEFAULT_FEATURE_FLAGS", py_source)
+    catalog = python_dict_keys("FEATURE_CATALOG", py_source)
     required_flags = set(REQUIRED_FEATURE_FLAGS)
     checks.check(required_flags <= flags, "feature flags cover required modules", ", ".join(sorted(required_flags - flags)))
     checks.check(flags <= catalog, "feature catalog documents every flag", ", ".join(sorted(flags - catalog)))
@@ -394,6 +412,11 @@ def run_mcp_stress(loops: int) -> CheckSet:
         checks.check(completed.returncode == 0, "stress MCP server exits cleanly", completed.stderr[-1000:])
         responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
         checks.check(len(responses) == len(messages), "stress response count matches request count")
+        package_version = read_json(PACKAGE_PATH)["version"]
+        initialized_version = ((responses[0].get("result") or {}).get("serverInfo") or {}).get("version")
+        checks.check(initialized_version == package_version, "runtime initialize version matches package version")
+        listed_tools = {tool.get("name") for tool in (responses[1].get("result") or {}).get("tools", [])}
+        checks.check(set(REQUIRED_TOOLS) <= listed_tools, "runtime tools/list covers required tools")
 
         failed_payloads: list[str] = []
         for response in responses:
@@ -424,6 +447,10 @@ def main() -> int:
     parser.add_argument("--stress", action="store_true", help="Run bounded MCP stress calls.")
     parser.add_argument("--stress-loops", type=int, default=int(os.environ.get("SCREEN_GUARDIAN_STRESS_LOOPS", "25")))
     args = parser.parse_args()
+
+    if args.stress_loops > MAX_STRESS_LOOPS:
+        print(f"FAIL stress loops must be <= {MAX_STRESS_LOOPS}")
+        return 1
 
     checks = check_static_contracts()
     if args.stress:

@@ -39,8 +39,8 @@ Use this skill when the user asks to:
 - Mention the saved file path when a capture succeeds.
 - Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
 - Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
-- Treat decision policies as configuration/envelope preparation only unless a future adapter or caller explicitly handles execution.
-- Treat monitor profiles as declarative project/workflow plans. Do not start background monitoring unless the user clearly asks for an explicit scheduler or bounded foreground watch.
+- Treat decision policies as configuration/envelope preparation only. Do not execute function routes, APIs, local commands, or subagents unless a future adapter or caller explicitly handles execution.
+- Treat monitor profiles as declarative project/workflow plans. Setting a monitor profile does not start monitoring; do not start background monitoring unless the user clearly asks for an explicit scheduler or bounded foreground watch.
 - Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
 - Do not record audio unless the user asks for it. Prefer listing audio adapter/device status first.
 
