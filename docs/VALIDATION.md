@@ -20,6 +20,13 @@ This verifies:
 - design principles are represented in docs and skill guidance
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
 - safety boundaries are documented, including local-only defaults, no automatic uploads, no arbitrary decision-code execution, and no hidden scheduler
+- text files are valid UTF-8, README command examples stay ASCII-only, and common mojibake patterns are rejected
+
+You can run the encoding guard directly:
+
+```powershell
+npm run check:encoding
+```
 
 ## Stress Test
 

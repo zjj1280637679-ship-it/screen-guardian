@@ -1,0 +1,10 @@
+* text=auto
+
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.py text eol=lf
+*.cjs text eol=lf
+*.ps1 text eol=crlf

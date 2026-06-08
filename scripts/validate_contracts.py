@@ -25,6 +25,7 @@ PYTHON_PATH = ROOT / "scripts" / "screen_guardian_capture.py"
 MANIFEST_PATH = ROOT / ".codex-plugin" / "plugin.json"
 PACKAGE_PATH = ROOT / "package.json"
 MCP_PATH = ROOT / ".mcp.json"
+TEXT_ENCODING_PATH = ROOT / "scripts" / "check_text_encoding.py"
 MAX_STRESS_LOOPS = 200
 
 
@@ -251,6 +252,21 @@ def check_static_contracts() -> CheckSet:
     }
     for label, terms in boundary_terms.items():
         checks.check(any(term in text for term in terms), f"safety boundary documented: {label}")
+
+    if TEXT_ENCODING_PATH.exists():
+        completed = subprocess.run(
+            [sys.executable, str(TEXT_ENCODING_PATH)],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=20,
+            check=False,
+        )
+        detail = "\n".join(part for part in (completed.stdout.strip(), completed.stderr.strip()) if part)
+        checks.check(completed.returncode == 0, "text encoding guard passes", detail[-1000:])
+    else:
+        checks.check(False, "text encoding guard passes", str(TEXT_ENCODING_PATH))
 
     return checks
 

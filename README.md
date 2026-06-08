@@ -84,7 +84,7 @@ Screen Guardian can keep its display identity flexible:
 
 - `get_display_profile` reports the active name, detected system language, and current Codex manifest name.
 - `set_display_name` switches between `auto` mode and `manual` mode.
-- `auto` mode chooses a localized name such as `Screen Guardian` or `屏幕守护者`.
+- `auto` mode chooses a localized name for the detected locale.
 - `manual` mode stores a local alias under the user's app data folder, not in the public repository.
 - `apply_display_profile` writes the active name into the local plugin manifest when the user wants the Codex plugin card to use it.
 
@@ -154,6 +154,7 @@ See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for cache, feature flags, project/wor
 ```powershell
 $env:ARK_API_KEY = "your-ark-api-key"
 $env:ARK_MODEL = "your-model-id"
+$zhImagePrompt = [System.Text.RegularExpressions.Regex]::Unescape('\u8bf7\u7528\u4e2d\u6587\u7b80\u6d01\u63cf\u8ff0\u8fd9\u4e2a\u622a\u56fe\u4e2d\u5bf9\u6392\u67e5\u95ee\u9898\u6700\u91cd\u8981\u7684\u4fe1\u606f\u3002')
 
 python .\scripts\volcengine_ark_runner.py `
   --dry-run `
@@ -162,8 +163,10 @@ python .\scripts\volcengine_ark_runner.py `
   --detail low `
   --thinking disabled `
   --max-tokens 300 `
-  --prompt "请用中文简洁描述这个截图中对排查问题最重要的信息。"
+  --prompt $zhImagePrompt
 ```
+
+The prompt variable is decoded from `\u` escapes so README command examples stay ASCII-only across GitHub copy, Windows terminals, npm wrappers, and editor encodings. Direct localized prompts are fine when the terminal and file encoding are known-good UTF-8.
 
 Real runs write redacted request artifacts, responses, summaries, and a JSONL usage ledger under `~/Pictures/ScreenGuardian/ArkRuns` by default.
 
@@ -227,6 +230,7 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 Run static contract validation:
 
 ```powershell
+npm run check:encoding
 python scripts/validate_contracts.py
 ```
 
