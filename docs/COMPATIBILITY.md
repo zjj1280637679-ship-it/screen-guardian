@@ -114,13 +114,41 @@ Audio capture and extraction use the same approach. Microphone recording, system
 
 The MCP server uses this runtime order:
 
-1. `SCREEN_GUARDIAN_PYTHON`
-2. `PYTHON`
-3. common local Python install paths
-4. Windows `py` launcher
-5. `python`
-6. `python3`
+1. `SCREEN_GUARDIAN_HELPER_EXE`
+2. `bin/screen-guardian-helper.exe`
+3. `SCREEN_GUARDIAN_CAPTURE_SCRIPT` plus Python
+4. current cache, source folder, or newest sibling cache `scripts/screen_guardian_capture.py` plus Python
+5. `SCREEN_GUARDIAN_PYTHON`
+6. `PYTHON`
+7. common local Python install paths
+8. Windows `py` launcher
+9. `python`
+10. `python3`
 
-Prefer `SCREEN_GUARDIAN_PYTHON` for predictable local development and support sessions. The server does not rely on `npm_config_python`; recent npm versions can warn about an unknown `python` config before running package scripts, and that warning is separate from Screen Guardian's runtime discovery.
+Prefer `SCREEN_GUARDIAN_HELPER_EXE` when you want a self-contained runtime, and `SCREEN_GUARDIAN_PYTHON` when you want to pin a local Python interpreter. The server does not rely on `npm_config_python`; recent npm versions can warn about an unknown `python` config before running package scripts, and that warning is separate from Screen Guardian's runtime discovery.
+
+## Self-Contained Helper
+
+Build a helper executable with:
+
+```powershell
+npm run build:helper
+```
+
+This uses PyInstaller to produce:
+
+```text
+bin/screen-guardian-helper.exe
+```
+
+The helper accepts the same JSON request argument as `scripts/screen_guardian_capture.py`. It is intended for machines where Python launchers, PATH, or plugin cache paths are unreliable. The executable is ignored by Git; publish or ship it separately when needed.
+
+If PyInstaller is not installed:
+
+```powershell
+python -m pip install --user pyinstaller
+```
+
+Then rebuild. Optional audio and FFmpeg features still require their optional native dependencies.
 
 This keeps positive freedom high by expanding what personal AI can do, while preserving negative freedom by avoiding forced upgrades, forced background services, and one-path lock-in.

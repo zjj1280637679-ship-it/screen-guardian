@@ -1,11 +1,13 @@
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 
 const SERVER_NAME = "screen-guardian";
 const SERVER_VERSION = "0.1.11";
 const ROOT = path.resolve(__dirname, "..");
-const CAPTURE_SCRIPT = path.join(ROOT, "scripts", "screen_guardian_capture.py");
+const CAPTURE_SCRIPT_NAME = "screen_guardian_capture.py";
+const HELPER_EXE_NAME = "screen-guardian-helper.exe";
 
 const imageOutputProperties = {
   output_dir: {
@@ -1072,11 +1074,145 @@ function pythonCandidates() {
     .filter(Boolean);
 }
 
+function addPathCandidate(candidates, filePath, source) {
+  if (!filePath) {
+    return;
+  }
+  candidates.push({ path: filePath, source });
+}
+
+function uniquePathCandidates(candidates) {
+  const seen = new Set();
+  return candidates
+    .map((candidate) => {
+      const resolved = path.resolve(candidate.path);
+      const key = resolved.toLowerCase();
+      if (seen.has(key)) {
+        return null;
+      }
+      seen.add(key);
+      return {
+        ...candidate,
+        path: resolved,
+        available: fs.existsSync(resolved),
+      };
+    })
+    .filter(Boolean);
+}
+
+function sourcePluginRoots() {
+  const roots = [];
+  addPathCandidate(roots, process.env.SCREEN_GUARDIAN_PLUGIN_ROOT, "SCREEN_GUARDIAN_PLUGIN_ROOT");
+  addPathCandidate(roots, path.join(os.homedir(), "plugins", "screen-guardian"), "home-source");
+  addPathCandidate(roots, path.join(process.env.USERPROFILE || "", "plugins", "screen-guardian"), "userprofile-source");
+  return uniquePathCandidates(roots).filter((candidate) => candidate.available);
+}
+
+function cacheSiblingRoots() {
+  const parent = path.dirname(ROOT);
+  if (!fs.existsSync(parent)) {
+    return [];
+  }
+  try {
+    return fs
+      .readdirSync(parent, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const fullPath = path.join(parent, entry.name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(fullPath).mtimeMs;
+        } catch (_err) {
+          mtimeMs = 0;
+        }
+        return { path: fullPath, source: "cache-sibling", mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.path.localeCompare(a.path));
+  } catch (_err) {
+    return [];
+  }
+}
+
+function captureScriptCandidates() {
+  const candidates = [];
+  addPathCandidate(candidates, process.env.SCREEN_GUARDIAN_CAPTURE_SCRIPT, "SCREEN_GUARDIAN_CAPTURE_SCRIPT");
+  addPathCandidate(candidates, path.join(ROOT, "scripts", CAPTURE_SCRIPT_NAME), "current-plugin-root");
+  for (const candidate of sourcePluginRoots()) {
+    addPathCandidate(candidates, path.join(candidate.path, "scripts", CAPTURE_SCRIPT_NAME), candidate.source);
+  }
+  for (const candidate of cacheSiblingRoots()) {
+    addPathCandidate(candidates, path.join(candidate.path, "scripts", CAPTURE_SCRIPT_NAME), candidate.source);
+  }
+  return uniquePathCandidates(candidates);
+}
+
+function helperExeCandidates() {
+  const candidates = [];
+  addPathCandidate(candidates, process.env.SCREEN_GUARDIAN_HELPER_EXE, "SCREEN_GUARDIAN_HELPER_EXE");
+  addPathCandidate(candidates, path.join(ROOT, "bin", HELPER_EXE_NAME), "current-plugin-root");
+  for (const candidate of sourcePluginRoots()) {
+    addPathCandidate(candidates, path.join(candidate.path, "bin", HELPER_EXE_NAME), candidate.source);
+  }
+  for (const candidate of cacheSiblingRoots()) {
+    addPathCandidate(candidates, path.join(candidate.path, "bin", HELPER_EXE_NAME), candidate.source);
+  }
+  return uniquePathCandidates(candidates).filter((candidate) => candidate.available || candidate.source === "SCREEN_GUARDIAN_HELPER_EXE");
+}
+
+function runtimeCandidates() {
+  const candidates = [];
+  const helperCandidates = helperExeCandidates();
+  const scriptCandidates = captureScriptCandidates();
+
+  for (const helper of helperCandidates) {
+    candidates.push({
+      kind: "helper",
+      command: helper.path,
+      prefixArgs: [],
+      source: helper.source,
+      skipped: !helper.available,
+      skipReason: "helper executable does not exist",
+    });
+  }
+
+  for (const script of scriptCandidates) {
+    if (!script.available) {
+      candidates.push({
+        kind: "script",
+        command: script.path,
+        prefixArgs: [],
+        source: script.source,
+        skipped: true,
+        skipReason: "capture script does not exist",
+        scriptPath: script.path,
+      });
+      continue;
+    }
+    for (const python of pythonCandidates()) {
+      candidates.push({
+        kind: "python",
+        command: python.command,
+        prefixArgs: python.prefixArgs,
+        source: python.source,
+        skipped: python.skipped,
+        skipReason: python.skipReason,
+        scriptPath: script.path,
+        scriptSource: script.source,
+      });
+    }
+  }
+
+  return candidates;
+}
+
 function summarizeAttempt(candidate, status, extra) {
   return {
+    kind: candidate.kind || "python",
     command: candidate.command,
     prefix_args: candidate.prefixArgs,
     source: candidate.source,
+    script_path: candidate.scriptPath || "",
+    script_source: candidate.scriptSource || "",
     status,
     ...(extra || {}),
   };
@@ -1092,7 +1228,7 @@ function safeTextTail(value, maxLength = 2000) {
 
 function runPython(action, args) {
   const request = JSON.stringify({ action, args: args || {} });
-  const candidates = pythonCandidates();
+  const candidates = runtimeCandidates();
 
   return new Promise((resolve) => {
     let index = 0;
@@ -1105,8 +1241,18 @@ function runPython(action, args) {
         detail: detail || "No Python executable candidate succeeded.",
         attempts,
         runtime_strategy: {
+          preferred_helper_env: "SCREEN_GUARDIAN_HELPER_EXE",
           preferred_env: "SCREEN_GUARDIAN_PYTHON",
-          fallback_order: ["PYTHON", "common install paths", "py launcher", "python", "python3"],
+          preferred_script_env: "SCREEN_GUARDIAN_CAPTURE_SCRIPT",
+          fallback_order: [
+            "helper executable",
+            "capture script env/current/source/latest cache",
+            "PYTHON",
+            "common install paths",
+            "py launcher",
+            "python",
+            "python3",
+          ],
         },
       });
     };
@@ -1124,7 +1270,7 @@ function runPython(action, args) {
         return;
       }
 
-      const childArgs = [...candidate.prefixArgs, CAPTURE_SCRIPT, request];
+      const childArgs = candidate.kind === "helper" ? [request] : [...candidate.prefixArgs, candidate.scriptPath, request];
       const child = spawn(candidate.command, childArgs, {
         cwd: ROOT,
         env: { ...process.env, PYTHONIOENCODING: "utf-8" },
@@ -1174,9 +1320,12 @@ function runPython(action, args) {
             parsed.stderr = stderr.trim();
           }
           parsed.python_runtime = {
+            kind: candidate.kind || "python",
             command: candidate.command,
             prefix_args: candidate.prefixArgs,
             source: candidate.source,
+            script_path: candidate.scriptPath || "",
+            script_source: candidate.scriptSource || "",
             skipped_or_failed_candidates: attempts,
           };
           resolve(parsed);

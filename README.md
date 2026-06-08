@@ -192,6 +192,15 @@ $env:SCREEN_GUARDIAN_PYTHON = "C:\Path\To\python.exe"
 
 This is preferred over npm's legacy `python` config. If `npm run ...` prints `npm warn Unknown env config "python"`, the warning is from npm configuration and does not mean Screen Guardian failed when the script exits successfully.
 
+For the most stable path on constrained systems, build a self-contained helper executable:
+
+```powershell
+npm run build:helper
+$env:SCREEN_GUARDIAN_HELPER_EXE = "$PWD\bin\screen-guardian-helper.exe"
+```
+
+When `SCREEN_GUARDIAN_HELPER_EXE` or `bin/screen-guardian-helper.exe` is available, the MCP server uses that helper before looking for Python. The server can also recover from stale plugin cache paths by checking `SCREEN_GUARDIAN_CAPTURE_SCRIPT`, the source plugin folder, and newer sibling cache folders for `screen_guardian_capture.py`.
+
 Optional audio recording uses:
 
 ```powershell

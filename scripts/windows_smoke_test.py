@@ -103,6 +103,26 @@ def main():
     require_ok("explicit SCREEN_GUARDIAN_PYTHON check_dependencies", dependency_payload)
     checks.append({"name": "explicit_python_runtime", "ok": True, "python_runtime": dependency_payload.get("python_runtime")})
 
+    helper_path = ROOT / "bin" / "screen-guardian-helper.exe"
+    if helper_path.exists():
+        helper_payload = call_tool("check_dependencies", env_updates={"SCREEN_GUARDIAN_HELPER_EXE": str(helper_path)})
+        require_ok("explicit SCREEN_GUARDIAN_HELPER_EXE check_dependencies", helper_payload)
+        runtime = helper_payload.get("python_runtime") or {}
+        if runtime.get("kind") != "helper":
+            raise SmokeFailure(f"helper executable was not selected first: {runtime}")
+        checks.append({"name": "explicit_helper_runtime", "ok": True, "python_runtime": runtime})
+
+    script_env = {
+        "SCREEN_GUARDIAN_CAPTURE_SCRIPT": str(ROOT / "scripts" / "screen_guardian_capture.py"),
+        "SCREEN_GUARDIAN_PYTHON": sys.executable,
+    }
+    script_payload = call_tool("check_dependencies", env_updates=script_env)
+    require_ok("explicit SCREEN_GUARDIAN_CAPTURE_SCRIPT check_dependencies", script_payload)
+    script_runtime = script_payload.get("python_runtime") or {}
+    if script_runtime.get("script_source") != "SCREEN_GUARDIAN_CAPTURE_SCRIPT":
+        raise SmokeFailure(f"explicit capture script was not selected first: {script_runtime}")
+    checks.append({"name": "explicit_capture_script", "ok": True, "python_runtime": script_runtime})
+
     missing_python = str(Path(tempfile.gettempdir()) / "screen-guardian-missing-python.exe")
     fallback_payload = call_tool(
         "check_dependencies",
@@ -111,7 +131,7 @@ def main():
     require_ok("fallback Python discovery check_dependencies", fallback_payload)
     runtime = fallback_payload.get("python_runtime") or {}
     failed_candidates = runtime.get("skipped_or_failed_candidates") or []
-    if not failed_candidates:
+    if not any(item.get("source") == "SCREEN_GUARDIAN_PYTHON" for item in failed_candidates):
         raise SmokeFailure("fallback Python discovery did not report the skipped broken candidate")
     checks.append({"name": "python_fallback_reports_candidates", "ok": True, "failed_candidates": failed_candidates})
 
