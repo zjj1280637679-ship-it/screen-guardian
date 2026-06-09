@@ -29,6 +29,20 @@ EXPECTED_AI_FIRST_TOOLS = {
     "guardian_perceive",
     "guardian_prepare_workflow",
 }
+EXPECTED_CORE_TOOLS = {
+    "guardian_check",
+    "guardian_perceive",
+    "check_dependencies",
+    "list_adapters",
+    "list_displays",
+    "list_windows",
+    "list_capture_routes",
+    "capture_screen",
+    "capture_region",
+    "capture_window",
+    "watch_screen",
+    "clear_cache",
+}
 EXPECTED_RUNTIME_TOOLS = {
     "guardian_list_commands",
     "guardian_run_command",
@@ -143,6 +157,7 @@ def list_tools(env_updates: dict[str, str]) -> dict[str, Any]:
     response = result["responses"][-1] if result["responses"] else {}
     tools = ((response.get("result") or {}).get("tools") or []) if response else []
     result["tools"] = tools
+    result["tool_surface"] = (response.get("result") or {}).get("toolSurface") if response else None
     return result
 
 
@@ -181,7 +196,32 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 # PYTHONUSERBASE is preserved. Keep dependency discovery stable.
                 "PYTHONUSERBASE": os.environ.get("PYTHONUSERBASE") or CURRENT_PYTHON_USERBASE,
                 "SCREEN_GUARDIAN_PYTHON": sys.executable,
+                "SCREEN_GUARDIAN_TOOL_SURFACE": "full",
             }
+
+            default_surface_env = {
+                "APPDATA": appdata_tmp,
+                "PYTHONUSERBASE": os.environ.get("PYTHONUSERBASE") or CURRENT_PYTHON_USERBASE,
+                "SCREEN_GUARDIAN_PYTHON": sys.executable,
+            }
+            default_tools_result = list_tools(default_surface_env)
+            timings["tools.list.default_surface"] = default_tools_result
+            default_tool_names = {tool.get("name") for tool in default_tools_result.get("tools", [])}
+            add_check(checks, "default MCP surface reports core", ok_transport(default_tools_result) and default_tools_result.get("tool_surface") == "core", str(default_tools_result.get("tool_surface")))
+            add_check(checks, "default MCP surface matches core whitelist", ok_transport(default_tools_result) and default_tool_names == EXPECTED_CORE_TOOLS, f"missing={sorted(EXPECTED_CORE_TOOLS - default_tool_names)} extra={sorted(default_tool_names - EXPECTED_CORE_TOOLS)}")
+            hidden_result = timed_tool("guardian_run_exec", {}, default_surface_env)
+            timings["guardian_run_exec.hidden_on_core_surface"] = hidden_result
+            hidden_payload = hidden_result["payload"]
+            add_check(
+                checks,
+                "hidden tool call returns surface hint",
+                ok_transport(hidden_result)
+                and hidden_payload.get("ok") is False
+                and hidden_payload.get("tool_surface") == "core"
+                and bool(hidden_payload.get("enable_hint"))
+                and "available_surfaces" in hidden_payload,
+                payload_text(hidden_payload)[:500],
+            )
 
             tools_result = list_tools(env)
             timings["tools.list"] = tools_result

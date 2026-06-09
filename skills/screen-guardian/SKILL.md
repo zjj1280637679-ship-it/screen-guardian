@@ -65,6 +65,8 @@ Prefer the AI-first facade tools before the expert tool surface:
 
 Prefer the `screen_guardian` MCP tools. Start with the AI-first facade layer for ordinary help, then add core, local control, or experimental envelopes only when the user asks for those workflows.
 
+The default MCP surface is core-sized. Advanced workflow, media, policy, monitor, and lab execution tools are hidden unless the MCP server starts with `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full`.
+
 AI-first tools:
 
 - `guardian_check`

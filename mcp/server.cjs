@@ -1536,6 +1536,87 @@ const tools = [
   },
 ];
 
+const CORE_TOOL_NAMES = new Set([
+  "guardian_check",
+  "guardian_perceive",
+  "check_dependencies",
+  "list_adapters",
+  "list_displays",
+  "list_windows",
+  "list_capture_routes",
+  "capture_screen",
+  "capture_region",
+  "capture_window",
+  "watch_screen",
+  "clear_cache",
+]);
+
+const ADVANCED_TOOL_NAMES = new Set([
+  "guardian_prepare_workflow",
+  "guardian_list_commands",
+  "guardian_run_command",
+  "set_cache_path",
+  "set_storage_routes",
+  "set_runtime_limits",
+  "set_feature_flags",
+  "get_runtime_settings",
+  "get_display_profile",
+  "set_display_name",
+  "apply_display_profile",
+  "analyze_image",
+  "preprocess_image",
+  "prepare_webpage_capture",
+  "capture_webpage",
+  "list_audio_devices",
+  "record_audio",
+  "analyze_audio",
+  "extract_audio_track",
+  "list_extension_routes",
+  "set_extension_route",
+  "prepare_model_request",
+  "list_decision_policies",
+  "set_decision_policy",
+  "prepare_decision_request",
+  "list_monitor_profiles",
+  "set_monitor_profile",
+  "prepare_monitor_tick",
+  "prepare_capture_chain",
+]);
+
+const LAB_TOOL_NAMES = new Set([
+  "guardian_prepare_exec",
+  "guardian_run_exec",
+]);
+
+function currentToolSurface() {
+  const raw = String(process.env.SCREEN_GUARDIAN_TOOL_SURFACE || "core").trim().toLowerCase();
+  if (["full", "all", "lab", "dev"].includes(raw)) {
+    return "full";
+  }
+  if (["advanced", "expert"].includes(raw)) {
+    return "advanced";
+  }
+  return "core";
+}
+
+function toolVisible(name) {
+  const surface = currentToolSurface();
+  if (CORE_TOOL_NAMES.has(name)) {
+    return true;
+  }
+  if (surface === "advanced" && ADVANCED_TOOL_NAMES.has(name)) {
+    return true;
+  }
+  if (surface === "full" && (ADVANCED_TOOL_NAMES.has(name) || LAB_TOOL_NAMES.has(name))) {
+    return true;
+  }
+  return false;
+}
+
+function visibleTools() {
+  return tools.filter((tool) => toolVisible(tool.name));
+}
+
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -2036,11 +2117,37 @@ async function handle(message) {
     }
 
     if (method === "tools/list") {
-      sendResult(id, { tools });
+      sendResult(id, {
+        tools: visibleTools(),
+        toolSurface: currentToolSurface(),
+      });
       return;
     }
 
     if (method === "tools/call") {
+      if (!toolVisible(params?.name)) {
+        const result = {
+          ok: false,
+          error: `Tool '${params?.name}' is hidden on the current '${currentToolSurface()}' surface.`,
+          tool_surface: currentToolSurface(),
+          available_surfaces: {
+            core: Array.from(CORE_TOOL_NAMES),
+            advanced: Array.from(new Set([...CORE_TOOL_NAMES, ...ADVANCED_TOOL_NAMES])),
+            full: Array.from(new Set([...CORE_TOOL_NAMES, ...ADVANCED_TOOL_NAMES, ...LAB_TOOL_NAMES])),
+          },
+          enable_hint: "Set SCREEN_GUARDIAN_TOOL_SURFACE=advanced or full before starting the MCP server to expose advanced/lab tools.",
+        };
+        sendResult(id, {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+          isError: true,
+        });
+        return;
+      }
       const result = await callTool(params?.name, params?.arguments || {});
       sendResult(id, {
         content: [

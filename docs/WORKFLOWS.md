@@ -2,9 +2,11 @@
 
 Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
 
-For AI agents, start with the AI-first facade tools: `guardian_check`, `guardian_perceive`, and `guardian_prepare_workflow`. They reduce tool-choice overhead by mapping common intents to the existing core, local-control, and envelope tools without expanding permissions or starting hidden work.
+For AI agents, start with the default AI-first facade tools: `guardian_check` and `guardian_perceive`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
 
-For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
+After the advanced surface is enabled, use `guardian_prepare_workflow` for local model, decision, monitor, or capture-chain envelopes. For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
+
+The default MCP surface is `core`. It exposes health, screen/region/window capture, short watch, route listing, and cache cleanup. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` for workflow/media/local-control tools, or `SCREEN_GUARDIAN_TOOL_SURFACE=full` for lab tools such as break-glass execution. The MCP `tools/list` response reports the active `toolSurface` value so callers can explain why an advanced tool is hidden.
 
 ## How To Read The Layers
 

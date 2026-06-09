@@ -2,6 +2,7 @@ import ctypes
 import ctypes.wintypes
 import array
 import copy
+import difflib
 import hashlib
 import json
 import locale
@@ -241,6 +242,13 @@ DEFAULT_CONFIG = {
     "decision_policies": [],
     "monitor_profiles": [],
 }
+
+
+class WindowMatchError(ValueError):
+    def __init__(self, message, payload):
+        super().__init__(message)
+        self.payload = payload
+
 
 CAPABILITY_COMMANDS = [
     {
@@ -1310,6 +1318,76 @@ def enum_windows(args=None):
     return windows
 
 
+def summarize_windows(windows, limit=10):
+    return [
+        {
+            "hwnd": item.get("hwnd"),
+            "title": item.get("title"),
+            "process_name": item.get("process_name"),
+            "pid": item.get("pid"),
+            "rect": item.get("rect"),
+            "is_minimized": item.get("is_minimized"),
+        }
+        for item in windows[:limit]
+    ]
+
+
+def window_match_terms(args):
+    terms = []
+    for key in ("exact_title", "title_contains", "process_name"):
+        value = str(args.get(key) or "").strip()
+        if value:
+            terms.append(value)
+    terms.extend(normalized_tags(args.get("title_contains_any")))
+    terms.extend(normalized_tags(args.get("process_names")))
+    return [term for term in terms if term]
+
+
+def window_match_score(window, terms):
+    if not terms:
+        return 0.0
+    title = str(window.get("title") or "").lower()
+    process = str(window.get("process_name") or "").lower()
+    haystacks = [title, process]
+    best = 0.0
+    for term in terms:
+        needle = str(term or "").lower()
+        if not needle:
+            continue
+        for haystack in haystacks:
+            if needle in haystack:
+                best = max(best, 1.0)
+            best = max(best, difflib.SequenceMatcher(None, needle, haystack).ratio())
+    return round(best, 4)
+
+
+def window_match_payload(args, reason, windows=None):
+    all_windows = windows if isinstance(windows, list) else enum_windows({})
+    terms = window_match_terms(args)
+    scored = []
+    for window in all_windows:
+        scored.append({**window, "match_score": window_match_score(window, terms)})
+    scored.sort(key=lambda item: item.get("match_score", 0), reverse=True)
+    approximate = [item for item in scored if item.get("match_score", 0) >= 0.25][:10]
+    if not approximate:
+        approximate = scored[:10]
+    return {
+        "reason": reason,
+        "requested": {
+            "hwnd": args.get("hwnd"),
+            "exact_title": args.get("exact_title"),
+            "title_contains": args.get("title_contains"),
+            "title_contains_any": args.get("title_contains_any"),
+            "process_name": args.get("process_name"),
+            "process_names": args.get("process_names"),
+        },
+        "candidate_count": len(all_windows),
+        "candidate_windows": summarize_windows(all_windows, 10),
+        "approximate_matches": summarize_windows(approximate, 10),
+        "recommended_next": "Call list_windows, then retry capture_window with a specific hwnd or exact_title.",
+    }
+
+
 def find_window(args):
     hwnd = args.get("hwnd")
     if hwnd:
@@ -1321,20 +1399,12 @@ def find_window(args):
     if exact_title:
         windows = [w for w in windows if w["title"].lower() == exact_title]
     if not windows:
-        raise ValueError("No matching window found")
+        raise WindowMatchError("No matching window found", window_match_payload(args, "no_matching_window"))
     if len(windows) > 1 and not bool(args.get("allow_first_match", False)):
-        sample = [
-            {
-                "hwnd": item.get("hwnd"),
-                "title": item.get("title"),
-                "process_name": item.get("process_name"),
-                "pid": item.get("pid"),
-            }
-            for item in windows[:10]
-        ]
-        raise ValueError(
+        raise WindowMatchError(
             "Multiple matching windows found; pass hwnd from list_windows, use a more specific exact_title/process filter, "
-            f"or set allow_first_match=true. Matches: {json.dumps(sample, ensure_ascii=False)}"
+            "or set allow_first_match=true.",
+            window_match_payload(args, "ambiguous_window_match", windows),
         )
     return windows[0]
 
@@ -3966,6 +4036,8 @@ def action_capture_window(args):
         require_feature("window_capture", args)
         image, source, libs = grab_window_image(args)
         return write_json(save_or_warn_capture(image, source, libs, args))
+    except WindowMatchError as exc:
+        return error(str(exc), **exc.payload)
     except Exception as exc:
         return error(str(exc))
 
@@ -4078,6 +4150,8 @@ def action_watch_screen(args):
                 "privacy": "Bounded local watch only; no background service remains running.",
             }
         )
+    except WindowMatchError as exc:
+        return error(str(exc), **exc.payload)
     except Exception as exc:
         return error(str(exc))
 
@@ -4213,11 +4287,36 @@ ACTIONS = {
 }
 
 
+def normalize_json_request(raw_request):
+    text = str(raw_request or "").lstrip("\ufeff\ufffe")
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        return stripped
+    starts = [pos for pos in (stripped.find("{"), stripped.find("[")) if pos >= 0]
+    if starts:
+        first_start = min(starts)
+        if first_start <= 8:
+            return stripped[first_start:]
+    quote_start = stripped.find('"')
+    if quote_start >= 0 and quote_start <= 8:
+        possible_object = stripped[quote_start:]
+        if '":' in possible_object[:80] and possible_object.rstrip().endswith("}"):
+            return "{" + possible_object
+    return stripped
+
+
 def main():
     if len(sys.argv) < 2:
-        return error("Missing JSON request.")
+        if not sys.stdin.isatty():
+            raw_request = sys.stdin.read()
+        else:
+            return error("Missing JSON request.")
+    elif sys.argv[1] in ("--stdin", "-"):
+        raw_request = sys.stdin.read()
+    else:
+        raw_request = sys.argv[1]
     try:
-        request = json.loads(sys.argv[1])
+        request = json.loads(normalize_json_request(raw_request))
     except Exception as exc:
         return error(f"Invalid JSON request: {exc}")
 

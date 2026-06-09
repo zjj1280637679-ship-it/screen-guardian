@@ -43,7 +43,7 @@ Run:
 python scripts/validate_contracts.py --stress
 ```
 
-The stress test sends repeated newline-delimited JSON-RPC calls through the MCP server. It registers temporary decision policies and monitor profiles, prepares decision and monitor envelopes, lists the temporary profiles, and removes them again.
+The stress test sends repeated newline-delimited JSON-RPC calls through the MCP server. It uses a temporary `APPDATA` directory and `SCREEN_GUARDIAN_TOOL_SURFACE=full`, registers temporary decision policies and monitor profiles inside that isolated config, prepares decision and monitor envelopes, lists the temporary profiles, and removes them again.
 
 Default stress size is 25 loops. The maximum accepted value is 200 loops so a typo cannot create an unbounded local run. Override it with:
 
@@ -51,7 +51,7 @@ Default stress size is 25 loops. The maximum accepted value is 200 loops so a ty
 python scripts/validate_contracts.py --stress --stress-loops 100
 ```
 
-The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles to exercise the real MCP persistence path. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
+The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles only inside the isolated stress config. It does not write those profiles to the user's normal Screen Guardian config, start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
 
 The stress test also calls `guardian_check`, `guardian_prepare_workflow`, `list_capture_routes`, and `prepare_capture_chain` so the AI-first facade and capture-chain route planning are covered without performing real capture.
 

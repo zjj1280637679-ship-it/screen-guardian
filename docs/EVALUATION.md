@@ -16,6 +16,7 @@ Runtime evaluation is not a replacement for validation. It is a lightweight prod
 
 - whether the AI-first tools are present
 - whether the capability-runtime tools are present
+- whether the default MCP surface reports `toolSurface="core"`, exactly matches the core whitelist, and returns a clear enable hint when a hidden tool is called
 - whether capture route tools are present
 - how many registered commands are available and active
 - whether `guardian_check` gives a clear local status and next step
@@ -30,7 +31,7 @@ Runtime evaluation is not a replacement for validation. It is a lightweight prod
 - per-call latency in milliseconds
 - local artifact counts
 
-The evaluator uses a temporary `APPDATA` directory and a temporary output directory. This keeps feature-flag changes and audit files isolated from the user's normal Screen Guardian configuration. On Windows it preserves `PYTHONUSERBASE` so `pip install --user` dependencies such as `mss` and Pillow remain discoverable while the Screen Guardian config stays isolated.
+The evaluator uses a temporary `APPDATA` directory and a temporary output directory. This keeps feature-flag changes and audit files isolated from the user's normal Screen Guardian configuration. On Windows it preserves `PYTHONUSERBASE` so `pip install --user` dependencies such as `mss` and Pillow remain discoverable while the Screen Guardian config stays isolated. It checks the default core surface first, then runs the full surface explicitly for advanced contract coverage.
 
 ## Default Run
 

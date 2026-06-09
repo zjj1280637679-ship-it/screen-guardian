@@ -98,7 +98,7 @@ def main():
         raise SmokeFailure("node is not on PATH")
 
     checks = []
-    explicit_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable}
+    explicit_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "SCREEN_GUARDIAN_TOOL_SURFACE": "full"}
     dependency_payload = call_tool("check_dependencies", env_updates=explicit_env)
     require_ok("explicit SCREEN_GUARDIAN_PYTHON check_dependencies", dependency_payload)
     checks.append({"name": "explicit_python_runtime", "ok": True, "python_runtime": dependency_payload.get("python_runtime")})
@@ -121,6 +121,7 @@ def main():
     script_env = {
         "SCREEN_GUARDIAN_CAPTURE_SCRIPT": str(ROOT / "scripts" / "screen_guardian_capture.py"),
         "SCREEN_GUARDIAN_PYTHON": sys.executable,
+        "SCREEN_GUARDIAN_TOOL_SURFACE": "full",
     }
     script_payload = call_tool("check_dependencies", env_updates=script_env)
     require_ok("explicit SCREEN_GUARDIAN_CAPTURE_SCRIPT check_dependencies", script_payload)
@@ -152,7 +153,7 @@ def main():
     checks.append({"name": "list_windows", "ok": True, "window_count": windows_payload.get("count")})
 
     with tempfile.TemporaryDirectory(prefix="screen-guardian-smoke-appdata-") as appdata:
-        isolated_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "APPDATA": appdata}
+        isolated_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "APPDATA": appdata, "SCREEN_GUARDIAN_TOOL_SURFACE": "full"}
         limits_payload = call_tool(
             "set_runtime_limits",
             {"limits": {"watch_duration_seconds_max": 1, "capture_settle_delay_ms_max": 1}},

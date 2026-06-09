@@ -13,6 +13,7 @@ import ast
 import json
 import os
 import re
+import site
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ PACKAGE_PATH = ROOT / "package.json"
 MCP_PATH = ROOT / ".mcp.json"
 TEXT_ENCODING_PATH = ROOT / "scripts" / "check_text_encoding.py"
 MAX_STRESS_LOOPS = 200
+CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 
 
 REQUIRED_TOOLS = [
@@ -297,6 +299,10 @@ def check_static_contracts() -> CheckSet:
         "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick", "action_prepare_capture_chain"],
         "capture routes distinguish desktop application webpage": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"'],
         "quiet window capture is default strategy": ["quiet_capture_preferred", "no_foreground_activation", "quiet_preferred_default", "visible-screen bbox fallback"],
+        "default MCP surface is core-sized": ["CORE_TOOL_NAMES", "SCREEN_GUARDIAN_TOOL_SURFACE", "visibleTools"],
+        "CLI supports stdin JSON": ["--stdin", "sys.stdin.read", "Invalid JSON request"],
+        "window matching returns candidates": ["WindowMatchError", "candidate_windows", "approximate_matches"],
+        "stress uses isolated config": ["screen-guardian-stress", '"APPDATA"', "SCREEN_GUARDIAN_TOOL_SURFACE"],
         "capture chain is prepare only": ["action_prepare_capture_chain", "capture_chain_request", "does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers"],
         "nested scroll container capture is optional": ["scroll_container", "frame_selector", "capture_scroll_container"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
@@ -310,7 +316,8 @@ def check_static_contracts() -> CheckSet:
         "run_command rejects arbitrary code strings": ["guardian_run_command only runs registry entries", "command_id is required"],
         "break-glass exec is gated": ['require_feature("raw_local_exec"', "user_confirmed=true is required", "append_exec_audit"],
     }
-    combined_source = (server + "\n" + py_source).lower()
+    validator_source = read_text(Path(__file__))
+    combined_source = (server + "\n" + py_source + "\n" + validator_source).lower()
     for label, terms in guardian_terms.items():
         checks.check(all(term.lower() in combined_source for term in terms), f"ai-first contract: {label}")
 
@@ -371,6 +378,21 @@ def run_mcp_stress(loops: int) -> CheckSet:
     stress_ids = [f"sg-stress-{i}" for i in range(loops)]
 
     with tempfile.TemporaryDirectory(prefix="screen-guardian-stress-") as tmp:
+        tmp_path = Path(tmp)
+        appdata_dir = tmp_path / "appdata"
+        output_dir = tmp_path / "out"
+        appdata_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stress_env = os.environ.copy()
+        stress_env.update(
+            {
+                "APPDATA": str(appdata_dir),
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUSERBASE": os.environ.get("PYTHONUSERBASE") or CURRENT_PYTHON_USERBASE,
+                "SCREEN_GUARDIAN_PYTHON": sys.executable,
+                "SCREEN_GUARDIAN_TOOL_SURFACE": "full",
+            }
+        )
         messages.extend(
             [
                 tool_request(request_id, "list_capture_routes", {"include_examples": True}),
@@ -388,7 +410,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
                             },
                             {"tool": "prepare_model_request", "args": {"prompt": "Summarize the table compactly."}},
                         ],
-                        "output_dir": tmp,
+                        "output_dir": str(output_dir),
                         "source_label": "capture-chain-direct",
                     },
                 ),
@@ -402,7 +424,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
                         "trigger": {"type": "delay", "seconds": 2},
                         "steps": [{"tool": "capture_window", "args": {"render_guard": "wait"}}],
                         "settings": {"quiet": True},
-                        "output_dir": tmp,
+                        "output_dir": str(output_dir),
                         "source_label": "capture-chain-facade",
                     },
                 ),
@@ -441,7 +463,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
                         "prepare_decision_request",
                         {
                             "policy_id": policy_id,
-                            "output_dir": tmp,
+                            "output_dir": str(output_dir),
                             "observation": {
                                 "iteration": i,
                                 "web_change": i % 2 == 0,
@@ -489,7 +511,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
                         "prepare_monitor_tick",
                         {
                             "profile_id": profile_id,
-                            "output_dir": tmp,
+                            "output_dir": str(output_dir),
                             "observations": {
                                 "iteration": i,
                                 "dom_hash_changed": i % 2 == 0,
@@ -507,12 +529,12 @@ def run_mcp_stress(loops: int) -> CheckSet:
                         "guardian_prepare_workflow",
                         {
                             "workflow_type": "model_request",
-                            "source_path": str(Path(tmp) / f"{base_id}.png"),
+                            "source_path": str(output_dir / f"{base_id}.png"),
                             "objective": "Prepare a compact local narration request for contract validation.",
                             "settings": {"quality": "stress"},
                             "project_id": "screen-guardian-stress",
                             "workflow_id": "ai-first",
-                            "output_dir": tmp,
+                            "output_dir": str(output_dir),
                         },
                     ),
                     tool_request(
@@ -522,7 +544,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
                             "language": "python",
                             "code": "print('screen-guardian stress prepared exec')",
                             "reason": "Contract validation prepare-only envelope.",
-                            "output_dir": tmp,
+                            "output_dir": str(output_dir),
                         },
                     ),
                     tool_request(request_id + 6, "list_monitor_profiles", {"project_id": "screen-guardian-stress"}),
@@ -540,20 +562,43 @@ def run_mcp_stress(loops: int) -> CheckSet:
         )
 
         payload = "\n".join(json.dumps(message, separators=(",", ":")) for message in messages) + "\n"
-        completed = subprocess.run(
-            ["node", str(SERVER_PATH)],
-            input=payload,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(ROOT),
-            timeout=max(30, loops * 2),
-            check=False,
-        )
+        timeout_seconds = max(120, loops * 8)
+        try:
+            completed = subprocess.run(
+                ["node", str(SERVER_PATH)],
+                input=payload,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(ROOT),
+                env=stress_env,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            checks.check(
+                False,
+                "stress MCP server exits cleanly",
+                f"timeout after {timeout_seconds}s; isolated APPDATA was {appdata_dir}; stdout_tail={(exc.stdout or '')[-500:]} stderr_tail={(exc.stderr or '')[-500:]}",
+            )
+            return checks
 
         checks.check(completed.returncode == 0, "stress MCP server exits cleanly", completed.stderr[-1000:])
-        responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+        responses = []
+        parse_failures = []
+        for line in completed.stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                responses.append(json.loads(line))
+            except Exception as exc:
+                parse_failures.append(f"{exc}: {line[:300]}")
+        checks.check(not parse_failures, "stress responses are valid JSON", parse_failures[0] if parse_failures else "")
         checks.check(len(responses) == len(messages), "stress response count matches request count")
+        if len(responses) < len(messages):
+            return checks
         package_version = read_json(PACKAGE_PATH)["version"]
         initialized_version = ((responses[0].get("result") or {}).get("serverInfo") or {}).get("version")
         checks.check(initialized_version == package_version, "runtime initialize version matches package version")
@@ -570,7 +615,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
 
         checks.check(not failed_payloads, "stress tool calls all return ok", failed_payloads[:3][0] if failed_payloads else "")
 
-        generated_files = list(Path(tmp).glob("*.json"))
+        generated_files = list(output_dir.glob("*.json"))
         expected_files = loops * 4 + 2
         checks.check(len(generated_files) == expected_files, "stress generated expected envelope count", str(len(generated_files)))
 

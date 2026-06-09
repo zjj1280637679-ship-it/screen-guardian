@@ -12,16 +12,16 @@ For first use, treat it as a local capture fallback: check whether the adapter w
 
 ## AI-first tools
 
-Screen Guardian exposes a broad expert tool surface, but AI agents should usually start with AI-first intent tools and the capability command catalog:
+Screen Guardian exposes a broad expert tool surface, but the default MCP surface is intentionally small. AI agents should usually start with the two core intent tools, then enable the advanced surface only when workflow envelopes or reusable commands are needed:
 
 | Need | Tool | What it does |
 | --- | --- | --- |
 | Check readiness | `guardian_check` | Summarizes runtime, adapters, cache path, capability flags, and the next recommended tool without capturing anything. |
 | See or hold local visual context | `guardian_perceive` | Maps quick look, text screenshot, UI debugging, window capture, short change watch, and hold-file requests onto the existing safe capture tools. |
-| Prepare workflow envelopes | `guardian_prepare_workflow` | Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
-| Discover reusable commands | `guardian_list_commands` | Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
-| Run a registered command | `guardian_run_command` | Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
-| Prepare or run break-glass code | `guardian_prepare_exec`, `guardian_run_exec` | Saves or explicitly runs local Python/PowerShell/Node code. Raw execution is disabled by default and requires `raw_local_exec=true` plus `user_confirmed=true`. |
+| Prepare workflow envelopes | `guardian_prepare_workflow` | Advanced surface. Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
+| Discover reusable commands | `guardian_list_commands` | Advanced surface. Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
+| Run a registered command | `guardian_run_command` | Advanced surface. Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
+| Prepare or run break-glass code | `guardian_prepare_exec`, `guardian_run_exec` | Full surface only. Saves or explicitly runs local Python/PowerShell/Node code. Raw execution is disabled by default and requires `raw_local_exec=true` plus `user_confirmed=true`. |
 | Choose a capture route | `list_capture_routes` | Explains desktop, application, webpage, nested-scroll, and guided-chain routes so the AI can pick the right path first. |
 | Prepare a capture chain | `prepare_capture_chain` | Writes a local plan for conditional capture, quiet webpage capture, preprocessing, and later model handoff without executing it. |
 
@@ -139,7 +139,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Tool layers
 
-New users and AI agents should start with the AI-first tools above. The layers below are expert tools for direct control when the facade needs an exact backend, setting, or route.
+New users and AI agents should start with `guardian_check` and `guardian_perceive`. By default, the MCP server exposes only the core tool surface so first use stays small. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full` before starting the MCP server to expose advanced workflow, media, and lab tools. The MCP `tools/list` result includes `toolSurface` with the active value: `core`, `advanced`, or `full`.
 
 ### Core tools
 
@@ -147,6 +147,7 @@ These are the first-use tools. They perform explicit local checks or captures an
 
 | Need | Tools |
 | --- | --- |
+| Use the default AI facade | `guardian_check`, `guardian_perceive` |
 | Check whether Screen Guardian can run | `check_dependencies`, `list_adapters` |
 | See available screens and windows | `list_displays`, `list_windows` |
 | Save a screenshot | `capture_screen`, `capture_region`, `capture_window` |
@@ -158,7 +159,7 @@ Core capture outputs can be downscaled, saved as PNG/JPG, and tagged with projec
 
 ### Local control tools
 
-These tools tune local behavior without starting background work or calling external services:
+These tools tune local behavior without starting background work or calling external services. They are hidden from default `tools/list` unless `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `full` is set:
 
 - `get_runtime_settings`, `set_feature_flags`, `set_runtime_limits`
 - `set_cache_path`, `set_storage_routes`
@@ -170,7 +171,7 @@ Audio and video-audio extraction stay optional. They require explicit feature ac
 
 ### Experimental envelope tools
 
-These tools are advanced workflow interfaces. They store configuration or write local request envelopes for another caller, bridge, scheduler, future adapter, or subagent:
+These tools are advanced workflow interfaces. They store configuration or write local request envelopes for another caller, bridge, scheduler, future adapter, or subagent. They are hidden from the default core surface:
 
 - `list_extension_routes`, `set_extension_route`, `prepare_model_request`
 - `list_decision_policies`, `set_decision_policy`, `prepare_decision_request`
@@ -178,6 +179,8 @@ These tools are advanced workflow interfaces. They store configuration or write 
 - `prepare_capture_chain`
 
 Experimental envelope tools do not execute arbitrary decision code, call APIs, invoke subagents, upload files, record media, or start monitoring by themselves.
+
+Break-glass local execution tools are lab tools. They are exposed only on the `full` surface and still require the persistent `raw_local_exec` feature flag plus per-call confirmation.
 
 Captures are saved locally by default:
 
@@ -278,6 +281,16 @@ Run the bounded MCP stress test:
 
 ```powershell
 python scripts/validate_contracts.py --stress
+```
+
+The stress runner uses an isolated temporary `APPDATA` and `SCREEN_GUARDIAN_TOOL_SURFACE=full`, so temporary `sg-stress-*` policies and profiles cannot leak into the user's normal Screen Guardian config.
+
+For reliable direct CLI calls on Windows PowerShell, prefer stdin instead of passing JSON through argv quoting:
+
+```powershell
+@'
+{"action":"list_windows","args":{"limit":5}}
+'@ | python .\scripts\screen_guardian_capture.py --stdin
 ```
 
 See [docs/VALIDATION.md](docs/VALIDATION.md) for what these checks prove and what they intentionally leave to future adapters.
