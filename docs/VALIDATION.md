@@ -22,6 +22,7 @@ This verifies:
 - design principles are represented in docs and skill guidance
 - tool layers are represented as core tools, local control tools, and experimental envelope tools
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
+- optional full-page webpage capture tools are documented and wired without becoming default screen-capture dependencies
 - delayed capture, render-complete retry, suspected-unrendered guard controls, and opt-in capture-quality checks are covered as timing safeguards for slow or older systems
 - safety boundaries are documented, including local-only defaults, no automatic uploads, no arbitrary decision-code execution, and no hidden scheduler
 - anti-abuse and disclaimer language is present for unsupported bypass or unauthorized-use scenarios

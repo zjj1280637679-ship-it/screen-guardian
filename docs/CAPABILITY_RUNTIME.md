@@ -36,6 +36,7 @@ Initial command ids include:
 | `perceive.screen.quick` | Save a quick local screen capture |
 | `perceive.region.text` | Capture and sharpen a text-heavy region |
 | `perceive.window.after_render` | Capture a program window after render-ready retry |
+| `perceive.webpage.full_page` | Capture a full scrollable webpage as a long image when optional webpage capture is enabled |
 | `perceive.change.popup` | Watch briefly for visible changes or popups |
 | `artifact.hold_file` | Save and mark a file without immediate context ingestion |
 | `workflow.model_request.prepare` | Prepare a local model-request envelope |

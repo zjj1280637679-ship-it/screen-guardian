@@ -69,6 +69,8 @@ Slow-rendering programs can produce white or black frames when a window exists b
 
 Runtime limits, storage routes, and model/program routes are intentionally configurable. The default ultra-light limits protect ordinary use, but users can change or remove configurable bounds, save captures to multiple local folders, and register adapter routes for judgment, OCR, image narration, video narration, transcription, or custom workflows.
 
+Full-page webpage screenshots are handled by the optional `webpage_capture` browser adapter, not by desktop screen capture. This keeps Playwright/Chromium out of the default dependency path while still allowing full scrollable webpage long images when the user explicitly enables that route.
+
 The route registry does not execute arbitrary commands in the ultra-light model. It records provider/model/settings metadata and can produce local request envelopes for another adapter, subagent, or model bridge to handle.
 
 Decision policies follow the same pattern. A policy can describe a rule table, scoring function, external API, Codex subagent, local command bridge, or caller-owned function, but Screen Guardian only prepares the structured decision request. Arbitrarily complex logic stays behind the selected route or caller.

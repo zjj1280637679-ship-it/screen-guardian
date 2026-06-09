@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 import wave
 from pathlib import Path
 
@@ -41,6 +42,10 @@ DEFAULT_LIMITS = {
     "audio_extract_duration_seconds_max": None,
     "raw_exec_timeout_seconds_max": 30,
     "raw_exec_output_chars_max": 12000,
+    "webpage_capture_timeout_ms_max": 30000,
+    "webpage_capture_viewport_width_max": 3840,
+    "webpage_capture_viewport_height_max": 2160,
+    "webpage_capture_full_page_height_max": 50000,
 }
 
 CAPTURE_GUARD_CHECKS = {
@@ -70,6 +75,7 @@ DEFAULT_FEATURE_FLAGS = {
     "audio_analysis": True,
     "audio_transcription_routes": False,
     "video_audio_extract": False,
+    "webpage_capture": False,
     "decision_policies": True,
     "monitor_profiles": True,
     "external_api_handoff": False,
@@ -125,6 +131,10 @@ FEATURE_CATALOG = {
     "video_narration_routes": {
         "status": "interface",
         "cost_when_inactive": "No video model/API/subagent is invoked.",
+    },
+    "webpage_capture": {
+        "status": "optional_adapter",
+        "cost_when_inactive": "No browser runtime, Playwright import, navigation, DOM read, or webpage screenshot runs.",
     },
     "audio_capture": {
         "status": "interface",
@@ -238,6 +248,19 @@ CAPABILITY_COMMANDS = [
         "side_effects": ["local_file_write"],
         "context_strategy": "return_path",
         "safety_note": "Retries clearly blank frames within runtime limits and warns before saving suspected unrendered output.",
+    },
+    {
+        "id": "perceive.webpage.full_page",
+        "category": "perceive",
+        "title": "Capture a full scrollable webpage",
+        "intent_tags": ["webpage", "full_page", "long_screenshot", "browser"],
+        "execution_mode": "direct",
+        "maps_to": "capture_webpage",
+        "required_features": ["webpage_capture"],
+        "default_args": {"mode": "full_page", "context_policy": "hold_file", "marked_file_only": True},
+        "side_effects": ["browser_navigation", "local_file_write"],
+        "context_strategy": "hold_file",
+        "safety_note": "Optional Playwright route. It navigates only to the explicit URL and saves locally; no upload or model call.",
     },
     {
         "id": "perceive.change.popup",
@@ -1624,6 +1647,225 @@ def save_or_warn_capture(image, source, libs, args):
     return save_capture_image(image, source, libs, args)
 
 
+def normalized_webpage_url(args):
+    url = str(args.get("url") or "").strip()
+    if not url:
+        raise ValueError("url is required")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https", "file"):
+        raise ValueError("url must use http, https, or file")
+    return url
+
+
+def webpage_capture_options(args):
+    limits = runtime_limits(args)
+    mode = str(args.get("mode") or "full_page").strip().lower()
+    aliases = {"full": "full_page", "long": "full_page", "long_image": "full_page", "current": "viewport", "node": "element"}
+    mode = aliases.get(mode, mode)
+    if mode not in ("full_page", "viewport", "element"):
+        raise ValueError("mode must be full_page, viewport, or element")
+    width = int(args.get("viewport_width") or 1440)
+    height = int(args.get("viewport_height") or 900)
+    timeout_ms = int(args.get("timeout_ms") or 15000)
+    full_page_height_max = int(args.get("full_page_height_max") or limits.get("webpage_capture_full_page_height_max") or 50000)
+    check_min_max(width, 1, limits.get("webpage_capture_viewport_width_max"), "viewport_width")
+    check_min_max(height, 1, limits.get("webpage_capture_viewport_height_max"), "viewport_height")
+    check_min_max(timeout_ms, 100, limits.get("webpage_capture_timeout_ms_max"), "timeout_ms")
+    check_min_max(full_page_height_max, 1, limits.get("webpage_capture_full_page_height_max"), "full_page_height_max")
+    wait_until = str(args.get("wait_until") or "load").strip().lower()
+    if wait_until not in ("commit", "domcontentloaded", "load", "networkidle"):
+        raise ValueError("wait_until must be commit, domcontentloaded, load, or networkidle")
+    device_scale_factor = float(args.get("device_scale_factor") or 1)
+    if device_scale_factor <= 0:
+        raise ValueError("device_scale_factor must be greater than 0")
+    selector = str(args.get("selector") or "").strip()
+    if mode == "element" and not selector:
+        raise ValueError("selector is required when mode is element")
+    fmt = normalized_format(args.get("format", "png"))
+    quality = int(args.get("quality", 90))
+    if fmt == "jpg":
+        check_min_max(quality, limits.get("jpeg_quality_min"), limits.get("jpeg_quality_max"), "quality")
+    settle_delay_ms = int(args.get("settle_delay_ms") or float(args.get("delay_seconds") or 0) * 1000)
+    check_min_max(settle_delay_ms, 0, limits.get("capture_settle_delay_ms_max"), "settle_delay_ms")
+    return {
+        "mode": mode,
+        "viewport_width": width,
+        "viewport_height": height,
+        "timeout_ms": timeout_ms,
+        "full_page_height_max": full_page_height_max,
+        "wait_until": wait_until,
+        "device_scale_factor": device_scale_factor,
+        "selector": selector,
+        "format": fmt,
+        "quality": quality,
+        "settle_delay_ms": settle_delay_ms,
+    }
+
+
+def webpage_output_path(args, fmt):
+    output_dir = ensure_cache_dir(output_routes(args)[0])
+    merged = {"source_label": "webpage", **args}
+    if args.get("mode"):
+        merged["source_label"] = f"webpage-{safe_filename_part(args.get('mode'), 'capture')}"
+    return output_dir / output_filename(merged, fmt)
+
+
+def webpage_dimensions(page):
+    return page.evaluate(
+        """() => {
+            const body = document.body || {};
+            const html = document.documentElement || {};
+            return {
+              scrollWidth: Math.max(body.scrollWidth || 0, body.offsetWidth || 0, html.clientWidth || 0, html.scrollWidth || 0, html.offsetWidth || 0),
+              scrollHeight: Math.max(body.scrollHeight || 0, body.offsetHeight || 0, html.clientHeight || 0, html.scrollHeight || 0, html.offsetHeight || 0),
+              viewportWidth: window.innerWidth,
+              viewportHeight: window.innerHeight,
+              title: document.title || "",
+              url: location.href
+            };
+        }"""
+    )
+
+
+def action_prepare_webpage_capture(args):
+    try:
+        url = normalized_webpage_url(args)
+        options = webpage_capture_options(args)
+    except Exception as exc:
+        return error(str(exc))
+    request = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "webpage_capture_request",
+        "url": url,
+        "options": options,
+        "context": capture_context(args),
+        "execution": {
+            "status": "prepared",
+            "note": "This envelope does not navigate or capture. A Playwright/CDP/browser adapter can consume it later.",
+        },
+        "sources": [
+            "Playwright supports fullPage screenshots.",
+            "Chrome DevTools Protocol Page.captureScreenshot supports captureBeyondViewport.",
+        ],
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": "webpage-capture-request", **args}, "json")
+    request_path = output_dir / filename
+    write_json_file(request_path, request)
+    return write_json({"ok": True, "request_path": str(request_path), "request": request})
+
+
+def action_capture_webpage(args):
+    try:
+        require_feature("webpage_capture", args)
+    except Exception as exc:
+        return error(str(exc), feature="webpage_capture")
+    try:
+        url = normalized_webpage_url(args)
+        options = webpage_capture_options(args)
+        status, libs = webpage_adapter_status(args)
+        if not status.get("available"):
+            return error("Webpage capture adapter is unavailable.", adapter=status, install_hint=status.get("install_hint"))
+    except Exception as exc:
+        return error(str(exc))
+
+    sync_playwright = libs["sync_playwright"]
+    output_path = webpage_output_path({**args, "mode": options["mode"]}, options["format"])
+    browser = page = None
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(
+                viewport={"width": options["viewport_width"], "height": options["viewport_height"]},
+                device_scale_factor=options["device_scale_factor"],
+            )
+            page.goto(url, wait_until=options["wait_until"], timeout=options["timeout_ms"])
+            if options["settle_delay_ms"] > 0:
+                page.wait_for_timeout(options["settle_delay_ms"])
+            dims = webpage_dimensions(page)
+            if options["mode"] == "full_page" and int(dims.get("scrollHeight") or 0) > options["full_page_height_max"] and not bool(args.get("allow_oversize", False)):
+                browser.close()
+                browser = None
+                return write_json(
+                    {
+                        "ok": True,
+                        "capture_deferred": True,
+                        "reason": "webpage_too_tall",
+                        "message": "The full webpage is taller than the configured limit. Choose whether to force capture, capture viewport, or raise the limit.",
+                        "url": url,
+                        "page": dims,
+                        "limit": {"full_page_height_max": options["full_page_height_max"]},
+                        "available_actions": {
+                            "force_full_page_capture": {"allow_oversize": True},
+                            "capture_viewport_only": {"mode": "viewport"},
+                            "increase_limit": {"full_page_height_max": int(dims.get("scrollHeight") or options["full_page_height_max"])},
+                        },
+                    }
+                )
+            screenshot_args = {"path": str(output_path), "timeout": options["timeout_ms"]}
+            if options["format"] == "jpg":
+                screenshot_args["type"] = "jpeg"
+                screenshot_args["quality"] = options["quality"]
+            if options["mode"] == "full_page":
+                screenshot_args["full_page"] = True
+                page.screenshot(**screenshot_args)
+            elif options["mode"] == "element":
+                locator = page.locator(options["selector"]).first
+                locator.screenshot(**screenshot_args)
+            else:
+                page.screenshot(**screenshot_args)
+            final_url = page.url
+            title = page.title()
+            browser.close()
+            browser = None
+    except Exception as exc:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        return error(
+            "Webpage capture failed.",
+            detail=str(exc),
+            install_hint=f"If this is a browser install issue, run: {sys.executable} -m playwright install chromium",
+        )
+
+    metadata = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "webpage_capture",
+        "adapter": status["id"],
+        "path": str(output_path),
+        "source": {
+            "type": "webpage",
+            "url": url,
+            "final_url": final_url,
+            "title": title,
+            "mode": options["mode"],
+            "selector": options["selector"],
+            "dimensions": dims,
+            "viewport": {"width": options["viewport_width"], "height": options["viewport_height"], "device_scale_factor": options["device_scale_factor"]},
+        },
+        "context": capture_context(args),
+        "privacy": "Saved locally only. No upload, model call, or subagent handoff was performed.",
+    }
+    metadata_path = write_metadata_sidecar(output_path, metadata, args)
+    result = {
+        "ok": True,
+        "adapter": status["id"],
+        "path": str(output_path),
+        "metadata_path": metadata_path,
+        "source": metadata["source"],
+        "context": metadata["context"],
+        "privacy": metadata["privacy"],
+    }
+    if metadata["context"]["marked_file_only"]:
+        result["context_delivery"] = "file_marked_only"
+        result["note"] = "Webpage capture was saved with metadata. Send the file or analysis explicitly when needed."
+    return write_json(result)
+
+
 def grab_screen_once(args):
     adapter_id, libs = resolve_capture_adapter(args)
     with libs["mss"].MSS() as sct:
@@ -1756,6 +1998,41 @@ def ffmpeg_status():
         "capabilities": ["extract_audio_track", "pcm_wav"],
         "install_hint": "Install FFmpeg and make ffmpeg available on PATH." if not executable else "",
     }
+
+
+def import_playwright_libs():
+    try:
+        from playwright.sync_api import sync_playwright
+
+        return {"sync_playwright": sync_playwright}, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def webpage_adapter_status(args=None):
+    args = args or {}
+    status = {
+        "id": "playwright-chromium",
+        "label": "Playwright Chromium webpage capture",
+        "role": "webpage_capture",
+        "available": False,
+        "dependencies": ["playwright", "chromium browser"],
+        "capabilities": ["full_page_screenshot", "viewport_screenshot", "element_screenshot", "render_wait"],
+        "feature_active": feature_enabled("webpage_capture", args),
+        "compatibility_note": "Optional browser-rendered route for full scrollable webpages. It is separate from lightweight screen/window capture.",
+    }
+    if not feature_enabled("webpage_capture", args):
+        status["import_skipped"] = True
+        status["install_hint"] = "Enable webpage_capture with set_feature_flags before probing or capturing webpages."
+        return status, None
+    libs, import_error = import_playwright_libs()
+    status["available"] = import_error is None
+    if import_error:
+        status["import_error"] = import_error
+        status["install_hint"] = f"{sys.executable} -m pip install --user -r scripts/optional-web-requirements.txt && {sys.executable} -m playwright install chromium"
+    else:
+        status["install_hint"] = f"If Chromium is missing, run: {sys.executable} -m playwright install chromium"
+    return status, libs
 
 
 def audio_output_path(args, fmt="wav"):
@@ -1898,6 +2175,10 @@ def action_get_runtime_settings(args):
                 "audio_extract_duration_seconds_max": "seconds",
                 "raw_exec_timeout_seconds_max": "seconds",
                 "raw_exec_output_chars_max": "characters",
+                "webpage_capture_timeout_ms_max": "milliseconds",
+                "webpage_capture_viewport_width_max": "CSS pixels",
+                "webpage_capture_viewport_height_max": "CSS pixels",
+                "webpage_capture_full_page_height_max": "CSS pixels",
             },
             "feature_flags": config.get("feature_flags", {}),
             "feature_catalog": FEATURE_CATALOG,
@@ -2505,6 +2786,7 @@ def key_capability_summary(flags):
         "model_request_envelopes",
         "decision_policies",
         "monitor_profiles",
+        "webpage_capture",
         "audio_capture",
         "video_audio_extract",
         "external_api_handoff",
@@ -2524,7 +2806,8 @@ def action_guardian_check(args):
     window_status, _window_libs = window_adapter_status()
     audio_status, _audio_libs = audio_adapter_status({"probe": False})
     ffmpeg = ffmpeg_status()
-    adapters = [mss_status, window_status, audio_status, ffmpeg]
+    webpage_status, _web_libs = webpage_adapter_status({})
+    adapters = [mss_status, window_status, audio_status, ffmpeg, webpage_status]
     best_adapter = next((item for item in adapters if item.get("role") == "screen_capture" and item.get("available")), None)
     if not best_adapter:
         best_adapter = next((item for item in adapters if item.get("available")), None)
@@ -3035,7 +3318,7 @@ def action_check(args):
             "pillow_version": getattr(libs["Image"], "__version__", "unknown"),
             "default_cache_dir": str(DEFAULT_CACHE_DIR),
             "active_cache_dir": str(get_cache_dir(args)),
-            "adapters": [status, window_adapter_status()[0], audio_adapter_status(args)[0], ffmpeg_status()],
+            "adapters": [status, window_adapter_status()[0], audio_adapter_status(args)[0], ffmpeg_status(), webpage_adapter_status(args)[0]],
             "privacy": "Captures are saved locally only. No upload or long-term recording is performed by this plugin.",
         }
     )
@@ -3046,11 +3329,12 @@ def action_list_adapters(args):
     window_status, _libs2 = window_adapter_status()
     audio_status, _audio_libs = audio_adapter_status(args)
     ffmpeg = ffmpeg_status()
+    webpage_status, _web_libs = webpage_adapter_status(args)
     return write_json(
         {
             "ok": True,
             "selected": "auto",
-            "adapters": [mss_status, window_status, audio_status, ffmpeg],
+            "adapters": [mss_status, window_status, audio_status, ffmpeg, webpage_status],
             "contract": {
                 "request_adapter": "Use adapter='auto' unless a specific backend is needed.",
                 "stable_result_fields": [
@@ -3552,6 +3836,8 @@ ACTIONS = {
     "capture_screen": action_capture_screen,
     "capture_region": action_capture_region,
     "capture_window": action_capture_window,
+    "prepare_webpage_capture": action_prepare_webpage_capture,
+    "capture_webpage": action_capture_webpage,
     "watch_screen": action_watch_screen,
     "analyze_image": action_analyze_image,
     "preprocess_image": action_preprocess_image,

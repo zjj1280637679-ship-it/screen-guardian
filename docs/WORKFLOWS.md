@@ -16,6 +16,7 @@ The workflow surface is split so first-time users do not need to understand ever
 | Local control tools | Feature flags, runtime limits, cache paths, mirror routes, metadata sidecars, image analysis/preprocessing, display naming, and optional audio diagnostics | No automatic scheduler or external API handoff |
 | Experimental envelope tools | Model request envelopes, extension routes, decision policies, and monitor profiles | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
 | Capability runtime tools | Registered command catalog, command runner, and break-glass execution envelopes | No arbitrary code through `guardian_run_command`; raw execution requires `raw_local_exec` and per-call confirmation |
+| Optional browser tools | Full-page, viewport, or element webpage capture through Playwright when enabled | No browser launch, page navigation, or long screenshot unless `webpage_capture` is enabled and `capture_webpage` is called |
 
 When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
 
@@ -247,3 +248,11 @@ The registered command `perceive.window.after_render` uses `render_guard="wait"`
 `guard_checks` controls which quality checks run. The default is `["unrendered"]`. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, `stale_frame`, and `occlusion_risk` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
 
 For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.
+
+## Full Webpage Long Screenshots
+
+Desktop screenshot tools can only capture currently visible pixels. Use `prepare_webpage_capture` or `capture_webpage` when the user needs the full scrollable webpage instead of the current browser viewport.
+
+`prepare_webpage_capture` writes a local request envelope only. `capture_webpage` is an optional Playwright route that supports `mode="full_page"`, `mode="viewport"`, and `mode="element"`. The feature flag `webpage_capture` defaults to inactive so the ultra-light screen path does not import browser automation dependencies or navigate pages.
+
+See `docs/WEBPAGE_CAPTURE.md` for installation, examples, tall-page decision behavior, and related browser APIs.

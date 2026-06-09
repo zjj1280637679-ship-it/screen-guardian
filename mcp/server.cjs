@@ -193,6 +193,83 @@ const windowTargetProperties = {
   },
 };
 
+const webpageCaptureProperties = {
+  url: {
+    type: "string",
+    description: "Explicit http, https, or file URL to render and capture.",
+  },
+  mode: {
+    type: "string",
+    enum: ["full_page", "viewport", "element"],
+    default: "full_page",
+    description: "full_page captures the scrollable document, viewport captures the browser viewport, and element captures a CSS selector.",
+  },
+  selector: {
+    type: "string",
+    description: "CSS selector required when mode is element.",
+  },
+  viewport_width: {
+    type: "integer",
+    minimum: 1,
+    default: 1440,
+    description: "Browser viewport width before capture. Bounds are controlled by runtime limits.",
+  },
+  viewport_height: {
+    type: "integer",
+    minimum: 1,
+    default: 900,
+    description: "Browser viewport height before capture. Bounds are controlled by runtime limits.",
+  },
+  device_scale_factor: {
+    type: "number",
+    minimum: 0.1,
+    default: 1,
+    description: "Browser device scale factor.",
+  },
+  wait_until: {
+    type: "string",
+    enum: ["commit", "domcontentloaded", "load", "networkidle"],
+    default: "load",
+    description: "Playwright navigation wait condition.",
+  },
+  timeout_ms: {
+    type: "integer",
+    minimum: 100,
+    default: 15000,
+    description: "Navigation and screenshot timeout. Bounds are controlled by runtime limits.",
+  },
+  settle_delay_ms: {
+    type: "integer",
+    minimum: 0,
+    default: 0,
+    description: "Optional wait after navigation before capture.",
+  },
+  delay_seconds: imageOutputProperties.delay_seconds,
+  full_page_height_max: {
+    type: "integer",
+    minimum: 1,
+    description: "Decision threshold for very tall full-page captures. Bounds are controlled by runtime limits.",
+  },
+  allow_oversize: {
+    type: "boolean",
+    default: false,
+    description: "When true, allow full-page capture above full_page_height_max.",
+  },
+  format: imageOutputProperties.format,
+  quality: imageOutputProperties.quality,
+  output_dir: imageOutputProperties.output_dir,
+  project_id: imageOutputProperties.project_id,
+  workflow_id: imageOutputProperties.workflow_id,
+  tags: imageOutputProperties.tags,
+  note: imageOutputProperties.note,
+  context_policy: imageOutputProperties.context_policy,
+  marked_file_only: imageOutputProperties.marked_file_only,
+  write_metadata: imageOutputProperties.write_metadata,
+  source_label: imageOutputProperties.source_label,
+  runtime_limits: imageOutputProperties.runtime_limits,
+  feature_flags: imageOutputProperties.feature_flags,
+};
+
 const audioCommonProperties = {
   output_dir: imageOutputProperties.output_dir,
   output_dirs: imageOutputProperties.output_dirs,
@@ -1185,6 +1262,26 @@ const tools = [
     },
   },
   {
+    name: "prepare_webpage_capture",
+    description: "Prepare a local envelope for full-page, viewport, or element webpage capture without launching a browser.",
+    inputSchema: {
+      type: "object",
+      properties: webpageCaptureProperties,
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "capture_webpage",
+    description: "Capture a rendered webpage to a local image using the optional Playwright adapter. Supports full_page long screenshots beyond the visible viewport.",
+    inputSchema: {
+      type: "object",
+      properties: webpageCaptureProperties,
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "analyze_image",
     description: "Analyze a local image file and recommend context and preprocessing mode without adding OCR dependencies.",
     inputSchema: {
@@ -1787,6 +1884,12 @@ async function callTool(name, args) {
   }
   if (name === "capture_window") {
     return runPython("capture_window", args);
+  }
+  if (name === "prepare_webpage_capture") {
+    return runPython("prepare_webpage_capture", args);
+  }
+  if (name === "capture_webpage") {
+    return runPython("capture_webpage", args);
   }
   if (name === "analyze_image") {
     return runPython("analyze_image", args);
