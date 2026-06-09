@@ -37,6 +37,8 @@ REQUIRED_TOOLS = [
     "guardian_run_command",
     "guardian_prepare_exec",
     "guardian_run_exec",
+    "list_capture_routes",
+    "prepare_capture_chain",
     "check_dependencies",
     "get_runtime_settings",
     "set_cache_path",
@@ -79,6 +81,7 @@ REQUIRED_FEATURE_FLAGS = [
     "window_capture",
     "bounded_watch",
     "workflow_metadata",
+    "capture_chains",
     "multi_storage_routes",
     "image_analysis",
     "image_preprocess",
@@ -107,6 +110,7 @@ DESIGN_COVERAGE = {
     "capability runtime": ["capability runtime", "registered commands", "break-glass"],
     "related project research": ["related products", "private vision company", "borrowed design patterns"],
     "runtime evaluation": ["runtime evaluation", "npm run evaluate", "confirmation-gated"],
+    "capture routes and chains": ["capture routes", "prepare_capture_chain", "nested_scroll"],
     "positive freedom": ["positive freedom", "expand user agency"],
     "negative freedom": ["negative freedom", "forced upgrades", "forced background services"],
     "compatibility fallback": ["fallback", "compatibility", "older windows", "constrained systems"],
@@ -290,7 +294,10 @@ def check_static_contracts() -> CheckSet:
         "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
         "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
         "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],
-        "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick"],
+        "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick", "action_prepare_capture_chain"],
+        "capture routes distinguish desktop application webpage": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"'],
+        "capture chain is prepare only": ["action_prepare_capture_chain", "capture_chain_request", "does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers"],
+        "nested scroll container capture is optional": ["scroll_container", "frame_selector", "capture_scroll_container"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
         "render guard returns decision actions before saving suspected blank output": ["render_guard_warning_payload", "suspected_unrendered", "available_actions", "force_capture_now", "capture_later", "auto_detect_render_then_capture"],
         "capture guard checks are opt-in except unrendered": ["DEFAULT_GUARD_CHECKS = [\"unrendered\"]", "CAPTURE_GUARD_CHECKS", "normalize_guard_checks"],
@@ -363,6 +370,45 @@ def run_mcp_stress(loops: int) -> CheckSet:
     stress_ids = [f"sg-stress-{i}" for i in range(loops)]
 
     with tempfile.TemporaryDirectory(prefix="screen-guardian-stress-") as tmp:
+        messages.extend(
+            [
+                tool_request(request_id, "list_capture_routes", {"include_examples": True}),
+                tool_request(
+                    request_id + 1,
+                    "prepare_capture_chain",
+                    {
+                        "objective": "Prepare a quiet nested-scroll table capture chain for contract validation.",
+                        "route": "nested_scroll",
+                        "trigger": {"type": "selector_visible", "selector": ".table-scroll"},
+                        "steps": [
+                            {
+                                "tool": "capture_webpage",
+                                "args": {"mode": "scroll_container", "selector": ".table-scroll"},
+                            },
+                            {"tool": "prepare_model_request", "args": {"prompt": "Summarize the table compactly."}},
+                        ],
+                        "output_dir": tmp,
+                        "source_label": "capture-chain-direct",
+                    },
+                ),
+                tool_request(
+                    request_id + 2,
+                    "guardian_prepare_workflow",
+                    {
+                        "workflow_type": "capture_chain",
+                        "objective": "Prepare a delayed application-window screenshot chain for contract validation.",
+                        "route": "application",
+                        "trigger": {"type": "delay", "seconds": 2},
+                        "steps": [{"tool": "capture_window", "args": {"render_guard": "wait"}}],
+                        "settings": {"quiet": True},
+                        "output_dir": tmp,
+                        "source_label": "capture-chain-facade",
+                    },
+                ),
+            ]
+        )
+        request_id += 3
+
         for i, base_id in enumerate(stress_ids):
             policy_id = f"{base_id}-policy"
             profile_id = f"{base_id}-profile"
@@ -524,7 +570,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
         checks.check(not failed_payloads, "stress tool calls all return ok", failed_payloads[:3][0] if failed_payloads else "")
 
         generated_files = list(Path(tmp).glob("*.json"))
-        expected_files = loops * 4
+        expected_files = loops * 4 + 2
         checks.check(len(generated_files) == expected_files, "stress generated expected envelope count", str(len(generated_files)))
 
         last_decisions = parse_tool_payload(responses[-2])

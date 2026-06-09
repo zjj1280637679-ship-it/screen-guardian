@@ -200,13 +200,17 @@ const webpageCaptureProperties = {
   },
   mode: {
     type: "string",
-    enum: ["full_page", "viewport", "element"],
+    enum: ["full_page", "viewport", "element", "scroll_container"],
     default: "full_page",
-    description: "full_page captures the scrollable document, viewport captures the browser viewport, and element captures a CSS selector.",
+    description: "full_page captures the scrollable document, viewport captures the browser viewport, element captures a CSS selector, and scroll_container stitches an inner scrollable panel.",
   },
   selector: {
     type: "string",
-    description: "CSS selector required when mode is element.",
+    description: "CSS selector required when mode is element or scroll_container.",
+  },
+  frame_selector: {
+    type: "string",
+    description: "Optional iframe CSS selector used before resolving selector, useful for nested embedded pages.",
   },
   viewport_width: {
     type: "integer",
@@ -255,8 +259,76 @@ const webpageCaptureProperties = {
     default: false,
     description: "When true, allow full-page capture above full_page_height_max.",
   },
+  scroll_axis: {
+    type: "string",
+    enum: ["vertical"],
+    default: "vertical",
+    description: "Scroll direction for scroll_container mode. Currently vertical only.",
+  },
+  max_segments: {
+    type: "integer",
+    minimum: 1,
+    description: "Maximum stitched screenshots for scroll_container mode. Bounds are controlled by runtime limits.",
+  },
+  segment_delay_ms: {
+    type: "integer",
+    minimum: 0,
+    default: 100,
+    description: "Wait after each inner scroll movement before segment capture.",
+  },
   format: imageOutputProperties.format,
   quality: imageOutputProperties.quality,
+  output_dir: imageOutputProperties.output_dir,
+  project_id: imageOutputProperties.project_id,
+  workflow_id: imageOutputProperties.workflow_id,
+  tags: imageOutputProperties.tags,
+  note: imageOutputProperties.note,
+  context_policy: imageOutputProperties.context_policy,
+  marked_file_only: imageOutputProperties.marked_file_only,
+  write_metadata: imageOutputProperties.write_metadata,
+  source_label: imageOutputProperties.source_label,
+  runtime_limits: imageOutputProperties.runtime_limits,
+  feature_flags: imageOutputProperties.feature_flags,
+};
+
+const captureChainProperties = {
+  objective: {
+    type: "string",
+    description: "What the guided capture chain is trying to accomplish.",
+  },
+  route: {
+    type: "string",
+    enum: ["auto", "desktop", "application", "webpage", "nested_scroll", "mixed"],
+    default: "auto",
+    description: "Preferred capture route. Use desktop for visible pixels, application for a program window, webpage for browser-rendered pages, and nested_scroll for scrollable panels or iframes.",
+  },
+  trigger: {
+    type: "object",
+    additionalProperties: true,
+    description: "Declarative trigger such as manual, delay, schedule, screen_change, window_change, selector_visible, error_text, model_feature, audio_feature, or custom.",
+  },
+  steps: {
+    type: "array",
+    items: {
+      type: "object",
+      additionalProperties: true,
+    },
+    description: "Ordered declarative steps. Preparing a chain writes a local plan only; it does not execute the steps.",
+  },
+  quiet: {
+    type: "boolean",
+    default: true,
+    description: "Whether the intended route should prefer a quiet/non-topmost path when available.",
+  },
+  decision_policy_id: {
+    type: "string",
+    description: "Optional registered decision policy id for callers that later consume the chain envelope.",
+  },
+  settings: {
+    type: "object",
+    additionalProperties: true,
+    description: "Optional chain settings for a future caller, scheduler, or subagent.",
+  },
   output_dir: imageOutputProperties.output_dir,
   project_id: imageOutputProperties.project_id,
   workflow_id: imageOutputProperties.workflow_id,
@@ -407,7 +479,7 @@ const tools = [
       properties: {
         workflow_type: {
           type: "string",
-          enum: ["model_request", "decision_request", "monitor_tick"],
+          enum: ["model_request", "decision_request", "monitor_tick", "capture_chain"],
         },
         source_path: {
           type: "string",
@@ -437,6 +509,11 @@ const tools = [
           type: "string",
           description: "Optional registered monitor profile id.",
         },
+        route: captureChainProperties.route,
+        trigger: captureChainProperties.trigger,
+        steps: captureChainProperties.steps,
+        quiet: captureChainProperties.quiet,
+        decision_policy_id: captureChainProperties.decision_policy_id,
       },
       required: ["workflow_type"],
       additionalProperties: false,
@@ -573,6 +650,31 @@ const tools = [
         runtime_limits: imageOutputProperties.runtime_limits,
         feature_flags: imageOutputProperties.feature_flags,
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_capture_routes",
+    description: "List the desktop, application, webpage, nested-scroll, and guided-chain capture routes with quiet-capture guidance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        include_examples: {
+          type: "boolean",
+          default: true,
+          description: "Include compact example tool calls for each route.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_capture_chain",
+    description: "Prepare a local guided capture-chain envelope for conditional screenshots, quiet webpage capture, preprocessing, or later model handoff without executing it.",
+    inputSchema: {
+      type: "object",
+      properties: captureChainProperties,
+      required: ["objective"],
       additionalProperties: false,
     },
   },
@@ -1263,7 +1365,7 @@ const tools = [
   },
   {
     name: "prepare_webpage_capture",
-    description: "Prepare a local envelope for full-page, viewport, or element webpage capture without launching a browser.",
+    description: "Prepare a local envelope for full-page, viewport, element, or nested scroll-container webpage capture without launching a browser.",
     inputSchema: {
       type: "object",
       properties: webpageCaptureProperties,
@@ -1273,7 +1375,7 @@ const tools = [
   },
   {
     name: "capture_webpage",
-    description: "Capture a rendered webpage to a local image using the optional Playwright adapter. Supports full_page long screenshots beyond the visible viewport.",
+    description: "Capture a rendered webpage to a local image using the optional Playwright adapter. Supports full_page, viewport, element, and scroll_container nested panel screenshots beyond the visible viewport.",
     inputSchema: {
       type: "object",
       properties: webpageCaptureProperties,
@@ -1800,6 +1902,12 @@ async function callTool(name, args) {
   }
   if (name === "guardian_run_exec") {
     return runPython("guardian_run_exec", args);
+  }
+  if (name === "list_capture_routes") {
+    return runPython("list_capture_routes", args);
+  }
+  if (name === "prepare_capture_chain") {
+    return runPython("prepare_capture_chain", args);
   }
   if (name === "check_dependencies") {
     return runPython("check", args);

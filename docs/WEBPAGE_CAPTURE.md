@@ -8,7 +8,7 @@ Screen Guardian treats this as an optional browser adapter, not part of the ultr
 
 | Reference | Relevant capability | Design lesson |
 | --- | --- | --- |
-| [Playwright screenshots](https://playwright.dev/docs/screenshots) | `page.screenshot({ fullPage: true })` captures a full scrollable page | Use browser-native rendering when the goal is a long webpage image |
+| [Playwright screenshots](https://playwright.dev/python/docs/screenshots) | `page.screenshot(full_page=True)` captures a full scrollable page, and locator screenshots capture elements | Use browser-native rendering when the goal is a long webpage image |
 | [Puppeteer Page.screenshot](https://pptr.dev/api/puppeteer.page.screenshot) | Puppeteer exposes page screenshot options for browser-rendered pages | Full-page capture is a browser automation concern, not a desktop screenshot concern |
 | [Chrome DevTools Protocol Page.captureScreenshot](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-captureScreenshot) | `captureBeyondViewport` can capture beyond the current viewport | CDP is the lower-level route behind many full-page screenshot tools |
 | Playwright MCP | Full-page screenshot tool for agents | Agents should ask for webpage intent rather than compose low-level browser commands |
@@ -40,6 +40,7 @@ python -m playwright install chromium
 | `full_page` | Capture the full scrollable document as a long image |
 | `viewport` | Capture only the browser viewport |
 | `element` | Capture one CSS selector with `selector` |
+| `scroll_container` | Capture and stitch one inner scrollable container, with optional `frame_selector` for iframes |
 
 ## Examples
 
@@ -78,6 +79,32 @@ Capture a table or panel:
 }
 ```
 
+Capture an inner scrollable table:
+
+```json
+{
+  "url": "https://example.com/admin",
+  "mode": "scroll_container",
+  "selector": ".table-scroll",
+  "context_policy": "hold_file",
+  "marked_file_only": true
+}
+```
+
+Capture an inner table inside an iframe:
+
+```json
+{
+  "url": "https://example.com/console",
+  "mode": "scroll_container",
+  "frame_selector": "iframe[name='app']",
+  "selector": ".quota-table-scroll",
+  "max_segments": 40,
+  "segment_delay_ms": 100,
+  "context_policy": "hold_file"
+}
+```
+
 ## Tall Page Decision
 
 Very tall pages can produce huge images. Screen Guardian checks `full_page_height_max` before saving. If the page is taller than the configured limit, it returns a decision menu:
@@ -86,7 +113,9 @@ Very tall pages can produce huge images. Screen Guardian checks `full_page_heigh
 - capture the viewport only
 - increase `full_page_height_max`
 
-The default limit is controlled by `webpage_capture_full_page_height_max` in runtime limits.
+The default document-height limit is controlled by `webpage_capture_full_page_height_max` in runtime limits.
+
+Nested scroll capture also checks `webpage_capture_scroll_segments_max` and `webpage_capture_segment_delay_ms_max`. If the container would require too many segments, Screen Guardian returns a decision menu: increase the segment limit, capture only the visible element, or use full-page capture instead.
 
 ## Boundary
 

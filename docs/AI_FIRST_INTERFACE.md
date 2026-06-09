@@ -9,6 +9,8 @@ The AI-first interface adds three intent tools that should be tried before the e
 | Check whether the plugin can run | `guardian_check` |
 | Look at the screen, text, UI, a window, or a short change | `guardian_perceive` |
 | Prepare a model, decision, or monitor envelope | `guardian_prepare_workflow` |
+| Choose desktop/application/webpage capture routes | `list_capture_routes` |
+| Prepare conditional capture chains | `prepare_capture_chain` |
 
 These tools are wrappers. They do not remove or replace the existing tools, and they do not expand permission, runtime, feature-flag, upload, model-call, subagent, or background-monitor behavior.
 
@@ -25,6 +27,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Delayed capture | Any capture intent with `delay_seconds` | Wait before capture, bounded by runtime limits |
 | Render-complete capture | Window capture with `wait_for_nonblank=true` | Retry clearly blank frames before saving |
 | Suspected-unrendered protection | Window capture with `render_guard="wait"` or `render_guard="warn"` | Auto-wait for a nonblank frame or return decision actions: force now, capture later, or auto-wait |
+| Choose a quiet webpage route | `list_capture_routes` | Compare desktop, application, webpage, `nested_scroll`, and mixed routes before capturing |
+| Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
 
 ## Context Budget Defaults
 
@@ -44,6 +48,7 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | `model_request` | `prepare_model_request` |
 | `decision_request` | `prepare_decision_request` |
 | `monitor_tick` | `prepare_monitor_tick` |
+| `capture_chain` | `prepare_capture_chain` |
 
 It writes local request files only. It does not call an API, invoke a Codex subagent, run a local command, record media, or start a scheduler.
 

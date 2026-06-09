@@ -41,6 +41,7 @@ Initial command ids include:
 | `artifact.hold_file` | Save and mark a file without immediate context ingestion |
 | `workflow.model_request.prepare` | Prepare a local model-request envelope |
 | `workflow.decision.prepare` | Prepare a local decision-request envelope |
+| `workflow.capture_chain.prepare` | Prepare a local guided capture-chain envelope |
 | `emergency.exec.prepare` | Prepare a break-glass execution envelope without running code |
 | `emergency.exec.run` | Run break-glass local code when explicitly enabled and confirmed |
 

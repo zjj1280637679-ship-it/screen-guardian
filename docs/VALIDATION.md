@@ -23,6 +23,7 @@ This verifies:
 - tool layers are represented as core tools, local control tools, and experimental envelope tools
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
 - optional full-page webpage capture tools are documented and wired without becoming default screen-capture dependencies
+- capture routes, `nested_scroll` capture, and `prepare_capture_chain` envelope tools are documented and wired without starting hidden work
 - delayed capture, render-complete retry, suspected-unrendered guard controls, and opt-in capture-quality checks are covered as timing safeguards for slow or older systems
 - safety boundaries are documented, including local-only defaults, no automatic uploads, no arbitrary decision-code execution, and no hidden scheduler
 - anti-abuse and disclaimer language is present for unsupported bypass or unauthorized-use scenarios
@@ -52,7 +53,7 @@ python scripts/validate_contracts.py --stress --stress-loops 100
 
 The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles to exercise the real MCP persistence path. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
 
-The stress test also calls `guardian_check` and `guardian_prepare_workflow` so the AI-first facade is covered without performing real capture.
+The stress test also calls `guardian_check`, `guardian_prepare_workflow`, `list_capture_routes`, and `prepare_capture_chain` so the AI-first facade and capture-chain route planning are covered without performing real capture.
 
 It also calls `guardian_list_commands`, `guardian_run_command`, and `guardian_prepare_exec`. Stress does not run raw local code.
 

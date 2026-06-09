@@ -12,11 +12,11 @@ The workflow surface is split so first-time users do not need to understand ever
 
 | Layer | Use it for | What it does not do |
 | --- | --- | --- |
-| Core tools | Dependency checks, display/window listing, screenshots, window capture, short foreground change capture, and cache cleanup | No background service, no model call, no hidden upload |
+| Core tools | Dependency checks, display/window listing, capture-route listing, screenshots, window capture, short foreground change capture, and cache cleanup | No background service, no model call, no hidden upload |
 | Local control tools | Feature flags, runtime limits, cache paths, mirror routes, metadata sidecars, image analysis/preprocessing, display naming, and optional audio diagnostics | No automatic scheduler or external API handoff |
-| Experimental envelope tools | Model request envelopes, extension routes, decision policies, and monitor profiles | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
+| Experimental envelope tools | Model request envelopes, extension routes, decision policies, monitor profiles, and capture-chain plans | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
 | Capability runtime tools | Registered command catalog, command runner, and break-glass execution envelopes | No arbitrary code through `guardian_run_command`; raw execution requires `raw_local_exec` and per-call confirmation |
-| Optional browser tools | Full-page, viewport, or element webpage capture through Playwright when enabled | No browser launch, page navigation, or long screenshot unless `webpage_capture` is enabled and `capture_webpage` is called |
+| Optional browser tools | Full-page, viewport, element, or nested scroll-container webpage capture through Playwright when enabled | No browser launch, page navigation, or long screenshot unless `webpage_capture` is enabled and `capture_webpage` is called |
 
 When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
 
@@ -253,6 +253,16 @@ For screen or region capture, `wait_for_nonblank` is opt-in because a whole desk
 
 Desktop screenshot tools can only capture currently visible pixels. Use `prepare_webpage_capture` or `capture_webpage` when the user needs the full scrollable webpage instead of the current browser viewport.
 
-`prepare_webpage_capture` writes a local request envelope only. `capture_webpage` is an optional Playwright route that supports `mode="full_page"`, `mode="viewport"`, and `mode="element"`. The feature flag `webpage_capture` defaults to inactive so the ultra-light screen path does not import browser automation dependencies or navigate pages.
+`prepare_webpage_capture` writes a local request envelope only. `capture_webpage` is an optional Playwright route that supports `mode="full_page"`, `mode="viewport"`, `mode="element"`, and `mode="scroll_container"`. The feature flag `webpage_capture` defaults to inactive so the ultra-light screen path does not import browser automation dependencies or navigate pages.
 
-See `docs/WEBPAGE_CAPTURE.md` for installation, examples, tall-page decision behavior, and related browser APIs.
+`mode="scroll_container"` is for nested tables, panels, and iframes that have their own scroll state inside the page. It takes a CSS `selector` and optional `frame_selector`, scrolls the target container in bounded vertical segments, and stitches the result into one image.
+
+## Capture Routes And Chains
+
+Use `list_capture_routes` when the caller needs to choose between desktop visible pixels, application/window capture, quiet webpage capture, nested scroll capture, or a mixed plan.
+
+Use `prepare_capture_chain` when screenshot work should be guided by a trigger or combined with preprocessing/model-envelope steps. Supported trigger shapes include manual, delay, schedule, screen change, window change, selector-visible, error-text, model-feature, audio-feature, and custom triggers.
+
+The chain is prepare-only. It writes a local `capture_chain_request` envelope and does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers by itself.
+
+See `docs/WEBPAGE_CAPTURE.md` for installation, examples, tall-page decision behavior, and related browser APIs. See `docs/CAPTURE_ROUTES_AND_CHAINS.md` for route selection, quiet capture, nested-scroll capture, and capture-chain examples.

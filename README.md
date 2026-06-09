@@ -22,6 +22,8 @@ Screen Guardian exposes a broad expert tool surface, but AI agents should usuall
 | Discover reusable commands | `guardian_list_commands` | Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
 | Run a registered command | `guardian_run_command` | Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
 | Prepare or run break-glass code | `guardian_prepare_exec`, `guardian_run_exec` | Saves or explicitly runs local Python/PowerShell/Node code. Raw execution is disabled by default and requires `raw_local_exec=true` plus `user_confirmed=true`. |
+| Choose a capture route | `list_capture_routes` | Explains desktop, application, webpage, nested-scroll, and guided-chain routes so the AI can pick the right path first. |
+| Prepare a capture chain | `prepare_capture_chain` | Writes a local plan for conditional capture, quiet webpage capture, preprocessing, and later model handoff without executing it. |
 
 The normal tools are safe wrappers. They do not bypass feature flags, runtime limits, cache routing, local-only defaults, or the no-hidden-upload/no-hidden-scheduler boundary. The break-glass execution tools are different: they can run local code, but only when visibly enabled and confirmed.
 
@@ -31,6 +33,7 @@ See [docs/AI_FIRST_INTERFACE.md](docs/AI_FIRST_INTERFACE.md) for the intuitive t
 See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered command catalog and break-glass execution model.
 See [docs/CAPTURE_GUARDS.md](docs/CAPTURE_GUARDS.md) for optional capture-quality checks and decision menus.
 See [docs/WEBPAGE_CAPTURE.md](docs/WEBPAGE_CAPTURE.md) for optional full-page webpage long screenshots through Playwright/CDP-style browser capture.
+See [docs/CAPTURE_ROUTES_AND_CHAINS.md](docs/CAPTURE_ROUTES_AND_CHAINS.md) for capture routes, desktop/application/webpage route selection, `nested_scroll` capture, quiet capture, and `prepare_capture_chain` guided plans.
 See [docs/RELATED_PROJECTS.md](docs/RELATED_PROJECTS.md) for related product/project research and borrowed design patterns.
 
 Screen Guardian is for authorized perception, accessibility, visibility auditing, debugging, and personal AI assistance. It is not designed or supported for bypassing authentication, paywalls, CAPTCHA, DRM, access controls, platform rules, privacy expectations, or other authorization boundaries. See [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md) for the project stance and disclaimer.
@@ -74,6 +77,8 @@ Screen Guardian is useful when a personal AI needs local sensory access, but the
 
 - Short workflow observation where a program or region should be captured immediately when it changes.
 - Delayed or render-aware capture when a program window exists before its contents finish drawing, causing blank frames on slower systems.
+- Quiet browser-rendered capture where a webpage can be captured from an explicit URL without bringing a browser window to the desktop foreground.
+- Nested webpage capture where a table, embedded panel, or iframe needs a complete long image instead of only the visible slice.
 - Project monitoring where a webpage, program window, region, audio stream, video file, or custom target should trigger capture when a configured feature appears.
 - Error-aware workflows where a program, parser, or model can mark an error feature and request a screenshot, audio clip, model request, or follow-up decision.
 
@@ -143,6 +148,7 @@ These are the first-use tools. They perform explicit local checks or captures an
 | Check whether Screen Guardian can run | `check_dependencies`, `list_adapters` |
 | See available screens and windows | `list_displays`, `list_windows` |
 | Save a screenshot | `capture_screen`, `capture_region`, `capture_window` |
+| Choose a capture route | `list_capture_routes` |
 | Catch a short visible change | `watch_screen` |
 | Remove local Screen Guardian files | `clear_cache` |
 
@@ -167,6 +173,7 @@ These tools are advanced workflow interfaces. They store configuration or write 
 - `list_extension_routes`, `set_extension_route`, `prepare_model_request`
 - `list_decision_policies`, `set_decision_policy`, `prepare_decision_request`
 - `list_monitor_profiles`, `set_monitor_profile`, `prepare_monitor_tick`
+- `prepare_capture_chain`
 
 Experimental envelope tools do not execute arbitrary decision code, call APIs, invoke subagents, upload files, record media, or start monitoring by themselves.
 

@@ -30,6 +30,8 @@ Use this skill when the user asks to:
 - register project monitor profiles or prepare one monitor tick for a caller/scheduler/subagent
 - enable or disable optional feature modules so inactive features do not slow active capture
 - check optional audio capture support, record short WAV clips, analyze WAV files, or extract video audio tracks
+- choose between desktop, application/window, webpage, nested scroll-container, and mixed capture routes
+- prepare guided capture chains for delayed, conditional, quiet, or multi-step screenshot workflows
 
 ## Safety defaults
 
@@ -53,6 +55,8 @@ Prefer the AI-first facade tools before the expert tool surface:
 - Use `delay_seconds` for delayed screenshots, `render_guard="wait"` for slow-rendering windows, `render_guard="warn"` when suspected-unrendered frames should return decision actions before saving, and `task="watch_change"` for screen transitions or popups.
 - Use `guardian_prepare_workflow` when preparing a local model, decision, or monitor envelope without executing that route.
 - Use `guardian_list_commands` and `guardian_run_command` when the main AI should choose from reusable capability commands instead of composing low-level tools.
+- Use `list_capture_routes` when the task could be desktop visible pixels, an application window, a browser-rendered webpage, an inner scrollable table, or a mixed capture plan.
+- Use `prepare_capture_chain` when the user wants a trigger, delay, condition, preprocessing step, model request, or subagent/caller handoff around capture. This prepares a local envelope only.
 - Treat `guardian_prepare_exec` and `guardian_run_exec` as break-glass local execution tools. Do not use `guardian_run_exec` unless the user explicitly asks for local code execution; it requires persistent `raw_local_exec=true` and per-call `user_confirmed=true`.
 - Use low-level tools directly only when the user asks for exact adapter control, storage routing, runtime limits, feature flags, audio diagnostics, route registration, or monitor/decision registration.
 
@@ -69,6 +73,7 @@ AI-first tools:
 - `guardian_run_command`
 - `guardian_prepare_exec`
 - `guardian_run_exec`
+- `list_capture_routes`
 
 Core tools:
 
@@ -76,6 +81,7 @@ Core tools:
 - `list_adapters`
 - `list_displays`
 - `list_windows`
+- `list_capture_routes`
 - `capture_screen`
 - `capture_region`
 - `capture_window`
@@ -110,5 +116,6 @@ Experimental envelope tools:
 - `list_monitor_profiles`
 - `set_monitor_profile`
 - `prepare_monitor_tick`
+- `prepare_capture_chain`
 
-Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Use `set_decision_policy` when the user wants best-action logic that can become more complex than weights or increments. Use `set_monitor_profile` and `prepare_monitor_tick` for project monitoring contracts such as webpage changes, program/window changes, model-detected features, error triggers, and audio/video events. Use `watch_screen` only as a short foreground task, not as a background monitor.
+Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Use desktop capture for visible pixels, application capture for HWND/process/title targets, webpage capture for browser-rendered full-page/viewport/element capture, and `mode="scroll_container"` for inner tables, panels, or iframes. Use `set_decision_policy` when the user wants best-action logic that can become more complex than weights or increments. Use `set_monitor_profile` and `prepare_monitor_tick` for project monitoring contracts such as webpage changes, program/window changes, model-detected features, error triggers, and audio/video events. Use `prepare_capture_chain` for guided plans; it does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers. Use `watch_screen` only as a short foreground task, not as a background monitor.

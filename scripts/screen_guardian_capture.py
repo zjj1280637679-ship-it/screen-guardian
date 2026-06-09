@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import wave
@@ -46,6 +47,8 @@ DEFAULT_LIMITS = {
     "webpage_capture_viewport_width_max": 3840,
     "webpage_capture_viewport_height_max": 2160,
     "webpage_capture_full_page_height_max": 50000,
+    "webpage_capture_scroll_segments_max": 80,
+    "webpage_capture_segment_delay_ms_max": 1000,
 }
 
 CAPTURE_GUARD_CHECKS = {
@@ -58,11 +61,50 @@ CAPTURE_GUARD_CHECKS = {
 }
 DEFAULT_GUARD_CHECKS = ["unrendered"]
 
+CAPTURE_ROUTE_CATALOG = {
+    "desktop": {
+        "title": "Desktop screen capture",
+        "tools": ["capture_screen", "capture_region", "watch_screen"],
+        "quiet": False,
+        "best_for": ["visible desktop pixels", "multi-display diagnostics", "old-system screenshot fallback"],
+        "limits": ["only sees visible pixels", "cannot capture hidden scroll content by itself"],
+    },
+    "application": {
+        "title": "Application/window capture",
+        "tools": ["list_windows", "capture_window"],
+        "quiet": "best_effort",
+        "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "render-aware window capture"],
+        "limits": ["minimized, GPU-rendered, protected, or occluded windows may be blank or stale"],
+    },
+    "webpage": {
+        "title": "Browser-rendered webpage capture",
+        "tools": ["prepare_webpage_capture", "capture_webpage"],
+        "quiet": True,
+        "best_for": ["full scrollable webpage long screenshots", "browser viewport capture", "element capture"],
+        "limits": ["optional Playwright/Chromium adapter", "requires explicit URL navigation"],
+    },
+    "nested_scroll": {
+        "title": "Nested scroll container or iframe capture",
+        "tools": ["capture_webpage"],
+        "quiet": True,
+        "best_for": ["tables inside admin pages", "embedded iframes", "scrollable panels within a page"],
+        "limits": ["requires selector/frame_selector", "stitches multiple scroll segments"],
+    },
+    "chain": {
+        "title": "Guided capture chain",
+        "tools": ["prepare_capture_chain", "prepare_monitor_tick", "prepare_decision_request"],
+        "quiet": "depends_on_route",
+        "best_for": ["conditional screenshots", "AI-guided multi-step capture", "capture plus preprocess/model envelope"],
+        "limits": ["prepare-only by default; no hidden scheduler"],
+    },
+}
+
 DEFAULT_FEATURE_FLAGS = {
     "screen_capture": True,
     "window_capture": True,
     "bounded_watch": True,
     "workflow_metadata": True,
+    "capture_chains": True,
     "multi_storage_routes": True,
     "image_analysis": True,
     "image_preprocess": True,
@@ -99,6 +141,10 @@ FEATURE_CATALOG = {
     "workflow_metadata": {
         "status": "implemented",
         "cost_when_inactive": "No metadata sidecar is written.",
+    },
+    "capture_chains": {
+        "status": "implemented",
+        "cost_when_inactive": "No capture-chain envelope is written.",
     },
     "multi_storage_routes": {
         "status": "implemented",
@@ -313,6 +359,19 @@ CAPABILITY_COMMANDS = [
         "side_effects": ["local_envelope_write"],
         "context_strategy": "return_path",
         "safety_note": "Writes decision inputs only; arbitrary complexity belongs to an explicit caller.",
+    },
+    {
+        "id": "workflow.capture_chain.prepare",
+        "category": "workflow",
+        "title": "Prepare a guided capture chain",
+        "intent_tags": ["capture_chain", "trigger", "combo", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "prepare_capture_chain",
+        "required_features": ["capture_chains"],
+        "default_args": {"route": "auto", "trigger": {"type": "manual"}, "quiet": True},
+        "side_effects": ["local_envelope_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Writes a local chain plan only; no screenshot, browser navigation, scheduler, API, subagent, or script execution.",
     },
     {
         "id": "emergency.exec.prepare",
@@ -1662,8 +1721,8 @@ def webpage_capture_options(args):
     mode = str(args.get("mode") or "full_page").strip().lower()
     aliases = {"full": "full_page", "long": "full_page", "long_image": "full_page", "current": "viewport", "node": "element"}
     mode = aliases.get(mode, mode)
-    if mode not in ("full_page", "viewport", "element"):
-        raise ValueError("mode must be full_page, viewport, or element")
+    if mode not in ("full_page", "viewport", "element", "scroll_container"):
+        raise ValueError("mode must be full_page, viewport, element, or scroll_container")
     width = int(args.get("viewport_width") or 1440)
     height = int(args.get("viewport_height") or 900)
     timeout_ms = int(args.get("timeout_ms") or 15000)
@@ -1679,8 +1738,16 @@ def webpage_capture_options(args):
     if device_scale_factor <= 0:
         raise ValueError("device_scale_factor must be greater than 0")
     selector = str(args.get("selector") or "").strip()
-    if mode == "element" and not selector:
-        raise ValueError("selector is required when mode is element")
+    frame_selector = str(args.get("frame_selector") or "").strip()
+    if mode in ("element", "scroll_container") and not selector:
+        raise ValueError("selector is required when mode is element or scroll_container")
+    scroll_axis = str(args.get("scroll_axis") or "vertical").strip().lower()
+    if scroll_axis not in ("vertical",):
+        raise ValueError("scroll_axis currently supports vertical only")
+    max_segments = int(args.get("max_segments") or limits.get("webpage_capture_scroll_segments_max") or 80)
+    segment_delay_ms = int(args.get("segment_delay_ms") or 100)
+    check_min_max(max_segments, 1, limits.get("webpage_capture_scroll_segments_max"), "max_segments")
+    check_min_max(segment_delay_ms, 0, limits.get("webpage_capture_segment_delay_ms_max"), "segment_delay_ms")
     fmt = normalized_format(args.get("format", "png"))
     quality = int(args.get("quality", 90))
     if fmt == "jpg":
@@ -1696,6 +1763,10 @@ def webpage_capture_options(args):
         "wait_until": wait_until,
         "device_scale_factor": device_scale_factor,
         "selector": selector,
+        "frame_selector": frame_selector,
+        "scroll_axis": scroll_axis,
+        "max_segments": max_segments,
+        "segment_delay_ms": segment_delay_ms,
         "format": fmt,
         "quality": quality,
         "settle_delay_ms": settle_delay_ms,
@@ -1725,6 +1796,127 @@ def webpage_dimensions(page):
             };
         }"""
     )
+
+
+def webpage_target_locator(page, options):
+    if options.get("frame_selector"):
+        return page.frame_locator(options["frame_selector"]).locator(options["selector"]).first
+    return page.locator(options["selector"]).first
+
+
+def scroll_container_info(locator):
+    return locator.evaluate(
+        """(el) => {
+            const style = window.getComputedStyle(el);
+            return {
+              scrollTop: el.scrollTop,
+              scrollLeft: el.scrollLeft,
+              scrollHeight: el.scrollHeight,
+              scrollWidth: el.scrollWidth,
+              clientHeight: el.clientHeight,
+              clientWidth: el.clientWidth,
+              overflowY: style.overflowY,
+              overflowX: style.overflowX
+            };
+        }"""
+    )
+
+
+def scroll_positions(total, viewport, max_segments):
+    total = int(total or 0)
+    viewport = max(1, int(viewport or 1))
+    max_scroll = max(0, total - viewport)
+    positions = list(range(0, max_scroll + 1, viewport))
+    if not positions or positions[-1] != max_scroll:
+        positions.append(max_scroll)
+    seen = []
+    for item in positions:
+        if item not in seen:
+            seen.append(item)
+    if len(seen) > max_segments:
+        return None
+    return seen
+
+
+def capture_scroll_container(page, options, output_path, args):
+    libs, import_error = import_capture_libs()
+    if import_error:
+        raise RuntimeError("Pillow is required to stitch scroll-container screenshots.")
+    Image = libs["Image"]
+    locator = webpage_target_locator(page, options)
+    locator.wait_for(state="visible", timeout=options["timeout_ms"])
+    info = scroll_container_info(locator)
+    total_height = int(info.get("scrollHeight") or 0)
+    client_height = int(info.get("clientHeight") or 0)
+    if total_height <= 0 or client_height <= 0:
+        raise RuntimeError("scroll container has invalid dimensions")
+    positions = scroll_positions(total_height, client_height, options["max_segments"])
+    if positions is None:
+        return {
+            "deferred": True,
+            "payload": {
+                "ok": True,
+                "capture_deferred": True,
+                "reason": "scroll_container_too_many_segments",
+                "message": "The nested scroll container requires more segments than the configured limit.",
+                "container": info,
+                "limit": {"max_segments": options["max_segments"]},
+                "available_actions": {
+                    "increase_max_segments": {"max_segments": math.ceil(total_height / max(1, client_height))},
+                    "capture_visible_element": {"mode": "element"},
+                    "capture_page_full_page": {"mode": "full_page"},
+                },
+            },
+        }
+    if total_height > options["full_page_height_max"] and not bool(args.get("allow_oversize", False)):
+        return {
+            "deferred": True,
+            "payload": {
+                "ok": True,
+                "capture_deferred": True,
+                "reason": "scroll_container_too_tall",
+                "message": "The nested scroll container is taller than the configured limit.",
+                "container": info,
+                "limit": {"full_page_height_max": options["full_page_height_max"]},
+                "available_actions": {
+                    "force_scroll_container_capture": {"allow_oversize": True},
+                    "capture_visible_element": {"mode": "element"},
+                    "increase_limit": {"full_page_height_max": total_height},
+                },
+            },
+        }
+    original_scroll_top = int(info.get("scrollTop") or 0)
+    segment_images = []
+    with tempfile.TemporaryDirectory(prefix="screen-guardian-scroll-segments-") as tmp:
+        for index, y in enumerate(positions):
+            locator.evaluate("(el, y) => { el.scrollTop = y; }", y)
+            if options["segment_delay_ms"] > 0:
+                page.wait_for_timeout(options["segment_delay_ms"])
+            segment_path = Path(tmp) / f"segment-{index:03d}.png"
+            locator.screenshot(path=str(segment_path), timeout=options["timeout_ms"])
+            segment_images.append((y, Image.open(segment_path).convert("RGB")))
+        locator.evaluate("(el, y) => { el.scrollTop = y; }", original_scroll_top)
+        first = segment_images[0][1]
+        width_scale = first.size[0] / max(1, int(info.get("clientWidth") or first.size[0]))
+        height_scale = first.size[1] / max(1, client_height)
+        canvas_width = first.size[0]
+        canvas_height = max(1, round(total_height * height_scale))
+        stitched = Image.new("RGB", (canvas_width, canvas_height), "white")
+        for y, image in segment_images:
+            paste_y = round(y * height_scale)
+            stitched.paste(image, (0, paste_y))
+        if options["format"] == "jpg":
+            stitched.save(output_path, "JPEG", quality=options["quality"])
+        else:
+            stitched.save(output_path, "PNG")
+    return {
+        "deferred": False,
+        "container": info,
+        "segments": len(segment_images),
+        "positions": positions,
+        "stitched_size": {"width": canvas_width, "height": canvas_height},
+        "scale": {"width": round(width_scale, 4), "height": round(height_scale, 4)},
+    }
 
 
 def action_prepare_webpage_capture(args):
@@ -1807,11 +1999,18 @@ def action_capture_webpage(args):
             if options["format"] == "jpg":
                 screenshot_args["type"] = "jpeg"
                 screenshot_args["quality"] = options["quality"]
+            scroll_result = None
             if options["mode"] == "full_page":
                 screenshot_args["full_page"] = True
                 page.screenshot(**screenshot_args)
+            elif options["mode"] == "scroll_container":
+                scroll_result = capture_scroll_container(page, options, output_path, args)
+                if scroll_result.get("deferred"):
+                    browser.close()
+                    browser = None
+                    return write_json(scroll_result["payload"])
             elif options["mode"] == "element":
-                locator = page.locator(options["selector"]).first
+                locator = webpage_target_locator(page, options)
                 locator.screenshot(**screenshot_args)
             else:
                 page.screenshot(**screenshot_args)
@@ -1844,7 +2043,9 @@ def action_capture_webpage(args):
             "title": title,
             "mode": options["mode"],
             "selector": options["selector"],
+            "frame_selector": options["frame_selector"],
             "dimensions": dims,
+            "scroll_container": scroll_result if scroll_result and not scroll_result.get("deferred") else None,
             "viewport": {"width": options["viewport_width"], "height": options["viewport_height"], "device_scale_factor": options["device_scale_factor"]},
         },
         "context": capture_context(args),
@@ -2017,7 +2218,14 @@ def webpage_adapter_status(args=None):
         "role": "webpage_capture",
         "available": False,
         "dependencies": ["playwright", "chromium browser"],
-        "capabilities": ["full_page_screenshot", "viewport_screenshot", "element_screenshot", "render_wait"],
+        "capabilities": [
+            "full_page_screenshot",
+            "viewport_screenshot",
+            "element_screenshot",
+            "scroll_container_stitching",
+            "iframe_targeting",
+            "render_wait",
+        ],
         "feature_active": feature_enabled("webpage_capture", args),
         "compatibility_note": "Optional browser-rendered route for full scrollable webpages. It is separate from lightweight screen/window capture.",
     }
@@ -2179,6 +2387,8 @@ def action_get_runtime_settings(args):
                 "webpage_capture_viewport_width_max": "CSS pixels",
                 "webpage_capture_viewport_height_max": "CSS pixels",
                 "webpage_capture_full_page_height_max": "CSS pixels",
+                "webpage_capture_scroll_segments_max": "segments",
+                "webpage_capture_segment_delay_ms_max": "milliseconds",
             },
             "feature_flags": config.get("feature_flags", {}),
             "feature_catalog": FEATURE_CATALOG,
@@ -2286,6 +2496,121 @@ def action_set_feature_flags(args):
             "note": "Inactive persistent features return at the tool boundary or skip optional work. Per-call feature_flags can only disable features for one call, not enable disabled features.",
         }
     )
+
+
+def action_list_capture_routes(args):
+    include_examples = bool(args.get("include_examples", True))
+    routes = copy.deepcopy(CAPTURE_ROUTE_CATALOG)
+    if include_examples:
+        routes["desktop"]["example"] = {"tool": "capture_region", "args": {"left": 0, "top": 0, "width": 800, "height": 600}}
+        routes["application"]["example"] = {"tool": "capture_window", "args": {"title_contains": "Chrome", "render_guard": "wait"}}
+        routes["webpage"]["example"] = {"tool": "capture_webpage", "args": {"url": "https://example.com", "mode": "full_page"}}
+        routes["nested_scroll"]["example"] = {
+            "tool": "capture_webpage",
+            "args": {"url": "https://example.com/admin", "mode": "scroll_container", "selector": ".table-scroll"},
+        }
+        routes["chain"]["example"] = {
+            "tool": "prepare_capture_chain",
+            "args": {
+                "objective": "Wait for an error panel, capture the target, preprocess text, then prepare a model request.",
+                "route": "application",
+                "trigger": {"type": "error_text", "contains": "error"},
+                "steps": [{"tool": "capture_window"}, {"tool": "preprocess_image", "preset": "text"}, {"tool": "prepare_model_request"}],
+            },
+        }
+    return write_json(
+        {
+            "ok": True,
+            "routes": routes,
+            "default_route_guidance": {
+                "desktop": "Use for visible desktop pixels and old-system fallback.",
+                "application": "Use for a specific Windows program/window without treating it as a browser page.",
+                "webpage": "Use browser-rendered capture for full scrollable pages or DOM-targeted elements.",
+                "nested_scroll": "Use browser-rendered scroll-container stitching for embedded tables, panels, and iframes.",
+            },
+            "quiet_capture": {
+                "desktop": "not quiet; captures visible desktop pixels",
+                "application": "best-effort quiet through HWND/window adapter; may fail for minimized/protected/GPU windows",
+                "webpage": "quiet through headless browser when webpage_capture is enabled",
+            },
+            "privacy": "Listing routes does not capture, navigate, record, upload, call a model, or start monitoring.",
+        }
+    )
+
+
+def action_prepare_capture_chain(args):
+    try:
+        require_feature("capture_chains", args)
+    except Exception as exc:
+        return error(str(exc), feature="capture_chains")
+    objective = str(args.get("objective") or "").strip()
+    if not objective:
+        return error("objective is required")
+    route = str(args.get("route") or "auto").strip().lower()
+    allowed_routes = ("auto", "desktop", "application", "webpage", "nested_scroll", "mixed")
+    if route not in allowed_routes:
+        return error("route must be auto, desktop, application, webpage, nested_scroll, or mixed")
+    trigger = args.get("trigger") if isinstance(args.get("trigger"), dict) else {"type": "manual"}
+    trigger_type = str(trigger.get("type") or "manual").strip().lower()
+    allowed_triggers = (
+        "manual",
+        "delay",
+        "schedule",
+        "screen_change",
+        "window_change",
+        "selector_visible",
+        "error_text",
+        "model_feature",
+        "audio_feature",
+        "custom",
+    )
+    if trigger_type not in allowed_triggers:
+        return error(f"trigger.type must be one of: {', '.join(allowed_triggers)}")
+    steps = args.get("steps") if isinstance(args.get("steps"), list) else []
+    if not steps:
+        steps = [{"tool": "capture_webpage" if route in ("webpage", "nested_scroll") else "capture_window" if route == "application" else "capture_screen"}]
+    normalized_steps = []
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            return error("each step must be an object", step_index=index)
+        normalized_steps.append(
+            {
+                "index": index,
+                "tool": str(step.get("tool") or step.get("action") or "").strip(),
+                "args": step.get("args") if isinstance(step.get("args"), dict) else {},
+                "condition": step.get("condition") if isinstance(step.get("condition"), dict) else {},
+                "on_failure": str(step.get("on_failure") or "return_decision").strip(),
+                "note": str(step.get("note") or "").strip(),
+            }
+        )
+    chain = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "capture_chain_request",
+        "objective": objective,
+        "route": route,
+        "route_catalog": copy.deepcopy(CAPTURE_ROUTE_CATALOG),
+        "quiet": bool(args.get("quiet", True)),
+        "trigger": trigger,
+        "steps": normalized_steps,
+        "decision_policy_id": str(args.get("decision_policy_id") or "").strip(),
+        "settings": args.get("settings") if isinstance(args.get("settings"), dict) else {},
+        "context": capture_context(args),
+        "execution": {
+            "status": "prepared",
+            "note": "This chain is a local plan only. Screen Guardian does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers from this envelope.",
+        },
+        "available_execution_paths": {
+            "foreground_bounded_watch": "A caller may translate trigger=screen_change/window_change into watch_screen.",
+            "browser_quiet_capture": "A caller may translate webpage/nested_scroll steps into capture_webpage when webpage_capture is enabled.",
+            "decision_or_subagent": "A caller may pass this envelope to a decision policy, route, or subagent.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": "capture-chain", **args}, "json")
+    request_path = output_dir / filename
+    write_json_file(request_path, chain)
+    return write_json({"ok": True, "request_path": str(request_path), "chain": chain})
 
 
 def normalized_route(args):
@@ -2786,6 +3111,7 @@ def key_capability_summary(flags):
         "model_request_envelopes",
         "decision_policies",
         "monitor_profiles",
+        "capture_chains",
         "webpage_capture",
         "audio_capture",
         "video_audio_extract",
@@ -2946,8 +3272,8 @@ def action_guardian_perceive(args):
 
 def action_guardian_prepare_workflow(args):
     workflow_type = str(args.get("workflow_type") or "").strip().lower()
-    if workflow_type not in ("model_request", "decision_request", "monitor_tick"):
-        return error("workflow_type must be model_request, decision_request, or monitor_tick")
+    if workflow_type not in ("model_request", "decision_request", "monitor_tick", "capture_chain"):
+        return error("workflow_type must be model_request, decision_request, monitor_tick, or capture_chain")
     settings = args.get("settings") if isinstance(args.get("settings"), dict) else {}
     objective = str(args.get("objective") or "").strip()
     source_path = str(args.get("source_path") or "").strip()
@@ -2976,6 +3302,19 @@ def action_guardian_prepare_workflow(args):
         if args.get("policy_id"):
             forwarded["policy_id"] = str(args.get("policy_id"))
         return action_prepare_decision_request(forwarded)
+    if workflow_type == "capture_chain":
+        forwarded = {
+            **common,
+            "objective": objective or "Prepare a guided capture chain.",
+            "route": str(args.get("route") or settings.get("route") or "auto"),
+            "trigger": args.get("trigger") if isinstance(args.get("trigger"), dict) else settings.get("trigger") if isinstance(settings.get("trigger"), dict) else {"type": "manual"},
+            "steps": args.get("steps") if isinstance(args.get("steps"), list) else settings.get("steps") if isinstance(settings.get("steps"), list) else [],
+            "quiet": bool(args.get("quiet", settings.get("quiet", True))),
+            "settings": settings,
+        }
+        if args.get("decision_policy_id"):
+            forwarded["decision_policy_id"] = str(args.get("decision_policy_id"))
+        return action_prepare_capture_chain(forwarded)
     observations = {"objective": objective}
     if source_path:
         observations["source_path"] = source_path
@@ -3808,6 +4147,8 @@ ACTIONS = {
     "guardian_run_command": action_guardian_run_command,
     "guardian_prepare_exec": action_guardian_prepare_exec,
     "guardian_run_exec": action_guardian_run_exec,
+    "list_capture_routes": action_list_capture_routes,
+    "prepare_capture_chain": action_prepare_capture_chain,
     "check": action_check,
     "get_runtime_settings": action_get_runtime_settings,
     "set_cache_path": action_set_cache_path,

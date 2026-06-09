@@ -35,15 +35,21 @@ EXPECTED_RUNTIME_TOOLS = {
     "guardian_prepare_exec",
     "guardian_run_exec",
 }
+EXPECTED_ROUTE_TOOLS = {
+    "list_capture_routes",
+    "prepare_capture_chain",
+}
 EXPECTED_COMMAND_IDS = {
     "diagnostic.readiness",
     "perceive.screen.quick",
     "perceive.region.text",
     "perceive.window.after_render",
+    "perceive.webpage.full_page",
     "perceive.change.popup",
     "artifact.hold_file",
     "workflow.model_request.prepare",
     "workflow.decision.prepare",
+    "workflow.capture_chain.prepare",
     "emergency.exec.prepare",
     "emergency.exec.run",
 }
@@ -183,6 +189,7 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "MCP transport lists tools", ok_transport(tools_result), tools_result.get("stderr", "")[-500:])
             add_check(checks, "AI-first tools are present", EXPECTED_AI_FIRST_TOOLS <= tool_names, ", ".join(sorted(EXPECTED_AI_FIRST_TOOLS - tool_names)))
             add_check(checks, "capability runtime tools are present", EXPECTED_RUNTIME_TOOLS <= tool_names, ", ".join(sorted(EXPECTED_RUNTIME_TOOLS - tool_names)))
+            add_check(checks, "capture route tools are present", EXPECTED_ROUTE_TOOLS <= tool_names, ", ".join(sorted(EXPECTED_ROUTE_TOOLS - tool_names)))
 
             guardian_check = timed_tool("guardian_check", {"detail": "short"}, env)
             timings["guardian_check"] = guardian_check
@@ -200,6 +207,30 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "registered command catalog is readable", ok_transport(commands_result) and commands_payload.get("ok") is True, payload_text(commands_payload)[:500])
             add_check(checks, "expected command ids are registered", EXPECTED_COMMAND_IDS <= command_ids, ", ".join(sorted(EXPECTED_COMMAND_IDS - command_ids)))
             add_check(checks, "normal registered commands are active", len(active_commands) >= 8, f"active={len(active_commands)} total={len(commands)}")
+
+            route_result = timed_tool("list_capture_routes", {"include_examples": True}, env)
+            timings["list_capture_routes"] = route_result
+            route_payload = route_result["payload"]
+            route_names = set((route_payload.get("routes") or {}).keys())
+            add_check(checks, "capture routes are readable", ok_transport(route_result) and route_payload.get("ok") is True, payload_text(route_payload)[:500])
+            add_check(checks, "desktop application webpage and nested routes are listed", {"desktop", "application", "webpage", "nested_scroll"} <= route_names, ", ".join(sorted(route_names)))
+
+            chain_result = timed_tool(
+                "prepare_capture_chain",
+                {
+                    "objective": "Evaluate local capture-chain preparation without executing capture.",
+                    "route": "nested_scroll",
+                    "trigger": {"type": "selector_visible", "selector": ".table-scroll"},
+                    "steps": [{"tool": "capture_webpage", "args": {"mode": "scroll_container", "selector": ".table-scroll"}}],
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["prepare_capture_chain"] = chain_result
+            chain_payload = chain_result["payload"]
+            chain_path = Path(str(chain_payload.get("request_path") or ""))
+            add_check(checks, "capture-chain tool prepares a local envelope", ok_transport(chain_result) and chain_payload.get("ok") is True and chain_path.exists(), payload_text(chain_payload)[:500])
+            add_check(checks, "capture-chain tool remains prepare-only", "does not execute screenshots" in payload_text(chain_payload).lower(), payload_text(chain_payload)[:500])
 
             readiness_result = timed_tool("guardian_run_command", {"command_id": "diagnostic.readiness"}, env)
             timings["guardian_run_command.diagnostic.readiness"] = readiness_result
@@ -224,6 +255,23 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             request_path = Path(str(workflow_payload.get("request_path") or ""))
             add_check(checks, "workflow facade prepares a local envelope", ok_transport(workflow_result) and workflow_payload.get("ok") is True and request_path.exists(), payload_text(workflow_payload)[:500])
             add_check(checks, "workflow facade does not report execution", "prepared" in payload_text(workflow_payload).lower(), payload_text(workflow_payload)[:500])
+
+            chain_facade_result = timed_tool(
+                "guardian_prepare_workflow",
+                {
+                    "workflow_type": "capture_chain",
+                    "objective": "Evaluate facade capture-chain preparation without executing capture.",
+                    "route": "application",
+                    "trigger": {"type": "delay", "seconds": 1},
+                    "steps": [{"tool": "capture_window", "args": {"render_guard": "wait"}}],
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["guardian_prepare_workflow.capture_chain"] = chain_facade_result
+            chain_facade_payload = chain_facade_result["payload"]
+            chain_facade_path = Path(str(chain_facade_payload.get("request_path") or ""))
+            add_check(checks, "workflow facade prepares capture-chain envelopes", ok_transport(chain_facade_result) and chain_facade_payload.get("ok") is True and chain_facade_path.exists(), payload_text(chain_facade_payload)[:500])
 
             prepare_exec_result = timed_tool(
                 "guardian_prepare_exec",

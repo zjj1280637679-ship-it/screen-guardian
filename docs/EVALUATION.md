@@ -6,7 +6,7 @@ Screen Guardian now has three complementary test layers:
 | --- | --- | --- |
 | Contract validation | `npm run validate` | Check docs, tool schemas, Python actions, feature flags, and safety wording stay aligned |
 | Stress testing | `npm run stress` | Repeated MCP calls for decision, monitor, workflow, and command envelopes |
-| Runtime evaluation | `npm run evaluate` | Measure the AI-first surface, command catalog, safety gates, and local envelope behavior |
+| Runtime evaluation | `npm run evaluate` | Measure the AI-first surface, route catalog, command catalog, safety gates, and local envelope behavior |
 
 Runtime evaluation is not a replacement for validation. It is a lightweight product-health check for the question: "Does this plugin reduce the main AI's burden while keeping powerful paths explicit and bounded?"
 
@@ -16,10 +16,13 @@ Runtime evaluation is not a replacement for validation. It is a lightweight prod
 
 - whether the AI-first tools are present
 - whether the capability-runtime tools are present
+- whether capture route tools are present
 - how many registered commands are available and active
 - whether `guardian_check` gives a clear local status and next step
+- whether `list_capture_routes` exposes desktop, application, webpage, and nested-scroll routes
+- whether `prepare_capture_chain` writes a local capture-chain envelope without executing capture
 - whether `guardian_run_command` can run the registered readiness command
-- whether `guardian_prepare_workflow` writes a local model-request envelope
+- whether `guardian_prepare_workflow` writes local model-request and capture-chain envelopes
 - whether `guardian_prepare_exec` writes a break-glass envelope without executing code
 - whether `guardian_run_exec` stays disabled by default
 - whether `guardian_run_exec` still requires `user_confirmed=true` after persistent enablement
@@ -75,6 +78,7 @@ A passing runtime evaluation means:
 
 - the default AI-first entrypoints are callable
 - the registered-command path is available
+- desktop/application/webpage/nested-scroll route selection is available
 - envelope workflows are local-only
 - raw local execution is still gated by persistent enablement and per-call confirmation
 - the plugin can produce a compact measurement report without external services
