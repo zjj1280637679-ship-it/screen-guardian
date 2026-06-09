@@ -1,6 +1,10 @@
 # Workflow Interface
 
-Screen Guardian `0.1.11` keeps the workflow layer flexible without turning the plugin into a background service.
+Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
+
+For AI agents, start with the AI-first facade tools: `guardian_check`, `guardian_perceive`, and `guardian_prepare_workflow`. They reduce tool-choice overhead by mapping common intents to the existing core, local-control, and envelope tools without expanding permissions or starting hidden work.
+
+For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
 
 ## How To Read The Layers
 
@@ -11,6 +15,7 @@ The workflow surface is split so first-time users do not need to understand ever
 | Core tools | Dependency checks, display/window listing, screenshots, window capture, short foreground change capture, and cache cleanup | No background service, no model call, no hidden upload |
 | Local control tools | Feature flags, runtime limits, cache paths, mirror routes, metadata sidecars, image analysis/preprocessing, display naming, and optional audio diagnostics | No automatic scheduler or external API handoff |
 | Experimental envelope tools | Model request envelopes, extension routes, decision policies, and monitor profiles | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
+| Capability runtime tools | Registered command catalog, command runner, and break-glass execution envelopes | No arbitrary code through `guardian_run_command`; raw execution requires `raw_local_exec` and per-call confirmation |
 
 When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
 
@@ -21,6 +26,8 @@ Use `set_feature_flags` to enable, disable, or reset optional capability modules
 The important performance rule is simple: inactive features should not drag active features. A normal capture can save an image without running image analysis, preprocessing, mirror copies, decision-policy preparation, monitor-profile lookup, audio probing, recording, FFmpeg extraction, OCR, API calls, video narration, or subagent handoff.
 
 Persistent feature flags are also the safety boundary. Per-call `feature_flags` can temporarily disable a feature for one request, but they cannot enable a feature that persistent settings have disabled. High-risk paths such as audio capture, video audio extraction, OCR routes, external API handoff, and subagent handoff must be enabled persistently through `set_feature_flags`.
+
+`raw_local_exec` is the break-glass local execution flag. It defaults to disabled and must be enabled persistently before `guardian_run_exec` can run Python, PowerShell, or Node code. The execution call must still include `user_confirmed=true`.
 
 ## Local Cache
 
@@ -66,6 +73,9 @@ Current default limits:
 - `capture_scale_max`: `1`
 - `jpeg_quality_min`: `1`
 - `jpeg_quality_max`: `95`
+- `capture_settle_delay_ms_max`: `5000`
+- `capture_render_retry_count_max`: `8`
+- `capture_render_retry_interval_ms_max`: `2000`
 - `audio_duration_seconds_max`: `120`
 - `audio_sample_rate_max`: `48000`
 - `audio_channels_max`: `2`
@@ -86,6 +96,14 @@ Use `null`, `none`, or `unbounded` to remove a configurable bound where the unde
 - `photo`
 
 The `text` preset sharpens and increases contrast for text-heavy screenshots. It does not perform OCR yet; OCR is intentionally left as an optional adapter so older systems do not need a heavy dependency chain.
+
+## Advisory Context Signals
+
+Screen Guardian should not use regex, focus state, window titles, process names, URL fragments, or simple keyword matches as hard moral blockers. Those signals are too low-context and have legitimate counterexamples.
+
+When a workflow detects a potentially sensitive or ambiguous context, it should prefer reversible responses: add metadata, suggest `context_policy="hold_file"`, keep processing local, ask for explicit user confirmation before model sharing, or explain that a bypass-oriented use case is outside project support.
+
+Hard rejection belongs to objective mechanics such as inactive feature flags, runtime limits, configured storage ownership, missing dependencies, or the rule that envelope tools do not execute APIs, subagents, commands, or schedulers by themselves.
 
 ## Experimental Envelope Layer: Extension Routes
 
@@ -210,3 +228,11 @@ Default ultra-light limits:
 - `burst_frames` up to 10
 
 These defaults catch short UI changes while preserving the no-background-service default. They are configurable through `set_runtime_limits` because limits are policy, not permanent product walls.
+
+## Render Timing And Delayed Capture
+
+Capture tools accept `delay_seconds` or `settle_delay_ms` when the user wants a screenshot a few seconds later, such as after opening a slow program or waiting for a popup.
+
+Window capture defaults to `wait_for_nonblank=true`. If the first frame is clearly blank, black, or white with very low visual information, Screen Guardian retries briefly before saving. Use `render_retry_count` and `render_retry_interval_ms` to tune that behavior within runtime limits.
+
+For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.

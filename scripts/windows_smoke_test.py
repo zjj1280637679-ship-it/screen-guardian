@@ -103,6 +103,12 @@ def main():
     require_ok("explicit SCREEN_GUARDIAN_PYTHON check_dependencies", dependency_payload)
     checks.append({"name": "explicit_python_runtime", "ok": True, "python_runtime": dependency_payload.get("python_runtime")})
 
+    guardian_check_payload = call_tool("guardian_check", {"detail": "short"}, env_updates=explicit_env)
+    require_ok("guardian_check", guardian_check_payload)
+    if guardian_check_payload.get("recommended_next") not in ("guardian_perceive", "check_dependencies"):
+        raise SmokeFailure(f"guardian_check returned an unexpected next step: {guardian_check_payload}")
+    checks.append({"name": "guardian_check", "ok": True, "recommended_next": guardian_check_payload.get("recommended_next")})
+
     helper_path = ROOT / "bin" / "screen-guardian-helper.exe"
     if helper_path.exists():
         helper_payload = call_tool("check_dependencies", env_updates={"SCREEN_GUARDIAN_HELPER_EXE": str(helper_path)})
@@ -149,7 +155,7 @@ def main():
         isolated_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "APPDATA": appdata}
         limits_payload = call_tool(
             "set_runtime_limits",
-            {"limits": {"watch_duration_seconds_max": 1}},
+            {"limits": {"watch_duration_seconds_max": 1, "capture_settle_delay_ms_max": 1}},
             env_updates=isolated_env,
         )
         require_ok("set_runtime_limits isolated", limits_payload)
@@ -161,6 +167,79 @@ def main():
         if watch_payload.get("ok") or "no more than 1" not in str(watch_payload.get("error", "")):
             raise SmokeFailure(f"per-call runtime_limits loosened a persistent max: {watch_payload}")
         checks.append({"name": "per_call_runtime_limits_cannot_loosen", "ok": True})
+
+        guardian_watch_payload = call_tool(
+            "guardian_perceive",
+            {
+                "task": "watch_change",
+                "duration_seconds": 2,
+                "runtime_limits": {"watch_duration_seconds_max": 5},
+            },
+            env_updates=isolated_env,
+        )
+        if guardian_watch_payload.get("ok") or "no more than 1" not in str(guardian_watch_payload.get("error", "")):
+            raise SmokeFailure(f"guardian_perceive loosened a persistent watch max: {guardian_watch_payload}")
+        checks.append({"name": "guardian_perceive_watch_cannot_loosen_limits", "ok": True})
+
+        guardian_delay_payload = call_tool(
+            "guardian_perceive",
+            {
+                "task": "quick_look",
+                "delay_seconds": 0.01,
+                "runtime_limits": {"capture_settle_delay_ms_max": 1000},
+            },
+            env_updates=isolated_env,
+        )
+        if guardian_delay_payload.get("ok") or "no more than 1" not in str(guardian_delay_payload.get("error", "")):
+            raise SmokeFailure(f"guardian_perceive loosened a persistent render delay max: {guardian_delay_payload}")
+        checks.append({"name": "guardian_perceive_delay_cannot_loosen_limits", "ok": True})
+
+        raw_disabled_payload = call_tool(
+            "guardian_run_exec",
+            {"language": "python", "code": "print('should not run')", "user_confirmed": True},
+            env_updates=isolated_env,
+        )
+        if raw_disabled_payload.get("ok") or "raw_local_exec" not in str(raw_disabled_payload):
+            raise SmokeFailure(f"guardian_run_exec ran while raw_local_exec was inactive: {raw_disabled_payload}")
+        checks.append({"name": "guardian_run_exec_default_disabled", "ok": True})
+
+        raw_flags_payload = call_tool(
+            "set_feature_flags",
+            {"flags": {"raw_local_exec": True}},
+            env_updates=isolated_env,
+        )
+        require_ok("set_feature_flags raw_local_exec isolated", raw_flags_payload)
+
+        raw_unconfirmed_payload = call_tool(
+            "guardian_run_exec",
+            {"language": "python", "code": "print('should not run')", "user_confirmed": False},
+            env_updates=isolated_env,
+        )
+        if raw_unconfirmed_payload.get("ok") or "user_confirmed" not in str(raw_unconfirmed_payload.get("error", "")):
+            raise SmokeFailure(f"guardian_run_exec ran without per-call confirmation: {raw_unconfirmed_payload}")
+        checks.append({"name": "guardian_run_exec_requires_confirmation", "ok": True})
+
+        with tempfile.TemporaryDirectory(prefix="screen-guardian-exec-smoke-") as exec_tmp:
+            prepared_exec = call_tool(
+                "guardian_prepare_exec",
+                {
+                    "language": "python",
+                    "code": "print('screen-guardian raw exec smoke')",
+                    "reason": "Windows smoke test.",
+                    "output_dir": exec_tmp,
+                },
+                env_updates=isolated_env,
+            )
+            require_ok("guardian_prepare_exec", prepared_exec)
+            exec_payload = call_tool(
+                "guardian_run_exec",
+                {"envelope_path": prepared_exec.get("request_path"), "user_confirmed": True, "output_dir": exec_tmp},
+                env_updates=isolated_env,
+            )
+            require_ok("guardian_run_exec confirmed", exec_payload)
+            if "screen-guardian raw exec smoke" not in exec_payload.get("stdout", ""):
+                raise SmokeFailure(f"guardian_run_exec did not return expected stdout: {exec_payload}")
+            checks.append({"name": "guardian_run_exec_confirmed_python", "ok": True})
 
         flags_payload = call_tool(
             "set_feature_flags",
@@ -206,6 +285,33 @@ def main():
             if not path.exists():
                 raise SmokeFailure(f"capture_region reported a missing file: {path}")
             checks.append({"name": "tiny_region_capture", "ok": True, "path": str(path)})
+
+            guardian_payload = call_tool(
+                "guardian_perceive",
+                {
+                    "task": "read_text",
+                    "target": {
+                        "type": "region",
+                        "box": {
+                            "left": 0,
+                            "top": 0,
+                            "width": 1,
+                            "height": 1,
+                            "relative_to_display": True,
+                        },
+                    },
+                    "context_budget": "hold_file",
+                    "source_label": "guardian-smoke",
+                    "output_dir": tmp,
+                },
+                env_updates=explicit_env,
+            )
+            require_ok("guardian_perceive read_text hold_file", guardian_payload)
+            if guardian_payload.get("preprocess", {}).get("applied") != "text":
+                raise SmokeFailure(f"guardian_perceive did not apply text preprocessing: {guardian_payload}")
+            if guardian_payload.get("context_delivery") != "file_marked_only":
+                raise SmokeFailure(f"guardian_perceive did not mark hold_file delivery: {guardian_payload}")
+            checks.append({"name": "guardian_perceive_read_text_hold_file", "ok": True, "path": guardian_payload.get("path")})
     else:
         checks.append({"name": "tiny_region_capture", "ok": True, "skipped": True, "reason": screen_adapter.get("import_error")})
 

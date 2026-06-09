@@ -16,11 +16,15 @@ This verifies:
 - every expected MCP tool is declared
 - every MCP tool has a `callTool` mapping
 - every mapped Python action exists
+- AI-first facade tools are wired and map to the intended status, perception, and envelope paths
+- capability-runtime tools are wired, registered commands map through the command catalog, and break-glass execution is feature-flagged plus confirmation-gated
 - every feature flag has a feature-catalog entry
 - design principles are represented in docs and skill guidance
 - tool layers are represented as core tools, local control tools, and experimental envelope tools
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
+- delayed capture and render-complete retry controls are covered as timing safeguards for slow or older systems
 - safety boundaries are documented, including local-only defaults, no automatic uploads, no arbitrary decision-code execution, and no hidden scheduler
+- anti-abuse and disclaimer language is present for unsupported bypass or unauthorized-use scenarios
 - text files are valid UTF-8, README command examples stay ASCII-only, and common mojibake patterns are rejected
 
 You can run the encoding guard directly:
@@ -47,6 +51,10 @@ python scripts/validate_contracts.py --stress --stress-loops 100
 
 The stress test writes temporary envelope files under the system temp directory and removes them automatically. It briefly writes and removes temporary `sg-stress-*` decision policies and monitor profiles to exercise the real MCP persistence path. It does not start background monitoring, capture the screen, record audio, call external APIs, or invoke subagents.
 
+The stress test also calls `guardian_check` and `guardian_prepare_workflow` so the AI-first facade is covered without performing real capture.
+
+It also calls `guardian_list_commands`, `guardian_run_command`, and `guardian_prepare_exec`. Stress does not run raw local code.
+
 ## Windows Smoke Test
 
 Run:
@@ -72,6 +80,7 @@ The smoke test uses the MCP server, so it exercises Python runtime discovery ins
 - `list_displays`
 - `list_windows`
 - a tiny `capture_region` when the screen adapter is available
+- break-glass raw execution stays disabled by default, requires per-call confirmation after enablement, and can run a harmless Python snippet in an isolated config
 
 This is a behavior smoke test for a local Windows machine. It may skip the tiny capture when optional screenshot dependencies are missing, but Python discovery and the MCP tool path must still work.
 

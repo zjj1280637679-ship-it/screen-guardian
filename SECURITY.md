@@ -2,6 +2,8 @@
 
 Screen Guardian is designed as local-first capability infrastructure for Codex. It can capture screens, windows, short bounded change sequences, and optional audio/video artifacts, but heavy or sensitive paths stay off until explicitly configured or called.
 
+For misuse boundaries, see [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md). In short, Screen Guardian is for authorized perception, accessibility, visibility auditing, debugging, and personal AI assistance; it is not designed or supported for bypassing access controls, platform rules, privacy expectations, or other authorization boundaries.
+
 ## Data Types
 
 | Data type | Tool path | Default state | Saved location |
@@ -13,6 +15,9 @@ Screen Guardian is designed as local-first capability infrastructure for Codex. 
 | Video audio extraction | `extract_audio_track` | Disabled by feature flag and requires FFmpeg | Same local media paths |
 | Model request envelopes | `prepare_model_request` | Enabled as local files only | Same local cache path |
 | Decision and monitor envelopes | `prepare_decision_request`, `prepare_monitor_tick` | Enabled as local files only | Same local cache path |
+| Registered capability commands | `guardian_list_commands`, `guardian_run_command` | Enabled, registry-only | Depends on mapped command |
+| Break-glass execution envelopes | `guardian_prepare_exec` | Enabled as local files only | Same local cache path |
+| Break-glass raw local execution | `guardian_run_exec` | Disabled by feature flag | Local stdout/stderr response plus audit JSONL |
 | External API experiments | `scripts/volcengine_ark_runner.py` | Not part of MCP default execution | `~/Pictures/ScreenGuardian/ArkRuns` |
 
 ## Trigger Boundaries
@@ -23,15 +28,20 @@ Screen Guardian is designed as local-first capability infrastructure for Codex. 
 - Bounded watch only runs when `watch_screen` is explicitly called and is capped by runtime limits.
 - Audio capture and FFmpeg extraction require persistent feature-flag enablement.
 - External API use is handled by a separate runner script that must be run intentionally with an environment-provided API key.
+- `guardian_run_command` only runs registered commands. It does not accept arbitrary code strings.
+- `guardian_run_exec` can run arbitrary local Python, PowerShell, or Node code only when `raw_local_exec` is persistently enabled and the specific call passes `user_confirmed=true`.
+- High-context risk is not enforced through regex, focus-state, title, or process-name blockers. Those signals may be used for advisory metadata, local-only suggestions, or explicit confirmation prompts, but not as a brittle moral classifier.
 
 ## Configuration Boundaries
 
 - Persistent feature flags are the hard enablement boundary.
 - Per-call `feature_flags` can only disable a feature for that call. They cannot enable a feature disabled in persistent settings.
+- `raw_local_exec` defaults to disabled and cannot be enabled for one call through `feature_flags`; it must be persistently enabled through `set_feature_flags`.
 - Persistent runtime limits are the hard ceiling/floor boundary.
 - Per-call `runtime_limits` can only tighten a bound. They cannot loosen or remove configured limits.
 - `clear_cache` only accepts the default cache path or paths configured with `set_cache_path` or `set_storage_routes`.
 - Cache deletion is limited to Screen Guardian-named files and skips metadata files that do not identify this plugin as owner.
+- Hard blockers should stay tied to objective tool mechanics such as disabled capabilities, configured storage, runtime bounds, missing dependencies, or explicit non-execution guarantees. Context-sensitive concern should prefer labeling, holding files, and user confirmation.
 
 ## Storage And Deletion
 
@@ -52,6 +62,7 @@ Use `set_cache_path` and `set_storage_routes` to choose persistent local storage
 - It does not call registered external APIs from MCP tools.
 - It does not invoke Codex subagents from MCP tools.
 - It does not silently enable audio, video extraction, OCR, or model narration routes.
+- It does not run arbitrary local code unless the user explicitly enables `raw_local_exec` and confirms that specific execution call.
 
 ## Recommended Use
 

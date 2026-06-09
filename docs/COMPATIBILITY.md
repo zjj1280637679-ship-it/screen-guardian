@@ -65,6 +65,8 @@ The current ultra-light model can write metadata sidecars for project IDs, workf
 
 Image analysis and preprocessing are local Pillow-based heuristics. They can recommend whether a capture looks more like text, UI, photo, or mixed content, then apply presets such as text sharpening or UI sharpening. OCR and model-based image/video narration remain optional future adapters, not required dependencies.
 
+Slow-rendering programs can produce white or black frames when a window exists before the UI finishes drawing. Capture timing controls handle that without adding a heavy dependency: `delay_seconds` waits before capture, window capture retries clearly blank frames by default, and `watch_screen` can catch later visual changes such as popups or page transitions.
+
 Runtime limits, storage routes, and model/program routes are intentionally configurable. The default ultra-light limits protect ordinary use, but users can change or remove configurable bounds, save captures to multiple local folders, and register adapter routes for judgment, OCR, image narration, video narration, transcription, or custom workflows.
 
 The route registry does not execute arbitrary commands in the ultra-light model. It records provider/model/settings metadata and can produce local request envelopes for another adapter, subagent, or model bridge to handle.

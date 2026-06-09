@@ -28,6 +28,7 @@ Capability is split into small modules:
 - video audio extraction
 - external API handoff
 - Codex subagent handoff
+- raw local execution
 
 Implemented modules can be used directly. Interface modules can be registered and prepared without forcing their heavy dependencies into the capture core.
 
@@ -62,6 +63,7 @@ Inactive modules should behave like this:
 - no WAV analysis unless `audio_analysis` is active
 - no FFmpeg extraction unless `video_audio_extract` is active
 - no OCR, external API, video narration, or subagent handoff unless a future adapter explicitly handles it
+- no raw local execution unless `raw_local_exec` is persistently enabled and `guardian_run_exec` is called with `user_confirmed=true`
 
 ## Route Interfaces
 
@@ -128,6 +130,12 @@ Supported trigger descriptions include:
 Actions can include screenshot capture, window capture, audio recording, video audio extraction, model request preparation, and decision request preparation. `prepare_monitor_tick` writes one local tick envelope for a caller, scheduler, future adapter, or subagent. It does not start a background scheduler by itself.
 
 Registering a monitor profile is also configuration, not monitoring. It stores targets, triggers, and candidate actions so an explicit scheduler, caller, foreground watch, or future adapter can decide what to do.
+
+## Capability Runtime And Break-Glass Execution
+
+`guardian_list_commands` exposes reusable command entries for the main AI. `guardian_run_command` runs only those registered entries, so common workflows can be reused without the main AI inventing low-level tool chains or raw code.
+
+`guardian_prepare_exec` can write a local break-glass execution envelope. `guardian_run_exec` is the only raw local execution path. It can run Python, PowerShell, or Node code, but it is disabled by default, bounded by runtime limits, logged locally, and requires explicit per-call confirmation.
 
 ## Runtime Bounds
 

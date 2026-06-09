@@ -44,9 +44,31 @@ Use this skill when the user asks to:
 - Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
 - Do not record audio unless the user asks for it. Prefer listing audio adapter/device status first.
 
+## AI-First Default
+
+Prefer the AI-first facade tools before the expert tool surface:
+
+- Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
+- Use `guardian_perceive` for ordinary visual tasks: quick look, text-heavy screenshot, UI debugging, window capture, short bounded change watch, or hold-file context control.
+- Use `delay_seconds` for delayed screenshots, `wait_for_nonblank` for slow-rendering windows, and `task="watch_change"` for screen transitions or popups.
+- Use `guardian_prepare_workflow` when preparing a local model, decision, or monitor envelope without executing that route.
+- Use `guardian_list_commands` and `guardian_run_command` when the main AI should choose from reusable capability commands instead of composing low-level tools.
+- Treat `guardian_prepare_exec` and `guardian_run_exec` as break-glass local execution tools. Do not use `guardian_run_exec` unless the user explicitly asks for local code execution; it requires persistent `raw_local_exec=true` and per-call `user_confirmed=true`.
+- Use low-level tools directly only when the user asks for exact adapter control, storage routing, runtime limits, feature flags, audio diagnostics, route registration, or monitor/decision registration.
+
 ## Tool Layers
 
-Prefer the `screen_guardian` MCP tools. Start with the core layer for ordinary help, then add local control or experimental envelopes only when the user asks for those workflows.
+Prefer the `screen_guardian` MCP tools. Start with the AI-first facade layer for ordinary help, then add core, local control, or experimental envelopes only when the user asks for those workflows.
+
+AI-first tools:
+
+- `guardian_check`
+- `guardian_perceive`
+- `guardian_prepare_workflow`
+- `guardian_list_commands`
+- `guardian_run_command`
+- `guardian_prepare_exec`
+- `guardian_run_exec`
 
 Core tools:
 

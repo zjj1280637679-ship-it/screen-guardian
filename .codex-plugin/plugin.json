@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.11+codex.20260608100043",
+  "version": "0.1.14+codex.20260609000000",
   "description": "Ultra-light compatibility-first AI screen access with fallback adapters.",
   "author": {
     "name": "ClaudeUser"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "\u5c4f\u5e55\u5b88\u62a4\u8005",
     "shortDescription": "\u4e0d\u5f3a\u8feb\u5347\u7ea7\u7684\u8d85\u8f7b\u91cf AI \u5c4f\u5e55\u8bbf\u95ee\u3002",
-    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This release adds arbitrary-complexity decision-policy envelopes and periodic or feature-triggered monitor profiles for screen, webpage, program, video, audio, error, and model-detected events. Optional paths stay inactive until configured or called.",
+    "longDescription": "Screen Guardian is freedom-preserving capability infrastructure for personal AI. This release adds an AI capability runtime with registered commands and a disabled-by-default break-glass local execution path, while preserving feature flags, runtime limits, local-only defaults, and explicit user confirmation for raw execution.",
     "developerName": "ClaudeUser",
     "category": "Productivity",
     "capabilities": [
@@ -21,6 +21,12 @@
     "logo": "./assets/logo.png",
     "defaultPrompt": [
       "Check Screen Guardian dependencies.",
+      "Check Screen Guardian readiness with guardian_check.",
+      "Use guardian_perceive for a quick local look.",
+      "Capture after a short delay or wait for a window to finish rendering.",
+      "List reusable guardian capability commands.",
+      "Run a registered guardian command.",
+      "Prepare a break-glass execution envelope.",
       "Capture my current screen.",
       "List my connected displays.",
       "Watch a window briefly for visual changes.",
@@ -28,6 +34,7 @@
       "Turn an optional capability on or off.",
       "Check whether audio capture is available.",
       "Register a decision policy.",
+      "Prepare a workflow envelope with guardian_prepare_workflow.",
       "Prepare a monitor tick."
     ]
   },

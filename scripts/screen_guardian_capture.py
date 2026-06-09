@@ -2,6 +2,7 @@ import ctypes
 import ctypes.wintypes
 import array
 import copy
+import hashlib
 import json
 import locale
 import math
@@ -29,12 +30,17 @@ DEFAULT_LIMITS = {
     "watch_burst_frames_max": 10,
     "capture_scale_min": 0.01,
     "capture_scale_max": 1,
+    "capture_settle_delay_ms_max": 5000,
+    "capture_render_retry_count_max": 8,
+    "capture_render_retry_interval_ms_max": 2000,
     "jpeg_quality_min": 1,
     "jpeg_quality_max": 95,
     "audio_duration_seconds_max": 120,
     "audio_sample_rate_max": 48000,
     "audio_channels_max": 2,
     "audio_extract_duration_seconds_max": None,
+    "raw_exec_timeout_seconds_max": 30,
+    "raw_exec_output_chars_max": 12000,
 }
 
 DEFAULT_FEATURE_FLAGS = {
@@ -58,6 +64,7 @@ DEFAULT_FEATURE_FLAGS = {
     "monitor_profiles": True,
     "external_api_handoff": False,
     "codex_subagent_handoff": False,
+    "raw_local_exec": False,
 }
 
 FEATURE_CATALOG = {
@@ -141,6 +148,10 @@ FEATURE_CATALOG = {
         "status": "interface",
         "cost_when_inactive": "No subagent handoff is started.",
     },
+    "raw_local_exec": {
+        "status": "break_glass",
+        "cost_when_inactive": "No arbitrary local code execution is allowed.",
+    },
 }
 
 ROLE_FEATURES = {
@@ -164,6 +175,139 @@ DEFAULT_CONFIG = {
     "decision_policies": [],
     "monitor_profiles": [],
 }
+
+CAPABILITY_COMMANDS = [
+    {
+        "id": "diagnostic.readiness",
+        "category": "diagnostic",
+        "title": "Check Screen Guardian readiness",
+        "intent_tags": ["health", "dependencies", "adapters"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_check",
+        "required_features": [],
+        "default_args": {"detail": "short"},
+        "side_effects": [],
+        "context_strategy": "return_path",
+        "safety_note": "No capture, upload, model call, subagent, command, or configuration change.",
+    },
+    {
+        "id": "perceive.screen.quick",
+        "category": "perceive",
+        "title": "Quick local screen look",
+        "intent_tags": ["screen", "quick_look", "low_context"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_perceive",
+        "required_features": ["screen_capture"],
+        "default_args": {"task": "quick_look", "context_budget": "normal"},
+        "side_effects": ["local_file_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Local capture only; no model call or upload.",
+    },
+    {
+        "id": "perceive.region.text",
+        "category": "perceive",
+        "title": "Capture and sharpen a text-heavy region",
+        "intent_tags": ["region", "text", "preprocess"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_perceive",
+        "required_features": ["screen_capture", "image_analysis", "image_preprocess"],
+        "default_args": {"task": "read_text", "target": {"type": "region"}, "context_budget": "normal"},
+        "side_effects": ["local_file_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Uses local image analysis and preprocessing only.",
+    },
+    {
+        "id": "perceive.window.after_render",
+        "category": "perceive",
+        "title": "Capture a program window after rendering",
+        "intent_tags": ["window", "debug_ui", "after_render"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_perceive",
+        "required_features": ["window_capture"],
+        "default_args": {"task": "capture_window", "wait_for_nonblank": True, "render_retry_count": 2, "context_budget": "normal"},
+        "side_effects": ["local_file_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Retries clearly blank frames within runtime limits.",
+    },
+    {
+        "id": "perceive.change.popup",
+        "category": "perceive",
+        "title": "Watch briefly for a popup or visible change",
+        "intent_tags": ["watch", "change", "popup"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_perceive",
+        "required_features": ["bounded_watch"],
+        "default_args": {"task": "watch_change", "duration_seconds": 3, "interval_seconds": 0.5, "max_captures": 5},
+        "side_effects": ["local_file_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Short foreground bounded watch only; no background scheduler.",
+    },
+    {
+        "id": "artifact.hold_file",
+        "category": "artifact",
+        "title": "Save and mark a capture without immediate context ingestion",
+        "intent_tags": ["hold_file", "context_budget", "local_file"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_perceive",
+        "required_features": ["screen_capture"],
+        "default_args": {"task": "hold_file", "context_budget": "hold_file"},
+        "side_effects": ["local_file_write"],
+        "context_strategy": "hold_file",
+        "safety_note": "Stores a local marked file for later inspection.",
+    },
+    {
+        "id": "workflow.model_request.prepare",
+        "category": "workflow",
+        "title": "Prepare a local model-request envelope",
+        "intent_tags": ["model", "envelope", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "guardian_prepare_workflow",
+        "required_features": ["model_request_envelopes"],
+        "default_args": {"workflow_type": "model_request"},
+        "side_effects": ["local_envelope_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Writes a local request envelope only; no API, model, or subagent execution.",
+    },
+    {
+        "id": "workflow.decision.prepare",
+        "category": "workflow",
+        "title": "Prepare a local decision-request envelope",
+        "intent_tags": ["decision", "envelope", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "guardian_prepare_workflow",
+        "required_features": ["decision_policies"],
+        "default_args": {"workflow_type": "decision_request"},
+        "side_effects": ["local_envelope_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Writes decision inputs only; arbitrary complexity belongs to an explicit caller.",
+    },
+    {
+        "id": "emergency.exec.prepare",
+        "category": "emergency",
+        "title": "Prepare a break-glass local execution envelope",
+        "intent_tags": ["break_glass", "code", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "guardian_prepare_exec",
+        "required_features": [],
+        "default_args": {"language": "python", "timeout_seconds": 30},
+        "side_effects": ["local_envelope_write", "audit_log_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Saves code for explicit user-directed execution later; does not execute it.",
+    },
+    {
+        "id": "emergency.exec.run",
+        "category": "emergency",
+        "title": "Run break-glass local code",
+        "intent_tags": ["break_glass", "code", "raw_exec"],
+        "execution_mode": "break_glass",
+        "maps_to": "guardian_run_exec",
+        "required_features": ["raw_local_exec"],
+        "default_args": {"language": "python", "timeout_seconds": 30},
+        "side_effects": ["local_code_execution", "audit_log_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Requires persistent raw_local_exec=true and user_confirmed=true for every call.",
+    },
+]
 
 DISPLAY_PROFILES = {
     "en": {
@@ -709,22 +853,20 @@ def resolve_capture_adapter(args):
 
 
 def grab_screen_image(args):
-    adapter_id, libs = resolve_capture_adapter(args)
-    with libs["mss"].MSS() as sct:
-        box, display = capture_box(sct, args)
-        shot = sct.grab(box)
-        image = libs["Image"].frombytes("RGB", shot.size, shot.rgb)
-    source = {
-        "type": "screen",
-        "adapter": adapter_id,
-        "display": display,
-        "capture_box": {
-            "left": int(box["left"]),
-            "top": int(box["top"]),
-            "width": int(box["width"]),
-            "height": int(box["height"]),
-        },
-    }
+    settle_delay = capture_settle_delay_seconds(args)
+    if settle_delay:
+        time.sleep(settle_delay)
+    wait_for_nonblank, retry_count, retry_interval = render_retry_options(args, default_wait_for_nonblank=False)
+    attempts = []
+    image = source = libs = None
+    for attempt in range(retry_count + 1):
+        image, source, libs = grab_screen_once(args)
+        metrics = image_blank_metrics(image, libs)
+        attempts.append({"attempt": attempt + 1, **metrics})
+        if not wait_for_nonblank or not metrics["likely_blank"] or attempt >= retry_count:
+            break
+        time.sleep(retry_interval)
+    source = with_render_timing(source, args, attempts, settle_delay)
     return image, source, libs
 
 
@@ -1109,11 +1251,91 @@ def image_looks_black(image, libs):
     return mean < 1.0 and contrast < 0.5
 
 
-def grab_window_image(args):
-    status, libs = window_adapter_status()
-    if not status["available"]:
-        raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
-    window = find_window(args)
+def image_blank_metrics(image, libs):
+    ImageFilter = libs["ImageFilter"]
+    ImageOps = libs["ImageOps"]
+    ImageStat = libs["ImageStat"]
+    sample = image.convert("RGB")
+    if max(sample.size) > 384:
+        ratio = 384 / max(sample.size)
+        sample = sample.resize((max(1, round(sample.size[0] * ratio)), max(1, round(sample.size[1] * ratio))))
+    gray = ImageOps.grayscale(sample)
+    gray_stat = ImageStat.Stat(gray)
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    edge_mean = float(ImageStat.Stat(edges).mean[0])
+    brightness = float(gray_stat.mean[0])
+    contrast = float(gray_stat.stddev[0])
+    entropy = image_entropy(gray)
+    likely_blank = (contrast <= 3.0 and edge_mean <= 1.2 and entropy <= 0.45) or (brightness >= 252 and contrast <= 6.0 and edge_mean <= 2.0)
+    return {
+        "likely_blank": bool(likely_blank),
+        "brightness": round(brightness, 2),
+        "contrast": round(contrast, 2),
+        "edge_mean": round(edge_mean, 2),
+        "entropy": round(entropy, 2),
+    }
+
+
+def capture_settle_delay_seconds(args):
+    limits = runtime_limits(args)
+    delay_ms = args.get("settle_delay_ms")
+    if args.get("delay_seconds") is not None:
+        delay_ms = float(args.get("delay_seconds")) * 1000.0
+    delay_ms = float(delay_ms or 0)
+    if delay_ms < 0:
+        raise ValueError("delay_seconds and settle_delay_ms must be zero or greater")
+    check_min_max(delay_ms, 0, limits.get("capture_settle_delay_ms_max"), "settle_delay_ms")
+    return delay_ms / 1000.0
+
+
+def render_retry_options(args, default_wait_for_nonblank=False):
+    limits = runtime_limits(args)
+    wait_value = args.get("wait_for_nonblank")
+    wait_for_nonblank = bool(default_wait_for_nonblank if wait_value is None else wait_value)
+    retry_default = 2 if wait_for_nonblank else 0
+    retry_count = int(args.get("render_retry_count", retry_default))
+    retry_interval_ms = float(args.get("render_retry_interval_ms", 250))
+    if retry_count < 0:
+        raise ValueError("render_retry_count must be zero or greater")
+    if retry_interval_ms < 0:
+        raise ValueError("render_retry_interval_ms must be zero or greater")
+    check_min_max(retry_count, 0, limits.get("capture_render_retry_count_max"), "render_retry_count")
+    check_min_max(retry_interval_ms, 0, limits.get("capture_render_retry_interval_ms_max"), "render_retry_interval_ms")
+    return wait_for_nonblank, retry_count, retry_interval_ms / 1000.0
+
+
+def with_render_timing(source, args, attempts, settle_delay):
+    source["render_timing"] = {
+        "delay_seconds": round(settle_delay, 3),
+        "wait_for_nonblank": bool(args.get("wait_for_nonblank", source.get("type") == "window")),
+        "attempts": attempts,
+        "final_attempt": attempts[-1] if attempts else {},
+        "note": "Clearly blank frames can be retried before saving, useful when slower systems capture before a program finishes rendering.",
+    }
+    return source
+
+
+def grab_screen_once(args):
+    adapter_id, libs = resolve_capture_adapter(args)
+    with libs["mss"].MSS() as sct:
+        box, display = capture_box(sct, args)
+        shot = sct.grab(box)
+        image = libs["Image"].frombytes("RGB", shot.size, shot.rgb)
+    source = {
+        "type": "screen",
+        "adapter": adapter_id,
+        "display": display,
+        "capture_box": {
+            "left": int(box["left"]),
+            "top": int(box["top"]),
+            "width": int(box["width"]),
+            "height": int(box["height"]),
+        },
+    }
+    return image, source, libs
+
+
+def grab_window_once(args, status, libs, window):
     hwnd = int(window["hwnd"])
     capture_method = "pillow-imagegrab-window"
     try:
@@ -1133,8 +1355,8 @@ def grab_window_image(args):
         capture_method = "pillow-imagegrab-bbox-fallback"
         image = libs["ImageGrab"].grab(
             bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
-            all_screens=True,
-        )
+                all_screens=True,
+            )
     source = {
         "type": "window",
         "adapter": status["id"],
@@ -1144,6 +1366,28 @@ def grab_window_image(args):
         "compatibility_note": "HWND capture is best-effort. Minimized, protected, or GPU-rendered windows may return blank or stale frames.",
     }
     return image.convert("RGB"), source, libs
+
+
+def grab_window_image(args):
+    status, libs = window_adapter_status()
+    if not status["available"]:
+        raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
+    window = find_window(args)
+    settle_delay = capture_settle_delay_seconds(args)
+    if settle_delay:
+        time.sleep(settle_delay)
+    wait_for_nonblank, retry_count, retry_interval = render_retry_options(args, default_wait_for_nonblank=True)
+    attempts = []
+    image = source = None
+    for attempt in range(retry_count + 1):
+        image, source, libs = grab_window_once(args, status, libs, window)
+        metrics = image_blank_metrics(image, libs)
+        attempts.append({"attempt": attempt + 1, **metrics})
+        if not wait_for_nonblank or not metrics["likely_blank"] or attempt >= retry_count:
+            break
+        time.sleep(retry_interval)
+    source = with_render_timing(source, args, attempts, settle_delay)
+    return image, source, libs
 
 
 def image_difference_score(a, b, libs):
@@ -1333,12 +1577,17 @@ def action_get_runtime_settings(args):
                 "watch_burst_frames_max": "frames",
                 "capture_scale_min": "multiplier",
                 "capture_scale_max": "multiplier",
+                "capture_settle_delay_ms_max": "milliseconds",
+                "capture_render_retry_count_max": "attempts",
+                "capture_render_retry_interval_ms_max": "milliseconds",
                 "jpeg_quality_min": "encoder quality",
                 "jpeg_quality_max": "encoder quality",
                 "audio_duration_seconds_max": "seconds",
                 "audio_sample_rate_max": "Hz",
                 "audio_channels_max": "channels",
                 "audio_extract_duration_seconds_max": "seconds",
+                "raw_exec_timeout_seconds_max": "seconds",
+                "raw_exec_output_chars_max": "characters",
             },
             "feature_flags": config.get("feature_flags", {}),
             "feature_catalog": FEATURE_CATALOG,
@@ -1935,6 +2184,523 @@ def action_apply_display_profile(args):
     )
 
 
+def key_capability_summary(flags):
+    keys = [
+        "screen_capture",
+        "window_capture",
+        "bounded_watch",
+        "workflow_metadata",
+        "image_analysis",
+        "image_preprocess",
+        "model_request_envelopes",
+        "decision_policies",
+        "monitor_profiles",
+        "audio_capture",
+        "video_audio_extract",
+        "external_api_handoff",
+        "codex_subagent_handoff",
+    ]
+    return {key: bool(flags.get(key, False)) for key in keys}
+
+
+def action_guardian_check(args):
+    detail = str(args.get("detail") or "short").strip().lower()
+    if detail not in ("short", "full"):
+        return error("detail must be short or full")
+    config = load_config()
+    flags = feature_flags({})
+    primary, mirrors = output_routes({})
+    mss_status, libs = mss_adapter_status()
+    window_status, _window_libs = window_adapter_status()
+    audio_status, _audio_libs = audio_adapter_status({"probe": False})
+    ffmpeg = ffmpeg_status()
+    adapters = [mss_status, window_status, audio_status, ffmpeg]
+    best_adapter = next((item for item in adapters if item.get("role") == "screen_capture" and item.get("available")), None)
+    if not best_adapter:
+        best_adapter = next((item for item in adapters if item.get("available")), None)
+    capture_ready = bool(flags.get("screen_capture") and mss_status.get("available"))
+    recommended_next = "guardian_perceive" if capture_ready else "check_dependencies"
+    payload = {
+        "ok": True,
+        "plugin": PLUGIN_NAME,
+        "capture_ready": capture_ready,
+        "best_adapter": best_adapter,
+        "python": sys.executable,
+        "active_cache_dir": str(primary),
+        "extra_output_dirs": serialize_paths(mirrors),
+        "key_capabilities": key_capability_summary(flags),
+        "recommended_next": recommended_next,
+        "ai_first_tools": ["guardian_check", "guardian_perceive", "guardian_prepare_workflow"],
+        "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
+    }
+    if detail == "full":
+        payload.update(
+            {
+                "config_path": str(CONFIG_PATH),
+                "default_cache_dir": str(DEFAULT_CACHE_DIR),
+                "runtime_limits": config.get("runtime_limits", {}),
+                "feature_flags": config.get("feature_flags", {}),
+                "feature_catalog": FEATURE_CATALOG,
+                "adapters": adapters,
+                "versions": {
+                    "mss": getattr(libs["mss"], "__version__", "unknown") if libs else "",
+                    "pillow": getattr(libs["Image"], "__version__", "unknown") if libs else "",
+                },
+            }
+        )
+    return write_json(payload)
+
+
+def guardian_base_context(args, default_source_label):
+    forwarded = {}
+    for key in (
+        "output_dir",
+        "project_id",
+        "workflow_id",
+        "tags",
+        "note",
+        "delay_seconds",
+        "settle_delay_ms",
+        "wait_for_nonblank",
+        "render_retry_count",
+        "render_retry_interval_ms",
+        "runtime_limits",
+        "feature_flags",
+    ):
+        if key in args:
+            forwarded[key] = args[key]
+    forwarded["source_label"] = str(args.get("source_label") or default_source_label)
+    return forwarded
+
+
+def apply_guardian_budget(forwarded, context_budget):
+    budget = str(context_budget or "normal").strip().lower()
+    if budget not in ("low", "normal", "high", "hold_file"):
+        raise ValueError("context_budget must be low, normal, high, or hold_file")
+    if budget == "low":
+        forwarded.setdefault("max_width", 960)
+    elif budget in ("normal", "hold_file"):
+        forwarded.setdefault("max_width", 1440)
+    if budget == "hold_file":
+        forwarded["context_policy"] = "hold_file"
+        forwarded["marked_file_only"] = True
+    return budget
+
+
+def apply_guardian_target(forwarded, target):
+    target = target if isinstance(target, dict) else {}
+    target_type = str(target.get("type") or "screen").strip().lower()
+    if target_type not in ("screen", "region", "window"):
+        raise ValueError("target.type must be screen, region, or window")
+    display_index = target.get("display_index", target.get("display"))
+    if display_index is not None:
+        forwarded["display_index"] = int(display_index)
+    box = target.get("box") if isinstance(target.get("box"), dict) else None
+    if box:
+        for key in ("left", "top", "width", "height"):
+            if key not in box:
+                raise ValueError(f"target.box.{key} is required for a region target")
+            forwarded[key] = int(box[key])
+        forwarded["relative_to_display"] = bool(box.get("relative_to_display", True))
+        target_type = "region" if target_type == "screen" else target_type
+    for key in ("hwnd", "title_contains", "exact_title", "process_name", "allow_first_match"):
+        if key in target:
+            forwarded[key] = target[key]
+    if any(forwarded.get(key) for key in ("hwnd", "title_contains", "exact_title", "process_name")) and target_type == "screen":
+        target_type = "window"
+    return target_type
+
+
+def action_guardian_perceive(args):
+    try:
+        task = str(args.get("task") or "quick_look").strip().lower()
+        allowed_tasks = ("quick_look", "read_text", "debug_ui", "capture_window", "watch_change", "hold_file")
+        if task not in allowed_tasks:
+            return error("task must be quick_look, read_text, debug_ui, capture_window, watch_change, or hold_file")
+        forwarded = guardian_base_context(args, f"guardian-{task}")
+        budget = apply_guardian_budget(forwarded, args.get("context_budget") or "normal")
+        if task == "hold_file":
+            forwarded["context_policy"] = "hold_file"
+            forwarded["marked_file_only"] = True
+        if task == "read_text":
+            forwarded["preprocess"] = "text"
+            forwarded["analyze"] = True
+        elif task == "debug_ui":
+            forwarded["preprocess"] = "ui"
+            forwarded["analyze"] = True
+        for key in ("duration_seconds", "interval_seconds", "change_threshold", "max_captures"):
+            if key in args:
+                forwarded[key] = args[key]
+        target_type = apply_guardian_target(forwarded, args.get("target"))
+        if task == "capture_window":
+            target_type = "window"
+        if task == "watch_change":
+            return action_watch_screen(forwarded)
+        if target_type == "window":
+            return action_capture_window(forwarded)
+        if target_type == "region":
+            if not all(key in forwarded for key in ("left", "top", "width", "height")):
+                return error("target.box is required for a region target")
+            return action_capture_region(forwarded)
+        return action_capture_screen(forwarded)
+    except Exception as exc:
+        return error(str(exc))
+
+
+def action_guardian_prepare_workflow(args):
+    workflow_type = str(args.get("workflow_type") or "").strip().lower()
+    if workflow_type not in ("model_request", "decision_request", "monitor_tick"):
+        return error("workflow_type must be model_request, decision_request, or monitor_tick")
+    settings = args.get("settings") if isinstance(args.get("settings"), dict) else {}
+    objective = str(args.get("objective") or "").strip()
+    source_path = str(args.get("source_path") or "").strip()
+    common = {}
+    for key in ("output_dir", "project_id", "workflow_id"):
+        if key in args:
+            common[key] = args[key]
+    if workflow_type == "model_request":
+        forwarded = {
+            **common,
+            "path": source_path,
+            "prompt": objective or "Describe this artifact compactly for an AI agent.",
+            "settings": settings,
+        }
+        if args.get("route_id"):
+            forwarded["route_id"] = str(args.get("route_id"))
+        return action_prepare_model_request(forwarded)
+    if workflow_type == "decision_request":
+        observation = {"source_path": source_path} if source_path else {}
+        forwarded = {
+            **common,
+            "objective": objective,
+            "observation": observation,
+            "settings": settings,
+        }
+        if args.get("policy_id"):
+            forwarded["policy_id"] = str(args.get("policy_id"))
+        return action_prepare_decision_request(forwarded)
+    observations = {"objective": objective}
+    if source_path:
+        observations["source_path"] = source_path
+    if settings:
+        observations["settings"] = settings
+    forwarded = {**common, "observations": observations}
+    if args.get("profile_id"):
+        forwarded["profile_id"] = str(args.get("profile_id"))
+    return action_prepare_monitor_tick(forwarded)
+
+
+def command_by_id(command_id):
+    for command in CAPABILITY_COMMANDS:
+        if command.get("id") == command_id:
+            return copy.deepcopy(command)
+    return None
+
+
+def command_is_active(command, args=None):
+    flags = feature_flags(args or {})
+    required = command.get("required_features") or []
+    return all(bool(flags.get(feature, False)) for feature in required)
+
+
+def decorated_command(command, args=None):
+    decorated = copy.deepcopy(command)
+    required = decorated.get("required_features") or []
+    flags = feature_flags(args or {})
+    decorated["active"] = all(bool(flags.get(feature, False)) for feature in required)
+    decorated["inactive_reasons"] = [
+        f"Feature '{feature}' is inactive." for feature in required if not bool(flags.get(feature, False))
+    ]
+    return decorated
+
+
+def action_guardian_list_commands(args):
+    category = str(args.get("category") or "").strip().lower()
+    include_disabled = bool(args.get("include_disabled", True))
+    commands = []
+    for command in CAPABILITY_COMMANDS:
+        if category and command.get("category") != category:
+            continue
+        decorated = decorated_command(command, args)
+        if not include_disabled and not decorated["active"]:
+            continue
+        commands.append(decorated)
+    return write_json(
+        {
+            "ok": True,
+            "commands": commands,
+            "contract": {
+                "normal_path": "Use registered commands to reduce main-AI tool selection load.",
+                "no_arbitrary_code": "guardian_run_command only runs registry entries; arbitrary code belongs to guardian_prepare_exec/guardian_run_exec.",
+                "break_glass": "guardian_run_exec requires persistent raw_local_exec=true and user_confirmed=true for every call.",
+            },
+        }
+    )
+
+
+def action_guardian_run_command(args):
+    command_id = str(args.get("command_id") or "").strip()
+    if not command_id:
+        return error("command_id is required")
+    command = command_by_id(command_id)
+    if not command:
+        return error("Unknown command_id", command_id=command_id, available=[item["id"] for item in CAPABILITY_COMMANDS])
+    if not command_is_active(command, args):
+        return error(
+            "Command required feature flags are inactive.",
+            command=decorated_command(command, args),
+        )
+    provided_args = args.get("args") if isinstance(args.get("args"), dict) else {}
+    merged_args = deep_merge(command.get("default_args") or {}, provided_args)
+    maps_to = command.get("maps_to")
+    if maps_to in ("guardian_run_command", ""):
+        return error("Invalid command mapping", command_id=command_id, maps_to=maps_to)
+    handler = ACTIONS.get(maps_to)
+    if not handler:
+        return error("Registered command maps to an unknown action", command_id=command_id, maps_to=maps_to)
+    return handler(merged_args)
+
+
+def exec_audit_path(args):
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    return output_dir / f"{PLUGIN_NAME}-audit.jsonl"
+
+
+def code_digest(code):
+    return hashlib.sha256(code.encode("utf-8", errors="replace")).hexdigest()
+
+
+def append_exec_audit(event, args):
+    event = copy.deepcopy(event)
+    event.setdefault("plugin", PLUGIN_NAME)
+    event.setdefault("created_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    path = exec_audit_path(args)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        json.dump(event, file, ensure_ascii=False, separators=(",", ":"))
+        file.write("\n")
+    return str(path)
+
+
+def normalize_exec_language(language):
+    language = str(language or "python").strip().lower()
+    aliases = {"py": "python", "ps": "powershell", "pwsh": "powershell", "js": "node", "javascript": "node"}
+    language = aliases.get(language, language)
+    if language not in ("python", "powershell", "node"):
+        raise ValueError("language must be python, powershell, or node")
+    return language
+
+
+def exec_timeout(args, request=None):
+    request = request or {}
+    limits = runtime_limits(args)
+    timeout = float(args.get("timeout_seconds") or request.get("timeout_seconds") or 30)
+    if timeout <= 0:
+        raise ValueError("timeout_seconds must be greater than 0")
+    check_min_max(timeout, 0.1, limits.get("raw_exec_timeout_seconds_max"), "timeout_seconds")
+    return timeout
+
+
+def exec_output_limit(args):
+    limits = runtime_limits(args)
+    limit = int(limits.get("raw_exec_output_chars_max") or 12000)
+    return max(1000, limit)
+
+
+def truncate_exec_text(text, limit):
+    text = str(text or "")
+    if len(text) <= limit:
+        return {"text": text, "truncated": False, "original_chars": len(text)}
+    half = max(1, (limit - 80) // 2)
+    truncated = text[:half] + "\n...[screen-guardian truncated output]...\n" + text[-half:]
+    return {"text": truncated, "truncated": True, "original_chars": len(text)}
+
+
+def exec_cwd(value):
+    path = Path(str(value or PLUGIN_ROOT)).expanduser()
+    if not path.exists() or not path.is_dir():
+        raise ValueError("cwd must be an existing directory")
+    return path
+
+
+def action_guardian_prepare_exec(args):
+    code = str(args.get("code") or "")
+    if not code:
+        return error("code is required")
+    try:
+        language = normalize_exec_language(args.get("language"))
+        timeout = exec_timeout(args)
+        cwd = str(exec_cwd(args.get("cwd") or PLUGIN_ROOT))
+    except Exception as exc:
+        return error(str(exc))
+    request = {
+        "plugin": PLUGIN_NAME,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": "break_glass_exec_request",
+        "language": language,
+        "code": code,
+        "code_sha256": code_digest(code),
+        "code_length": len(code),
+        "cwd": cwd,
+        "timeout_seconds": timeout,
+        "reason": str(args.get("reason") or "").strip(),
+        "expected_output": str(args.get("expected_output") or "").strip(),
+        "risk_note": str(args.get("risk_note") or "").strip(),
+        "context": capture_context(args),
+        "execution": {
+            "status": "prepared",
+            "note": "This envelope does not execute code. guardian_run_exec requires raw_local_exec=true and user_confirmed=true.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    filename = output_filename({"source_label": "break-glass-exec", **args}, "json")
+    request_path = output_dir / filename
+    write_json_file(request_path, request)
+    audit_path = append_exec_audit(
+        {
+            "type": "break_glass_exec_prepared",
+            "language": language,
+            "code_sha256": request["code_sha256"],
+            "code_length": request["code_length"],
+            "cwd": cwd,
+            "request_path": str(request_path),
+            "reason": request["reason"],
+        },
+        args,
+    )
+    return write_json({"ok": True, "request_path": str(request_path), "audit_path": audit_path, "request": request})
+
+
+def load_exec_request(args):
+    envelope_path = str(args.get("envelope_path") or "").strip()
+    if not envelope_path:
+        return {}
+    path = Path(envelope_path).expanduser()
+    if not path.exists():
+        raise ValueError("envelope_path does not exist")
+    data = read_json_file(path, {})
+    if data.get("type") != "break_glass_exec_request":
+        raise ValueError("envelope_path is not a break_glass_exec_request")
+    data["_envelope_path"] = str(path)
+    return data
+
+
+def exec_command_for(language, code):
+    if language == "python":
+        return [sys.executable, "-c", code]
+    if language == "powershell":
+        executable = shutil.which("powershell") or shutil.which("pwsh")
+        if not executable:
+            raise RuntimeError("PowerShell executable was not found on PATH")
+        return [executable, "-NoProfile", "-NonInteractive", "-Command", code]
+    if language == "node":
+        executable = shutil.which("node")
+        if not executable:
+            raise RuntimeError("node executable was not found on PATH")
+        return [executable, "-e", code]
+    raise ValueError("language must be python, powershell, or node")
+
+
+def action_guardian_run_exec(args):
+    try:
+        require_feature("raw_local_exec", args)
+    except Exception as exc:
+        return error(str(exc), feature="raw_local_exec")
+    if not bool(args.get("user_confirmed", False)):
+        return error("user_confirmed=true is required for every break-glass local execution call")
+    try:
+        request = load_exec_request(args)
+        code = str(args.get("code") if args.get("code") is not None else request.get("code") or "")
+        if not code:
+            return error("code is required when envelope_path is not provided")
+        language = normalize_exec_language(args.get("language") or request.get("language"))
+        timeout = exec_timeout(args, request)
+        cwd = exec_cwd(args.get("cwd") or request.get("cwd") or PLUGIN_ROOT)
+        output_limit = exec_output_limit(args)
+        command = exec_command_for(language, code)
+    except Exception as exc:
+        return error(str(exc))
+
+    event = {
+        "type": "break_glass_exec_started",
+        "language": language,
+        "code_sha256": code_digest(code),
+        "code_length": len(code),
+        "cwd": str(cwd),
+        "timeout_seconds": timeout,
+        "reason": str(args.get("reason") or request.get("reason") or "").strip(),
+        "envelope_path": request.get("_envelope_path", ""),
+    }
+    audit_path = append_exec_audit(event, args)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+        stdout = truncate_exec_text(completed.stdout, output_limit)
+        stderr = truncate_exec_text(completed.stderr, output_limit)
+        status = {
+            "type": "break_glass_exec_completed",
+            "language": language,
+            "code_sha256": event["code_sha256"],
+            "exit_code": completed.returncode,
+            "stdout_chars": stdout["original_chars"],
+            "stderr_chars": stderr["original_chars"],
+        }
+        append_exec_audit(status, args)
+        ok = completed.returncode == 0
+        payload = {
+            "ok": ok,
+            "executed": True,
+            "exit_code": completed.returncode,
+            "language": language,
+            "cwd": str(cwd),
+            "timeout_seconds": timeout,
+            "stdout": stdout["text"],
+            "stderr": stderr["text"],
+            "stdout_truncated": stdout["truncated"],
+            "stderr_truncated": stderr["truncated"],
+            "audit_path": audit_path,
+            "privacy": "Break-glass local execution only. No upload, background service, or automatic retry was performed.",
+        }
+        if not ok:
+            payload["error"] = "Raw local execution exited with a nonzero status."
+        return write_json(payload)
+    except subprocess.TimeoutExpired as exc:
+        stdout = truncate_exec_text(exc.stdout or "", output_limit)
+        stderr = truncate_exec_text(exc.stderr or "", output_limit)
+        append_exec_audit(
+            {
+                "type": "break_glass_exec_timeout",
+                "language": language,
+                "code_sha256": event["code_sha256"],
+                "timeout_seconds": timeout,
+            },
+            args,
+        )
+        return write_json(
+            {
+                "ok": False,
+                "executed": True,
+                "error": "Raw local execution timed out.",
+                "language": language,
+                "cwd": str(cwd),
+                "timeout_seconds": timeout,
+                "stdout": stdout["text"],
+                "stderr": stderr["text"],
+                "stdout_truncated": stdout["truncated"],
+                "stderr_truncated": stderr["truncated"],
+                "audit_path": audit_path,
+            }
+        )
+
+
 def action_check(args):
     status, libs = mss_adapter_status()
     python_path = sys.executable
@@ -2437,6 +3203,13 @@ def action_clear_cache(args):
 
 
 ACTIONS = {
+    "guardian_check": action_guardian_check,
+    "guardian_perceive": action_guardian_perceive,
+    "guardian_prepare_workflow": action_guardian_prepare_workflow,
+    "guardian_list_commands": action_guardian_list_commands,
+    "guardian_run_command": action_guardian_run_command,
+    "guardian_prepare_exec": action_guardian_prepare_exec,
+    "guardian_run_exec": action_guardian_run_exec,
     "check": action_check,
     "get_runtime_settings": action_get_runtime_settings,
     "set_cache_path": action_set_cache_path,

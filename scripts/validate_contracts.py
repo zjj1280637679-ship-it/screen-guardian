@@ -30,6 +30,13 @@ MAX_STRESS_LOOPS = 200
 
 
 REQUIRED_TOOLS = [
+    "guardian_check",
+    "guardian_perceive",
+    "guardian_prepare_workflow",
+    "guardian_list_commands",
+    "guardian_run_command",
+    "guardian_prepare_exec",
+    "guardian_run_exec",
     "check_dependencies",
     "get_runtime_settings",
     "set_cache_path",
@@ -86,10 +93,15 @@ REQUIRED_FEATURE_FLAGS = [
     "monitor_profiles",
     "external_api_handoff",
     "codex_subagent_handoff",
+    "raw_local_exec",
 ]
 
 
 DESIGN_COVERAGE = {
+    "ai-first interface": ["ai-first", "guardian_check", "guardian_perceive"],
+    "anti-abuse stance": ["anti-abuse", "not designed or supported for bypassing"],
+    "advisory context signals": ["advisory", "regex", "hard moral blockers"],
+    "capability runtime": ["capability runtime", "registered commands", "break-glass"],
     "positive freedom": ["positive freedom", "expand user agency"],
     "negative freedom": ["negative freedom", "forced upgrades", "forced background services"],
     "compatibility fallback": ["fallback", "compatibility", "older windows", "constrained systems"],
@@ -103,6 +115,11 @@ DESIGN_COVERAGE = {
 
 
 SCENARIO_COVERAGE = {
+    "ai quick look facade": ["quick look", "guardian_perceive", "quick_look"],
+    "hold file context": ["hold file", "hold_file", "file_marked_only"],
+    "render timing capture": ["delay_seconds", "wait_for_nonblank", "render_retry_count"],
+    "registered command runtime": ["guardian_list_commands", "guardian_run_command", "command_id"],
+    "break-glass execution": ["guardian_prepare_exec", "guardian_run_exec", "raw_local_exec"],
     "older system capture": ["older windows", "native screen capture", "computer use"],
     "window/program capture": ["program window", "window", "process name"],
     "region/display capture": ["region", "display"],
@@ -148,6 +165,9 @@ def all_project_text() -> str:
     parts = [
         ROOT / "README.md",
         ROOT / "SECURITY.md",
+        ROOT / "docs" / "AI_FIRST_INTERFACE.md",
+        ROOT / "docs" / "ANTI_ABUSE.md",
+        ROOT / "docs" / "CAPABILITY_RUNTIME.md",
         ROOT / "docs" / "COMPATIBILITY.md",
         ROOT / "docs" / "MODELS.md",
         ROOT / "docs" / "WORKFLOWS.md",
@@ -254,6 +274,22 @@ def check_static_contracts() -> CheckSet:
     for label, terms in boundary_terms.items():
         checks.check(any(term in text for term in terms), f"safety boundary documented: {label}")
 
+    guardian_terms = {
+        "guardian_check reports status without capture": ["action_guardian_check", "no screenshot", "recommended_next"],
+        "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
+        "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
+        "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],
+        "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick"],
+        "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
+        "window capture retries blank frames by default": ["default_wait_for_nonblank=True", "image_blank_metrics", "render_retry_options"],
+        "registered commands map through a registry": ["CAPABILITY_COMMANDS", "action_guardian_list_commands", "action_guardian_run_command"],
+        "run_command rejects arbitrary code strings": ["guardian_run_command only runs registry entries", "command_id is required"],
+        "break-glass exec is gated": ['require_feature("raw_local_exec"', "user_confirmed=true is required", "append_exec_audit"],
+    }
+    combined_source = (server + "\n" + py_source).lower()
+    for label, terms in guardian_terms.items():
+        checks.check(all(term.lower() in combined_source for term in terms), f"ai-first contract: {label}")
+
     if TEXT_ENCODING_PATH.exists():
         completed = subprocess.run(
             [sys.executable, str(TEXT_ENCODING_PATH)],
@@ -303,8 +339,11 @@ def run_mcp_stress(loops: int) -> CheckSet:
     messages: list[dict] = [
         mcp_request(1, "initialize", {"protocolVersion": "2024-11-05"}),
         mcp_request(2, "tools/list"),
+        tool_request(3, "guardian_check", {"detail": "short"}),
+        tool_request(4, "guardian_list_commands", {"category": "diagnostic"}),
+        tool_request(5, "guardian_run_command", {"command_id": "diagnostic.readiness"}),
     ]
-    request_id = 3
+    request_id = 6
     stress_ids = [f"sg-stress-{i}" for i in range(loops)]
 
     with tempfile.TemporaryDirectory(prefix="screen-guardian-stress-") as tmp:
@@ -400,12 +439,35 @@ def run_mcp_stress(loops: int) -> CheckSet:
                             ],
                         },
                     ),
-                    tool_request(request_id + 4, "list_monitor_profiles", {"project_id": "screen-guardian-stress"}),
-                    tool_request(request_id + 5, "set_monitor_profile", {"id": profile_id, "remove": True}),
-                    tool_request(request_id + 6, "set_decision_policy", {"id": policy_id, "remove": True}),
+                    tool_request(
+                        request_id + 4,
+                        "guardian_prepare_workflow",
+                        {
+                            "workflow_type": "model_request",
+                            "source_path": str(Path(tmp) / f"{base_id}.png"),
+                            "objective": "Prepare a compact local narration request for contract validation.",
+                            "settings": {"quality": "stress"},
+                            "project_id": "screen-guardian-stress",
+                            "workflow_id": "ai-first",
+                            "output_dir": tmp,
+                        },
+                    ),
+                    tool_request(
+                        request_id + 5,
+                        "guardian_prepare_exec",
+                        {
+                            "language": "python",
+                            "code": "print('screen-guardian stress prepared exec')",
+                            "reason": "Contract validation prepare-only envelope.",
+                            "output_dir": tmp,
+                        },
+                    ),
+                    tool_request(request_id + 6, "list_monitor_profiles", {"project_id": "screen-guardian-stress"}),
+                    tool_request(request_id + 7, "set_monitor_profile", {"id": profile_id, "remove": True}),
+                    tool_request(request_id + 8, "set_decision_policy", {"id": policy_id, "remove": True}),
                 ]
             )
-            request_id += 7
+            request_id += 9
 
         messages.extend(
             [
@@ -446,7 +508,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
         checks.check(not failed_payloads, "stress tool calls all return ok", failed_payloads[:3][0] if failed_payloads else "")
 
         generated_files = list(Path(tmp).glob("*.json"))
-        expected_files = loops * 2
+        expected_files = loops * 4
         checks.check(len(generated_files) == expected_files, "stress generated expected envelope count", str(len(generated_files)))
 
         last_decisions = parse_tool_payload(responses[-2])

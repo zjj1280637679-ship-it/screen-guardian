@@ -6,7 +6,31 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
+For Codex, start with `guardian_check` and `guardian_perceive`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
+
 For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
+
+## AI-first tools
+
+Screen Guardian exposes a broad expert tool surface, but AI agents should usually start with AI-first intent tools and the capability command catalog:
+
+| Need | Tool | What it does |
+| --- | --- | --- |
+| Check readiness | `guardian_check` | Summarizes runtime, adapters, cache path, capability flags, and the next recommended tool without capturing anything. |
+| See or hold local visual context | `guardian_perceive` | Maps quick look, text screenshot, UI debugging, window capture, short change watch, and hold-file requests onto the existing safe capture tools. |
+| Prepare workflow envelopes | `guardian_prepare_workflow` | Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
+| Discover reusable commands | `guardian_list_commands` | Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
+| Run a registered command | `guardian_run_command` | Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
+| Prepare or run break-glass code | `guardian_prepare_exec`, `guardian_run_exec` | Saves or explicitly runs local Python/PowerShell/Node code. Raw execution is disabled by default and requires `raw_local_exec=true` plus `user_confirmed=true`. |
+
+The normal tools are safe wrappers. They do not bypass feature flags, runtime limits, cache routing, local-only defaults, or the no-hidden-upload/no-hidden-scheduler boundary. The break-glass execution tools are different: they can run local code, but only when visibly enabled and confirmed.
+
+For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, and `watch_change` for screen transitions or popups.
+
+See [docs/AI_FIRST_INTERFACE.md](docs/AI_FIRST_INTERFACE.md) for the intuitive task mapping.
+See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered command catalog and break-glass execution model.
+
+Screen Guardian is for authorized perception, accessibility, visibility auditing, debugging, and personal AI assistance. It is not designed or supported for bypassing authentication, paywalls, CAPTCHA, DRM, access controls, platform rules, privacy expectations, or other authorization boundaries. See [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md) for the project stance and disclaimer.
 
 ## Purpose
 
@@ -46,6 +70,7 @@ Screen Guardian is useful when a personal AI needs local sensory access, but the
 ### Observe projects when timing matters
 
 - Short workflow observation where a program or region should be captured immediately when it changes.
+- Delayed or render-aware capture when a program window exists before its contents finish drawing, causing blank frames on slower systems.
 - Project monitoring where a webpage, program window, region, audio stream, video file, or custom target should trigger capture when a configured feature appears.
 - Error-aware workflows where a program, parser, or model can mark an error feature and request a screenshot, audio clip, model request, or follow-up decision.
 
@@ -104,7 +129,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Tool layers
 
-New users can start with the core tools and ignore the experimental envelope layer until they need workflow automation.
+New users and AI agents should start with the AI-first tools above. The layers below are expert tools for direct control when the facade needs an exact backend, setting, or route.
 
 ### Core tools
 

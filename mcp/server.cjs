@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.11";
+const SERVER_VERSION = "0.1.14";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT_NAME = "screen_guardian_capture.py";
 const HELPER_EXE_NAME = "screen-guardian-helper.exe";
@@ -43,6 +43,33 @@ const imageOutputProperties = {
     enum: ["none", "auto", "text", "ui", "photo"],
     default: "none",
     description: "Optional local preprocessing preset. text sharpens/grayscales text-heavy captures; auto uses image analysis.",
+  },
+  settle_delay_ms: {
+    type: "integer",
+    minimum: 0,
+    default: 0,
+    description: "Optional delay before capture, useful when an older or slow-rendering program has just opened. Bounds are controlled by runtime limits.",
+  },
+  delay_seconds: {
+    type: "number",
+    minimum: 0,
+    description: "Human-friendly alias for a pre-capture delay. Converted to settle_delay_ms and bounded by runtime limits.",
+  },
+  wait_for_nonblank: {
+    type: "boolean",
+    description: "When true, retry clearly blank captures before saving. Window capture defaults to true when omitted.",
+  },
+  render_retry_count: {
+    type: "integer",
+    minimum: 0,
+    default: 2,
+    description: "Maximum retries for clearly blank captures. Bounds are controlled by runtime limits.",
+  },
+  render_retry_interval_ms: {
+    type: "integer",
+    minimum: 0,
+    default: 250,
+    description: "Delay between render retries. Bounds are controlled by runtime limits.",
   },
   project_id: {
     type: "string",
@@ -163,7 +190,291 @@ const audioCommonProperties = {
   },
 };
 
+const guardianTargetProperties = {
+  type: {
+    type: "string",
+    enum: ["screen", "region", "window"],
+    default: "screen",
+    description: "High-level perception target.",
+  },
+  display: {
+    type: "integer",
+    description: "Display index alias for display_index.",
+  },
+  display_index: {
+    type: "integer",
+    description: "Display index. Use 0 for the full virtual desktop; 1+ for individual displays.",
+  },
+  box: {
+    type: "object",
+    properties: {
+      left: { type: "integer" },
+      top: { type: "integer" },
+      width: { type: "integer", minimum: 1 },
+      height: { type: "integer", minimum: 1 },
+      relative_to_display: { type: "boolean", default: true },
+    },
+    additionalProperties: false,
+    description: "Region box for a region target.",
+  },
+  hwnd: windowTargetProperties.hwnd,
+  title_contains: windowTargetProperties.title_contains,
+  exact_title: windowTargetProperties.exact_title,
+  process_name: windowTargetProperties.process_name,
+  allow_first_match: windowTargetProperties.allow_first_match,
+};
+
 const tools = [
+  {
+    name: "guardian_check",
+    description: "AI-first health check that summarizes runtime, adapters, cache path, capability flags, and recommended next tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        detail: {
+          type: "string",
+          enum: ["short", "full"],
+          default: "short",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_perceive",
+    description: "AI-first perception facade for quick screen looks, text/UI captures, window capture, bounded watch, or hold-file context control.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task: {
+          type: "string",
+          enum: ["quick_look", "read_text", "debug_ui", "capture_window", "watch_change", "hold_file"],
+          default: "quick_look",
+        },
+        target: {
+          type: "object",
+          properties: guardianTargetProperties,
+          additionalProperties: false,
+          description: "Screen, region, or window target. Defaults to the primary display.",
+        },
+        context_budget: {
+          type: "string",
+          enum: ["low", "normal", "high", "hold_file"],
+          default: "normal",
+        },
+        output_dir: imageOutputProperties.output_dir,
+        source_label: imageOutputProperties.source_label,
+        delay_seconds: imageOutputProperties.delay_seconds,
+        settle_delay_ms: imageOutputProperties.settle_delay_ms,
+        wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
+        render_retry_count: imageOutputProperties.render_retry_count,
+        render_retry_interval_ms: imageOutputProperties.render_retry_interval_ms,
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        tags: imageOutputProperties.tags,
+        note: imageOutputProperties.note,
+        duration_seconds: {
+          type: "number",
+          minimum: 0.1,
+          description: "Optional bounded watch duration when task is watch_change.",
+        },
+        interval_seconds: {
+          type: "number",
+          description: "Optional bounded watch interval when task is watch_change.",
+        },
+        change_threshold: {
+          type: "number",
+          minimum: 0,
+          description: "Optional change threshold when task is watch_change.",
+        },
+        max_captures: {
+          type: "integer",
+          minimum: 1,
+          description: "Optional maximum captures when task is watch_change.",
+        },
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_prepare_workflow",
+    description: "AI-first workflow facade that prepares local model, decision, or monitor envelopes without executing external routes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workflow_type: {
+          type: "string",
+          enum: ["model_request", "decision_request", "monitor_tick"],
+        },
+        source_path: {
+          type: "string",
+          description: "Optional local file path used as workflow input.",
+        },
+        objective: {
+          type: "string",
+          description: "What this workflow is trying to accomplish.",
+        },
+        settings: {
+          type: "object",
+          additionalProperties: true,
+          description: "Optional model, decision, or monitor settings.",
+        },
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        output_dir: imageOutputProperties.output_dir,
+        route_id: {
+          type: "string",
+          description: "Optional registered extension route id for model requests.",
+        },
+        policy_id: {
+          type: "string",
+          description: "Optional registered decision policy id.",
+        },
+        profile_id: {
+          type: "string",
+          description: "Optional registered monitor profile id.",
+        },
+      },
+      required: ["workflow_type"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_list_commands",
+    description: "List reusable AI capability runtime commands so the main AI can choose an intent without guessing low-level tools.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: ["diagnostic", "perceive", "artifact", "workflow", "emergency"],
+          description: "Optional command category filter.",
+        },
+        include_disabled: {
+          type: "boolean",
+          default: true,
+          description: "Include commands whose required feature flags are currently inactive.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_run_command",
+    description: "Run a registered capability command only; this does not accept arbitrary shell or code strings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command_id: {
+          type: "string",
+          description: "Registered command id from guardian_list_commands.",
+        },
+        args: {
+          type: "object",
+          additionalProperties: true,
+          description: "Command arguments merged with the command defaults.",
+        },
+      },
+      required: ["command_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_prepare_exec",
+    description: "Prepare a local break-glass execution envelope without running code.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        language: {
+          type: "string",
+          enum: ["python", "powershell", "node"],
+          default: "python",
+        },
+        code: {
+          type: "string",
+          description: "Local code snippet to save in a prepared execution envelope.",
+        },
+        cwd: {
+          type: "string",
+          description: "Optional working directory for later execution.",
+        },
+        timeout_seconds: {
+          type: "number",
+          minimum: 0.1,
+          default: 30,
+        },
+        reason: {
+          type: "string",
+          description: "User-facing reason for this break-glass request.",
+        },
+        expected_output: {
+          type: "string",
+          description: "Optional expected result or success signal.",
+        },
+        risk_note: {
+          type: "string",
+          description: "Optional risk note for the user/audit trail.",
+        },
+        output_dir: imageOutputProperties.output_dir,
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        tags: imageOutputProperties.tags,
+        note: imageOutputProperties.note,
+      },
+      required: ["code"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "guardian_run_exec",
+    description: "Run explicit break-glass local code. Requires persistent raw_local_exec feature enablement and user_confirmed=true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        envelope_path: {
+          type: "string",
+          description: "Optional prepared execution envelope path.",
+        },
+        language: {
+          type: "string",
+          enum: ["python", "powershell", "node"],
+          default: "python",
+        },
+        code: {
+          type: "string",
+          description: "Local code snippet to execute when envelope_path is not provided.",
+        },
+        cwd: {
+          type: "string",
+          description: "Working directory for execution.",
+        },
+        timeout_seconds: {
+          type: "number",
+          minimum: 0.1,
+          default: 30,
+        },
+        user_confirmed: {
+          type: "boolean",
+          default: false,
+          description: "Must be true for every raw execution call.",
+        },
+        reason: {
+          type: "string",
+          description: "User-facing reason for this execution.",
+        },
+        output_dir: imageOutputProperties.output_dir,
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        tags: imageOutputProperties.tags,
+        note: imageOutputProperties.note,
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
   {
     name: "check_dependencies",
     description: "Check local Python screenshot dependencies, adapters, and cache location.",
@@ -1348,6 +1659,27 @@ function runPython(action, args) {
 }
 
 async function callTool(name, args) {
+  if (name === "guardian_check") {
+    return runPython("guardian_check", args);
+  }
+  if (name === "guardian_perceive") {
+    return runPython("guardian_perceive", args);
+  }
+  if (name === "guardian_prepare_workflow") {
+    return runPython("guardian_prepare_workflow", args);
+  }
+  if (name === "guardian_list_commands") {
+    return runPython("guardian_list_commands", args);
+  }
+  if (name === "guardian_run_command") {
+    return runPython("guardian_run_command", args);
+  }
+  if (name === "guardian_prepare_exec") {
+    return runPython("guardian_prepare_exec", args);
+  }
+  if (name === "guardian_run_exec") {
+    return runPython("guardian_run_exec", args);
+  }
   if (name === "check_dependencies") {
     return runPython("check", args);
   }
