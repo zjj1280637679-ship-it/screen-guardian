@@ -22,7 +22,6 @@ Screen Guardian exposes a broad expert tool surface, but the default MCP surface
 | Prepare workflow envelopes | `guardian_prepare_workflow` | Advanced surface. Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
 | Discover reusable commands | `guardian_list_commands` | Advanced surface. Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
 | Run a registered command | `guardian_run_command` | Advanced surface. Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
-| Prepare or run break-glass code | `guardian_prepare_exec`, `guardian_run_exec` | Full surface only. Saves or explicitly runs local Python/PowerShell/Node code. Raw execution is disabled by default and requires `raw_local_exec=true` plus `user_confirmed=true`. |
 | Choose a capture route | `list_capture_routes` | Explains desktop, application, webpage, nested-scroll, and guided-chain routes so the AI can pick the right path first. |
 | Prepare a capture chain | `prepare_capture_chain` | Writes a local plan for conditional capture, quiet webpage capture, preprocessing, and later model handoff without executing it. |
 
@@ -33,6 +32,8 @@ The normal tools are safe wrappers. They do not bypass feature flags, runtime li
 For slow or older systems, the lower-level timing controls are still available: `delay_seconds`, `wait_for_nonblank`, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
+
+Browser and GPU-heavy app windows may return a rendered frame with a blank content/client area through direct HWND capture. Screen Guardian now analyzes the client area separately; if it looks blank or very low-information, it records `window_client_low_information` and attempts the existing visible bbox fallback so `occlusion_risk` and `bbox_identity_mismatch` still apply.
 
 `guardian_survey_windows` is for extreme "report all windows" tasks. It defaults to `capture_mode="status_only"` and reports window title, process, bounds, minimized/offscreen state, and optional topmost-window visibility samples. When `capture_mode="hold_file"` or `capture_mode="return_paths"` is requested, it saves only up to the configured batch-capture limit and returns local paths so the AI can inspect selected screenshots instead of ingesting every image.
 
@@ -190,6 +191,16 @@ Experimental envelope tools do not execute arbitrary decision code, call APIs, i
 
 Break-glass local execution tools are lab tools. They are exposed only on the `full` surface and still require the persistent `raw_local_exec` feature flag plus per-call confirmation.
 
+### Optional webpage tools
+
+`prepare_webpage_capture` and `capture_webpage` are advanced optional-browser tools, not ordinary desktop screenshot parameters. `capture_webpage` requires the persistent feature flag `webpage_capture=true` plus optional Playwright/Chromium dependencies.
+
+Minimal full-page example after enabling the feature flag:
+
+```json
+{"url":"https://example.com","mode":"full_page","context_policy":"hold_file","marked_file_only":true}
+```
+
 Captures are saved locally by default:
 
 ```text
@@ -253,7 +264,7 @@ npm run build:helper
 $env:SCREEN_GUARDIAN_HELPER_EXE = "$PWD\bin\screen-guardian-helper.exe"
 ```
 
-When `SCREEN_GUARDIAN_HELPER_EXE` or `bin/screen-guardian-helper.exe` is available, the MCP server uses that helper before looking for Python. The server can recover from stale cache paths by checking `SCREEN_GUARDIAN_CAPTURE_SCRIPT`, the current plugin root, explicit `SCREEN_GUARDIAN_PLUGIN_ROOT`, and newer sibling cache folders for `screen_guardian_capture.py`. When running from a Codex plugin cache, implicit source-folder fallback is disabled unless `SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK=1` is set. MCP child processes also have an outer timeout; set `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` only when debugging runtime hangs.
+When `SCREEN_GUARDIAN_HELPER_EXE` or `bin/screen-guardian-helper.exe` is available, the MCP server uses that helper before looking for Python. The server can recover from stale cache paths by checking `SCREEN_GUARDIAN_CAPTURE_SCRIPT`, the current plugin root, explicit `SCREEN_GUARDIAN_PLUGIN_ROOT`, and newer sibling cache folders for `screen_guardian_capture.py`. Runtime files must be under a trusted Screen Guardian plugin root unless `SCREEN_GUARDIAN_ALLOW_UNTRUSTED_RUNTIME=1` is set for debugging. Tool results report `active_script_root`, manifest versions, `mixed_runtime`, and `runtime_file_sha256`; state-changing tools are blocked when the MCP root and active script root are mixed. When running from a Codex plugin cache, implicit source-folder fallback is disabled unless `SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK=1` is set. MCP child processes also have an outer timeout and stdout/stderr byte caps; set `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` only when debugging runtime hangs.
 
 Optional audio recording uses:
 

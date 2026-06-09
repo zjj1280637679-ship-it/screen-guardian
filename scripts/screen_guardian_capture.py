@@ -62,6 +62,7 @@ DEFAULT_LIMITS = {
 
 CAPTURE_GUARD_CHECKS = {
     "unrendered": "Detect blank, uniform, or very low-information frames that often mean rendering has not completed.",
+    "window_client_low_information": "Detect direct HWND captures where the client/content area is blank or very low-information while the window frame is present.",
     "minimized_window": "Detect target windows that are minimized before capture.",
     "offscreen_window": "Detect target windows that are outside or partly outside the virtual desktop.",
     "tiny_capture": "Detect capture boxes that are probably too small to be intentional.",
@@ -1289,6 +1290,32 @@ def window_rect(hwnd):
     }
 
 
+def window_client_rect(hwnd):
+    if os.name != "nt":
+        return None
+    user32 = ctypes.windll.user32
+    client = ctypes.wintypes.RECT()
+    if not user32.GetClientRect(int(hwnd), ctypes.byref(client)):
+        return None
+    point = ctypes.wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(int(hwnd), ctypes.byref(point)):
+        return None
+    width = int(client.right - client.left)
+    height = int(client.bottom - client.top)
+    if width <= 0 or height <= 0:
+        return None
+    left = int(point.x)
+    top = int(point.y)
+    return {
+        "left": left,
+        "top": top,
+        "right": left + width,
+        "bottom": top + height,
+        "width": width,
+        "height": height,
+    }
+
+
 def window_text(hwnd):
     if os.name != "nt":
         return ""
@@ -1336,6 +1363,7 @@ def window_info_for_hwnd(hwnd):
         "pid": int(pid.value),
         "process_name": process_name_for_pid(pid.value),
         "rect": rect,
+        "client_rect": window_client_rect(hwnd) or {},
         "is_minimized": bool(user32.IsIconic(hwnd)),
         "is_visible": bool(user32.IsWindowVisible(hwnd)),
     }
@@ -1587,6 +1615,45 @@ def image_blank_metrics(image, libs):
         "edge_mean": round(edge_mean, 2),
         "entropy": round(entropy, 2),
         "sample_hash": hashlib.sha256(gray.tobytes()).hexdigest()[:16],
+    }
+
+
+def window_client_crop_box(image, window):
+    rect = window.get("rect") if isinstance(window.get("rect"), dict) else {}
+    client = window.get("client_rect") if isinstance(window.get("client_rect"), dict) else {}
+    if not rect or not client:
+        return None
+    left = int(client.get("left", 0)) - int(rect.get("left", 0))
+    top = int(client.get("top", 0)) - int(rect.get("top", 0))
+    right = left + int(client.get("width", 0))
+    bottom = top + int(client.get("height", 0))
+    left = max(0, min(int(image.size[0]), left))
+    top = max(0, min(int(image.size[1]), top))
+    right = max(left, min(int(image.size[0]), right))
+    bottom = max(top, min(int(image.size[1]), bottom))
+    if right - left <= 32 or bottom - top <= 32:
+        return None
+    return (left, top, right, bottom)
+
+
+def window_client_content_status(image, libs, window):
+    box = window_client_crop_box(image, window)
+    if not box:
+        return {"available": False, "reason": "missing_or_too_small_client_rect", "client_rect": window.get("client_rect") or {}}
+    client_image = image.crop(box)
+    metrics = image_blank_metrics(client_image, libs)
+    frame_metrics = image_blank_metrics(image, libs)
+    client_area = (box[2] - box[0]) * (box[3] - box[1])
+    image_area = max(1, int(image.size[0]) * int(image.size[1]))
+    low_information = bool(metrics.get("likely_blank", False))
+    return {
+        "available": True,
+        "client_crop_box": {"left": box[0], "top": box[1], "right": box[2], "bottom": box[3], "width": box[2] - box[0], "height": box[3] - box[1]},
+        "client_area_ratio": round(client_area / float(image_area), 3),
+        "client_metrics": metrics,
+        "whole_window_metrics": frame_metrics,
+        "client_low_information": low_information,
+        "note": "Direct HWND captures can include a rendered frame while GPU/browser content remains blank. A low-information client area is treated as a capture-quality signal.",
     }
 
 
@@ -1855,6 +1922,9 @@ def render_guard_status(source, args):
     if source_type == "window" and quiet_capture_preferred(args, source_type) and "occlusion_risk" not in checks:
         checks.append("occlusion_risk")
     capture_method = str(source.get("capture_method") or "")
+    direct_content = source.get("direct_window_content") if isinstance(source.get("direct_window_content"), dict) else {}
+    if source_type == "window" and direct_content.get("client_low_information") and "window_client_low_information" not in checks:
+        checks.append("window_client_low_information")
     if source_type == "window" and "bbox" in capture_method and "bbox_identity_mismatch" not in checks:
         checks.append("bbox_identity_mismatch")
     issues = capture_guard_issues(source, args, checks)
@@ -1919,6 +1989,18 @@ def capture_guard_issues(source, args, checks):
                 "evidence": final_attempt,
             }
         )
+
+    if "window_client_low_information" in checks and source.get("type") == "window":
+        direct_content = source.get("direct_window_content") if isinstance(source.get("direct_window_content"), dict) else {}
+        if direct_content.get("client_low_information"):
+            issues.append(
+                {
+                    "id": "window_client_low_information",
+                    "severity": "decision",
+                    "message": "Direct HWND capture reported a blank or very low-information client/content area while the window frame may still be present.",
+                    "evidence": direct_content,
+                }
+            )
 
     if "minimized_window" in checks and source.get("type") == "window" and bool(window.get("is_minimized", False)):
         issues.append(
@@ -2492,12 +2574,16 @@ def grab_screen_once(args):
 def grab_window_once(args, status, libs, window):
     hwnd = int(window["hwnd"])
     capture_method = "pillow-imagegrab-window"
+    direct_content_status = {}
     try:
         image = libs["ImageGrab"].grab(window=hwnd)
-        if image_looks_black(image, libs):
+        direct_content_status = window_client_content_status(image.convert("RGB"), libs, window)
+        direct_black = image_looks_black(image, libs)
+        direct_client_low_info = bool(direct_content_status.get("client_low_information", False))
+        if direct_black or direct_client_low_info:
             rect = window.get("rect") or {}
             if rect:
-                capture_method = "pillow-imagegrab-bbox-after-black-window-frame"
+                capture_method = "pillow-imagegrab-bbox-after-black-window-frame" if direct_black else "pillow-imagegrab-bbox-after-low-info-window-client"
                 image = libs["ImageGrab"].grab(
                     bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
                     all_screens=True,
@@ -2519,10 +2605,14 @@ def grab_window_once(args, status, libs, window):
             "preferred": quiet_capture_preferred(args, "window"),
             "foreground_activation_performed": False,
             "visible_screen_fallback": "bbox" in capture_method,
+            "occlusion_risk_check_applicable": "bbox" in capture_method,
+            "bbox_identity_check_applicable": "bbox" in capture_method,
+            "direct_hwnd_guard_note": "occlusion_risk and bbox_identity_mismatch apply only after visible-screen bbox fallback; direct HWND capture uses client-content quality checks instead.",
         },
         "window": window,
         "virtual_screen": virtual_screen_rect(),
         "capture_box": window.get("rect"),
+        "direct_window_content": direct_content_status,
         "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Minimized, protected, GPU-rendered, or occluded windows may return blank, stale, or fallback-visible frames.",
     }
     if "bbox" in capture_method:

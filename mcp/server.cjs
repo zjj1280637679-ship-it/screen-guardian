@@ -2,12 +2,27 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const crypto = require("node:crypto");
 
 const SERVER_NAME = "screen-guardian";
 const SERVER_VERSION = "0.1.14";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT_NAME = "screen_guardian_capture.py";
 const HELPER_EXE_NAME = "screen-guardian-helper.exe";
+const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
+const MAX_STDERR_BYTES = 1024 * 1024;
+const MIXED_ROOT_BLOCKED_ACTIONS = new Set([
+  "set_cache_path",
+  "set_storage_routes",
+  "set_runtime_limits",
+  "set_feature_flags",
+  "set_extension_route",
+  "set_decision_policy",
+  "set_monitor_profile",
+  "set_display_name",
+  "apply_display_profile",
+  "guardian_run_exec",
+]);
 
 const imageOutputProperties = {
   output_dir: {
@@ -77,7 +92,7 @@ const imageOutputProperties = {
     type: "array",
     items: {
       type: "string",
-      enum: ["unrendered", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "bbox_identity_mismatch", "all", "none", "off"],
+      enum: ["unrendered", "window_client_low_information", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "bbox_identity_mismatch", "all", "none", "off"],
     },
     description: "Optional capture-quality checks. Defaults to ['unrendered']; other checks are opt-in and return decision actions rather than blocking ordinary capture.",
   },
@@ -1897,6 +1912,77 @@ function runningFromPluginCache() {
   return normalized.includes(cacheMarker);
 }
 
+function readPluginManifest(root) {
+  if (!root) {
+    return {};
+  }
+  try {
+    const manifestPath = path.join(root, ".codex-plugin", "plugin.json");
+    return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  } catch (_err) {
+    return {};
+  }
+}
+
+function pluginRootForRuntimeFile(filePath) {
+  if (!filePath) {
+    return "";
+  }
+  return path.resolve(path.dirname(filePath), "..");
+}
+
+function fileSha256(filePath) {
+  try {
+    const hash = crypto.createHash("sha256");
+    hash.update(fs.readFileSync(filePath));
+    return hash.digest("hex");
+  } catch (_err) {
+    return "";
+  }
+}
+
+function allowUntrustedRuntime() {
+  const value = String(process.env.SCREEN_GUARDIAN_ALLOW_UNTRUSTED_RUNTIME || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function annotateRuntimeFileCandidate(candidate) {
+  const activeRoot = pluginRootForRuntimeFile(candidate.path);
+  const manifest = readPluginManifest(activeRoot);
+  const trustedRoot = manifest.name === SERVER_NAME;
+  const allowed = trustedRoot || allowUntrustedRuntime() || !candidate.available;
+  return {
+    ...candidate,
+    activeRoot,
+    activeManifestVersion: manifest.version || "",
+    trustedRoot,
+    sha256: candidate.available ? fileSha256(candidate.path) : "",
+    skipped: candidate.skipped || !allowed,
+    skipReason: candidate.skipReason || (!allowed ? "runtime file is outside a trusted Screen Guardian plugin root" : ""),
+  };
+}
+
+function runtimeConsistency(candidate) {
+  const activeRoot = candidate.activeRoot || pluginRootForRuntimeFile(candidate.scriptPath || candidate.command);
+  const serverManifest = readPluginManifest(ROOT);
+  const activeManifest = readPluginManifest(activeRoot);
+  const serverVersion = serverManifest.version || "";
+  const activeVersion = activeManifest.version || candidate.activeManifestVersion || "";
+  const rootsMatch = !!activeRoot && path.resolve(activeRoot).toLowerCase() === path.resolve(ROOT).toLowerCase();
+  const versionsMatch = !!serverVersion && !!activeVersion && serverVersion === activeVersion;
+  return {
+    server_root: ROOT,
+    active_script_root: activeRoot || "",
+    server_manifest_version: serverVersion,
+    active_manifest_version: activeVersion,
+    roots_match: rootsMatch,
+    versions_match: versionsMatch,
+    mixed_runtime: !!activeRoot && (!rootsMatch || !versionsMatch),
+    trusted_root: candidate.trustedRoot !== false,
+    runtime_file_sha256: candidate.sha256 || "",
+  };
+}
+
 function implicitSourceFallbackAllowed() {
   const value = String(process.env.SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK || "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || !runningFromPluginCache();
@@ -1909,7 +1995,7 @@ function sourcePluginRoots() {
     addPathCandidate(roots, path.join(os.homedir(), "plugins", "screen-guardian"), "home-source");
     addPathCandidate(roots, path.join(process.env.USERPROFILE || "", "plugins", "screen-guardian"), "userprofile-source");
   }
-  return uniquePathCandidates(roots).filter((candidate) => candidate.available);
+  return uniquePathCandidates(roots).filter((candidate) => candidate.available && readPluginManifest(candidate.path).name === SERVER_NAME);
 }
 
 function cacheSiblingRoots() {
@@ -1931,6 +2017,7 @@ function cacheSiblingRoots() {
         }
         return { path: fullPath, source: "cache-sibling", mtimeMs };
       })
+      .filter((candidate) => readPluginManifest(candidate.path).name === SERVER_NAME)
       .sort((a, b) => b.mtimeMs - a.mtimeMs || b.path.localeCompare(a.path));
   } catch (_err) {
     return [];
@@ -1947,7 +2034,7 @@ function captureScriptCandidates() {
   for (const candidate of cacheSiblingRoots()) {
     addPathCandidate(candidates, path.join(candidate.path, "scripts", CAPTURE_SCRIPT_NAME), candidate.source);
   }
-  return uniquePathCandidates(candidates);
+  return uniquePathCandidates(candidates).map(annotateRuntimeFileCandidate);
 }
 
 function helperExeCandidates() {
@@ -1960,7 +2047,9 @@ function helperExeCandidates() {
   for (const candidate of cacheSiblingRoots()) {
     addPathCandidate(candidates, path.join(candidate.path, "bin", HELPER_EXE_NAME), candidate.source);
   }
-  return uniquePathCandidates(candidates).filter((candidate) => candidate.available || candidate.source === "SCREEN_GUARDIAN_HELPER_EXE");
+  return uniquePathCandidates(candidates)
+    .map(annotateRuntimeFileCandidate)
+    .filter((candidate) => candidate.available || candidate.source === "SCREEN_GUARDIAN_HELPER_EXE");
 }
 
 function runtimeCandidates() {
@@ -1974,8 +2063,12 @@ function runtimeCandidates() {
       command: helper.path,
       prefixArgs: [],
       source: helper.source,
-      skipped: !helper.available,
-      skipReason: "helper executable does not exist",
+      skipped: helper.skipped || !helper.available,
+      skipReason: helper.skipReason || "helper executable does not exist",
+      activeRoot: helper.activeRoot,
+      activeManifestVersion: helper.activeManifestVersion,
+      trustedRoot: helper.trustedRoot,
+      sha256: helper.sha256,
     });
   }
 
@@ -1987,8 +2080,13 @@ function runtimeCandidates() {
         prefixArgs: [],
         source: script.source,
         skipped: true,
-        skipReason: "capture script does not exist",
+        skipReason: script.skipReason || "capture script does not exist",
         scriptPath: script.path,
+        scriptSource: script.source,
+        activeRoot: script.activeRoot,
+        activeManifestVersion: script.activeManifestVersion,
+        trustedRoot: script.trustedRoot,
+        sha256: script.sha256,
       });
       continue;
     }
@@ -1998,10 +2096,14 @@ function runtimeCandidates() {
         command: python.command,
         prefixArgs: python.prefixArgs,
         source: python.source,
-        skipped: python.skipped,
-        skipReason: python.skipReason,
+        skipped: python.skipped || script.skipped,
+        skipReason: python.skipReason || script.skipReason,
         scriptPath: script.path,
         scriptSource: script.source,
+        activeRoot: script.activeRoot,
+        activeManifestVersion: script.activeManifestVersion,
+        trustedRoot: script.trustedRoot,
+        sha256: script.sha256,
       });
     }
   }
@@ -2010,6 +2112,7 @@ function runtimeCandidates() {
 }
 
 function summarizeAttempt(candidate, status, extra) {
+  const consistency = runtimeConsistency(candidate);
   return {
     kind: candidate.kind || "python",
     command: candidate.command,
@@ -2017,6 +2120,12 @@ function summarizeAttempt(candidate, status, extra) {
     source: candidate.source,
     script_path: candidate.scriptPath || "",
     script_source: candidate.scriptSource || "",
+    active_script_root: consistency.active_script_root,
+    active_manifest_version: consistency.active_manifest_version,
+    server_manifest_version: consistency.server_manifest_version,
+    mixed_runtime: consistency.mixed_runtime,
+    trusted_root: consistency.trusted_root,
+    runtime_file_sha256: consistency.runtime_file_sha256,
     status,
     ...(extra || {}),
   };
@@ -2028,6 +2137,29 @@ function safeTextTail(value, maxLength = 2000) {
     return text;
   }
   return text.slice(text.length - maxLength);
+}
+
+function runtimeInfo(candidate, attempts) {
+  const consistency = runtimeConsistency(candidate);
+  return {
+    kind: candidate.kind || "python",
+    command: candidate.command,
+    prefix_args: candidate.prefixArgs,
+    source: candidate.source,
+    script_path: candidate.scriptPath || "",
+    script_source: candidate.scriptSource || "",
+    server_root: ROOT,
+    active_script_root: consistency.active_script_root,
+    server_manifest_version: consistency.server_manifest_version,
+    active_manifest_version: consistency.active_manifest_version,
+    roots_match: consistency.roots_match,
+    versions_match: consistency.versions_match,
+    mixed_runtime: consistency.mixed_runtime,
+    trusted_root: consistency.trusted_root,
+    runtime_file_sha256: consistency.runtime_file_sha256,
+    running_from_plugin_cache: runningFromPluginCache(),
+    skipped_or_failed_candidates: attempts,
+  };
 }
 
 function boundedNumber(value, fallback, minValue, maxValue) {
@@ -2062,6 +2194,64 @@ function childTimeoutMs(action, args) {
   return 45000;
 }
 
+function streamLimitBytes(kind) {
+  const envName = kind === "stdout" ? "SCREEN_GUARDIAN_MCP_STDOUT_BYTES_MAX" : "SCREEN_GUARDIAN_MCP_STDERR_BYTES_MAX";
+  const fallback = kind === "stdout" ? MAX_STDOUT_BYTES : MAX_STDERR_BYTES;
+  return boundedNumber(process.env[envName], fallback, 65536, 16 * 1024 * 1024);
+}
+
+function killProcessTree(child) {
+  if (!child || !child.pid) {
+    return;
+  }
+  if (process.platform === "win32") {
+    try {
+      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      return;
+    } catch (_err) {
+      // Fall back below.
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch (_err) {
+    try {
+      child.kill();
+    } catch (_err2) {
+      // Best effort only.
+    }
+  }
+}
+
+function parseRuntimeJson(stdout) {
+  const trimmed = String(stdout || "").trim();
+  if (!trimmed) {
+    throw new Error("stdout is empty");
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (_err) {
+    // Continue with framed fallbacks.
+  }
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (line.startsWith("{") && line.endsWith("}")) {
+      try {
+        return JSON.parse(line);
+      } catch (_err) {
+        // Try earlier lines.
+      }
+    }
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+  throw new Error("stdout did not contain a JSON object");
+}
+
 function runPython(action, args) {
   const request = JSON.stringify({ action, args: args || {} });
   const candidates = runtimeCandidates();
@@ -2084,7 +2274,11 @@ function runPython(action, args) {
           plugin_root_env: "SCREEN_GUARDIAN_PLUGIN_ROOT",
           source_fallback_env: "SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK",
           mcp_child_timeout_env: "SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS",
+          stdout_limit_env: "SCREEN_GUARDIAN_MCP_STDOUT_BYTES_MAX",
+          stderr_limit_env: "SCREEN_GUARDIAN_MCP_STDERR_BYTES_MAX",
+          untrusted_runtime_env: "SCREEN_GUARDIAN_ALLOW_UNTRUSTED_RUNTIME",
           server_root: ROOT,
+          server_manifest_version: readPluginManifest(ROOT).version || "",
           running_from_plugin_cache: runningFromPluginCache(),
           fallback_order: [
             "helper executable",
@@ -2110,17 +2304,7 @@ function runPython(action, args) {
         detail: `Runtime child exceeded ${timeoutMs} ms for action '${action}'.`,
         action,
         timeout_ms: timeoutMs,
-        python_runtime: {
-          kind: candidate.kind || "python",
-          command: candidate.command,
-          prefix_args: candidate.prefixArgs,
-          source: candidate.source,
-          script_path: candidate.scriptPath || "",
-          script_source: candidate.scriptSource || "",
-          server_root: ROOT,
-          running_from_plugin_cache: runningFromPluginCache(),
-          skipped_or_failed_candidates: attempts,
-        },
+        python_runtime: runtimeInfo(candidate, attempts),
         stdout_tail: safeTextTail(stdout),
         stderr_tail: safeTextTail(stderr),
         saw_output: sawOutput,
@@ -2139,6 +2323,18 @@ function runPython(action, args) {
         tryNext();
         return;
       }
+      const consistency = runtimeConsistency(candidate);
+      if (consistency.mixed_runtime && MIXED_ROOT_BLOCKED_ACTIONS.has(action)) {
+        attempts.push(
+          summarizeAttempt(candidate, "skipped", {
+            detail: "action is blocked for mixed MCP root/runtime script roots",
+            blocked_action: action,
+            runtime_consistency: consistency,
+          })
+        );
+        tryNext();
+        return;
+      }
 
       const childArgs = candidate.kind === "helper" ? [request] : [...candidate.prefixArgs, candidate.scriptPath, request];
       const child = spawn(candidate.command, childArgs, {
@@ -2149,6 +2345,10 @@ function runPython(action, args) {
 
       let stdout = "";
       let stderr = "";
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      const stdoutLimit = streamLimitBytes("stdout");
+      const stderrLimit = streamLimitBytes("stderr");
       let sawOutput = false;
       let finished = false;
       const timer = setTimeout(() => {
@@ -2164,25 +2364,47 @@ function runPython(action, args) {
             saw_output: sawOutput,
           })
         );
-        try {
-          child.kill("SIGKILL");
-        } catch (_err) {
-          try {
-            child.kill();
-          } catch (_err2) {
-            // Best effort only.
-          }
-        }
+        killProcessTree(child);
         failTimeout(candidate, stdout, stderr, sawOutput);
       }, timeoutMs);
 
       child.stdout.on("data", (chunk) => {
         sawOutput = true;
+        stdoutBytes += Buffer.byteLength(chunk);
         stdout += chunk.toString();
+        if (!finished && stdoutBytes > stdoutLimit) {
+          finished = true;
+          clearTimeout(timer);
+          attempts.push(
+            summarizeAttempt(candidate, "output-limit", {
+              stream: "stdout",
+              limit_bytes: stdoutLimit,
+              stdout: safeTextTail(stdout),
+              stderr: safeTextTail(stderr),
+            })
+          );
+          killProcessTree(child);
+          tryNext();
+        }
       });
       child.stderr.on("data", (chunk) => {
         sawOutput = true;
+        stderrBytes += Buffer.byteLength(chunk);
         stderr += chunk.toString();
+        if (!finished && stderrBytes > stderrLimit) {
+          finished = true;
+          clearTimeout(timer);
+          attempts.push(
+            summarizeAttempt(candidate, "output-limit", {
+              stream: "stderr",
+              limit_bytes: stderrLimit,
+              stdout: safeTextTail(stdout),
+              stderr: safeTextTail(stderr),
+            })
+          );
+          killProcessTree(child);
+          tryNext();
+        }
       });
       child.on("error", (err) => {
         if (finished) {
@@ -2211,21 +2433,12 @@ function runPython(action, args) {
         }
 
         try {
-          const parsed = JSON.parse(stdout);
+          const parsed = parseRuntimeJson(stdout);
           if (stderr.trim()) {
-            parsed.stderr = stderr.trim();
+            parsed.stderr = safeTextTail(stderr, 12000);
           }
-          parsed.python_runtime = {
-            kind: candidate.kind || "python",
-            command: candidate.command,
-            prefix_args: candidate.prefixArgs,
-            source: candidate.source,
-            script_path: candidate.scriptPath || "",
-            script_source: candidate.scriptSource || "",
-            server_root: ROOT,
-            running_from_plugin_cache: runningFromPluginCache(),
-            skipped_or_failed_candidates: attempts,
-          };
+          parsed.python_runtime = runtimeInfo(candidate, attempts);
+          parsed.runtime_consistency = parsed.python_runtime;
           resolve(parsed);
         } catch (err) {
           attempts.push(

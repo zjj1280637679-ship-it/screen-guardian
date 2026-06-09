@@ -136,6 +136,9 @@ def main():
     explicit_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "SCREEN_GUARDIAN_TOOL_SURFACE": "full"}
     dependency_payload = call_tool("check_dependencies", env_updates=explicit_env)
     require_ok("explicit SCREEN_GUARDIAN_PYTHON check_dependencies", dependency_payload)
+    runtime_info = dependency_payload.get("python_runtime") or {}
+    if not runtime_info.get("active_script_root") or runtime_info.get("mixed_runtime") not in (False, None):
+        raise SmokeFailure(f"runtime active root consistency was not reported cleanly: {runtime_info}")
     checks.append({"name": "explicit_python_runtime", "ok": True, "python_runtime": dependency_payload.get("python_runtime")})
 
     guardian_check_payload = call_tool("guardian_check", {"detail": "short"}, env_updates=explicit_env)

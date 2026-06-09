@@ -67,6 +67,8 @@ Image analysis and preprocessing are local Pillow-based heuristics. They can rec
 
 Slow-rendering programs can produce white or black frames when a window exists before the UI finishes drawing. The AI-first facade defaults to fast direct capture, then lets callers opt into heavier timing strategies without adding a heavy dependency: `capture_modes=["delay"]` waits before capture, `capture_modes=["wait_render"]` auto-waits for a nonblank frame within runtime limits, `capture_modes=["wait_buffer"]` waits for visual stability, `capture_modes=["wait_error"]` waits for an explicit error-window signal, `render_guard="warn"` returns decision actions such as force now, capture later, or auto-wait before saving, and `watch_screen` can catch later visual changes such as popups or page transitions.
 
+Browser and GPU-heavy windows can also fail in a different way: direct HWND capture may return the title bar and frame while the client/web content area is white. The window adapter now samples the direct HWND client area separately. If the client area is blank or very low-information, the result carries `window_client_low_information`; when a visible bbox fallback is attempted, `occlusion_risk` and `bbox_identity_mismatch` still make the fallback explicit before saving questionable pixels.
+
 Runtime limits, storage routes, and model/program routes are intentionally configurable. The default ultra-light limits protect ordinary use, but users can change or remove configurable bounds, save captures to multiple local folders, and register adapter routes for judgment, OCR, image narration, video narration, transcription, or custom workflows.
 
 Full-page webpage screenshots are handled by the optional `webpage_capture` browser adapter, not by desktop screen capture. This keeps Playwright/Chromium out of the default dependency path while still allowing full scrollable webpage long images when the user explicitly enables that route.
@@ -134,7 +136,11 @@ The MCP server uses this runtime order:
 
 Prefer `SCREEN_GUARDIAN_HELPER_EXE` when you want a self-contained runtime, and `SCREEN_GUARDIAN_PYTHON` when you want to pin a local Python interpreter. The server does not rely on `npm_config_python`; recent npm versions can warn about an unknown `python` config before running package scripts, and that warning is separate from Screen Guardian's runtime discovery.
 
-The MCP server also has an outer child-process timeout. The default is action-aware, and `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` can override it for debugging. This is separate from Python-side runtime limits; it prevents a hung helper or Python script from holding the MCP call indefinitely.
+Runtime files must live under a trusted Screen Guardian plugin root whose `.codex-plugin/plugin.json` has `name="screen-guardian"`, unless `SCREEN_GUARDIAN_ALLOW_UNTRUSTED_RUNTIME=1` is explicitly set for debugging. Every tool result now reports `active_script_root`, `server_manifest_version`, `active_manifest_version`, `mixed_runtime`, and `runtime_file_sha256` in `python_runtime`. This makes stale-MCP-root plus newer-script fallback visible instead of silently pretending the runtime is single-version.
+
+When the MCP server and active script/helper root are mixed, state-changing tools such as feature flags, runtime limits, route registries, display-name manifest writes, and raw execution are blocked for that candidate. Ordinary read and capture calls can still use a trusted fallback so compatibility remains available.
+
+The MCP server also has an outer child-process timeout. The default is action-aware, and `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` can override it for debugging. Stdout and stderr have hard byte caps through `SCREEN_GUARDIAN_MCP_STDOUT_BYTES_MAX` and `SCREEN_GUARDIAN_MCP_STDERR_BYTES_MAX`; overflow or timeout triggers best-effort process-tree cleanup. This is separate from Python-side runtime limits; it prevents a hung or noisy helper/Python script from holding the MCP call indefinitely.
 
 ## Self-Contained Helper
 
