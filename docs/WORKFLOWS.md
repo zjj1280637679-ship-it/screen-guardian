@@ -245,7 +245,9 @@ Use `render_guard` when the capture should not quietly save a likely unrendered 
 
 The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
 
-`guard_checks` controls which quality checks run. The default is `["unrendered"]`. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, `stale_frame`, and `occlusion_risk` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
+Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If the HWND route needs a visible-screen bbox fallback, `occlusion_risk` is added automatically and the result returns a decision warning before saving. Set `quiet_preferred=false` only when the user accepts visible-screen fallback behavior.
+
+`guard_checks` controls which quality checks run. The default is `["unrendered"]`, with `occlusion_risk` added automatically for quiet-preferred window capture. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, and `stale_frame` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
 
 For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.
 

@@ -72,9 +72,9 @@ CAPTURE_ROUTE_CATALOG = {
     "application": {
         "title": "Application/window capture",
         "tools": ["list_windows", "capture_window"],
-        "quiet": "best_effort",
+        "quiet": "default_best_effort",
         "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "render-aware window capture"],
-        "limits": ["minimized, GPU-rendered, protected, or occluded windows may be blank or stale"],
+        "limits": ["minimized, GPU-rendered, protected, or occluded windows may be blank, stale, or require a visible-screen fallback decision"],
     },
     "webpage": {
         "title": "Browser-rendered webpage capture",
@@ -290,7 +290,7 @@ CAPABILITY_COMMANDS = [
         "execution_mode": "direct",
         "maps_to": "guardian_perceive",
         "required_features": ["window_capture"],
-        "default_args": {"task": "capture_window", "wait_for_nonblank": True, "render_guard": "wait", "render_retry_count": 2, "context_budget": "normal"},
+        "default_args": {"task": "capture_window", "quiet_preferred": True, "wait_for_nonblank": True, "render_guard": "wait", "render_retry_count": 2, "context_budget": "normal"},
         "side_effects": ["local_file_write"],
         "context_strategy": "return_path",
         "safety_note": "Retries clearly blank frames within runtime limits and warns before saving suspected unrendered output.",
@@ -785,8 +785,8 @@ def window_adapter_status():
         "priority": 20,
         "available": available,
         "dependencies": ["Pillow", "Windows user32"],
-        "capabilities": ["list_windows", "capture_window", "non_topmost_best_effort"],
-        "compatibility_note": "Best-effort HWND capture. Some GPU, minimized, or protected windows may return blank frames.",
+        "capabilities": ["list_windows", "capture_window", "non_topmost_best_effort", "no_foreground_activation", "quiet_preferred_default"],
+        "compatibility_note": "Best-effort HWND capture. The adapter does not activate or raise the target window. Some GPU, minimized, protected, or occluded windows may return blank, stale, or fallback-visible frames.",
     }
     if os.name != "nt":
         status["import_error"] = "Window capture is currently Windows-only."
@@ -1464,6 +1464,14 @@ def normalize_guard_checks(args):
     return normalized
 
 
+def quiet_capture_preferred(args, source_type="screen"):
+    if "quiet_preferred" in args:
+        return bool(args.get("quiet_preferred"))
+    if "quiet" in args:
+        return bool(args.get("quiet"))
+    return source_type in ("window", "webpage")
+
+
 def render_retry_options(args, default_wait_for_nonblank=False):
     limits = runtime_limits(args)
     wait_value = args.get("wait_for_nonblank")
@@ -1503,6 +1511,8 @@ def render_guard_status(source, args):
     source_type = str(source.get("type") or "screen")
     mode = normalize_render_guard(args, source_type)
     checks = normalize_guard_checks(args)
+    if source_type == "window" and quiet_capture_preferred(args, source_type) and "occlusion_risk" not in checks:
+        checks.append("occlusion_risk")
     issues = capture_guard_issues(source, args, checks)
     suspected_unrendered = any(issue.get("id") == "unrendered" for issue in issues)
     confirmed = bool(args.get("render_guard_confirmed", False))
@@ -1530,6 +1540,7 @@ def render_guard_status(source, args):
         "wait_for_nonblank": bool(timing.get("wait_for_nonblank", False)),
         "attempt_count": len(timing.get("attempts") or []),
         "hint": "Set render_guard_confirmed=true or render_guard='save' if this blank frame is expected.",
+        "quiet_preferred": quiet_capture_preferred(args, source_type),
     }
 
 
@@ -1688,6 +1699,17 @@ def render_guard_warning_payload(source, args):
             "task": "watch_change",
         }
     if "occlusion_risk" in issue_ids:
+        payload["issue_specific_actions"]["retry_quiet_window_capture"] = {
+            "quiet_preferred": True,
+            "render_guard": "wait",
+            "guard_checks": ["unrendered", "occlusion_risk"],
+            "note": "Retry the HWND/window route without accepting visible-screen bbox fallback output silently.",
+        }
+        payload["issue_specific_actions"]["allow_visible_bbox_fallback"] = {
+            "quiet_preferred": False,
+            "render_guard_confirmed": True,
+            "note": "Accept the visible-screen fallback when the user understands the target may need to be visible or unobscured.",
+        }
         payload["issue_specific_actions"]["bring_window_front_or_capture_screen"] = {
             "note": "Bring the target window forward or capture the visible screen/region instead of a fallback bbox.",
         }
@@ -2113,10 +2135,15 @@ def grab_window_once(args, status, libs, window):
         "type": "window",
         "adapter": status["id"],
         "capture_method": capture_method,
+        "quiet_capture": {
+            "preferred": quiet_capture_preferred(args, "window"),
+            "foreground_activation_performed": False,
+            "visible_screen_fallback": "bbox" in capture_method,
+        },
         "window": window,
         "virtual_screen": virtual_screen_rect(),
         "capture_box": window.get("rect"),
-        "compatibility_note": "HWND capture is best-effort. Minimized, protected, or GPU-rendered windows may return blank or stale frames.",
+        "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Minimized, protected, GPU-rendered, or occluded windows may return blank, stale, or fallback-visible frames.",
     }
     return image.convert("RGB"), source, libs
 
@@ -2530,7 +2557,7 @@ def action_list_capture_routes(args):
             },
             "quiet_capture": {
                 "desktop": "not quiet; captures visible desktop pixels",
-                "application": "best-effort quiet through HWND/window adapter; may fail for minimized/protected/GPU windows",
+                "application": "quiet-preferred by default through HWND/window adapter; visible-screen bbox fallback returns a decision warning before saving",
                 "webpage": "quiet through headless browser when webpage_capture is enabled",
             },
             "privacy": "Listing routes does not capture, navigate, record, upload, call a model, or start monitoring.",

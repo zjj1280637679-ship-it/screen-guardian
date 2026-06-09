@@ -29,6 +29,8 @@ The normal tools are safe wrappers. They do not bypass feature flags, runtime li
 
 For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
+Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it returns a decision warning before saving unless `quiet_preferred=false` is explicitly accepted.
+
 See [docs/AI_FIRST_INTERFACE.md](docs/AI_FIRST_INTERFACE.md) for the intuitive task mapping.
 See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered command catalog and break-glass execution model.
 See [docs/CAPTURE_GUARDS.md](docs/CAPTURE_GUARDS.md) for optional capture-quality checks and decision menus.

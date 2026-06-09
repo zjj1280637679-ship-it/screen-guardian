@@ -296,6 +296,7 @@ def check_static_contracts() -> CheckSet:
         "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],
         "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick", "action_prepare_capture_chain"],
         "capture routes distinguish desktop application webpage": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"'],
+        "quiet window capture is default strategy": ["quiet_capture_preferred", "no_foreground_activation", "quiet_preferred_default", "visible-screen bbox fallback"],
         "capture chain is prepare only": ["action_prepare_capture_chain", "capture_chain_request", "does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers"],
         "nested scroll container capture is optional": ["scroll_container", "frame_selector", "capture_scroll_container"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],

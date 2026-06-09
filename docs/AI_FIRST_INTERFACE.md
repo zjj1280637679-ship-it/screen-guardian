@@ -30,6 +30,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Choose a quiet webpage route | `list_capture_routes` | Compare desktop, application, webpage, `nested_scroll`, and mixed routes before capturing |
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
 
+Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it returns a decision warning before saving so the caller can retry quietly, allow visible fallback, or ask the user to bring the window forward.
+
 ## Context Budget Defaults
 
 | Budget | Behavior |

@@ -59,6 +59,10 @@ const imageOutputProperties = {
     type: "boolean",
     description: "When true, retry clearly blank captures before saving. Window capture defaults to true when omitted.",
   },
+  quiet_preferred: {
+    type: "boolean",
+    description: "Prefer non-foreground, non-topmost capture when the route supports it. Window capture defaults to quiet-preferred and returns a decision warning before saving visible-screen fallback output.",
+  },
   render_guard: {
     type: "string",
     enum: ["save", "warn", "wait", "fail"],
@@ -440,6 +444,7 @@ const tools = [
         delay_seconds: imageOutputProperties.delay_seconds,
         settle_delay_ms: imageOutputProperties.settle_delay_ms,
         wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
+        quiet_preferred: imageOutputProperties.quiet_preferred,
         render_retry_count: imageOutputProperties.render_retry_count,
         render_retry_interval_ms: imageOutputProperties.render_retry_interval_ms,
         project_id: imageOutputProperties.project_id,
@@ -1353,7 +1358,7 @@ const tools = [
   },
   {
     name: "capture_window",
-    description: "Capture a specified visible program window by HWND, title, or process name, even when best-effort non-topmost capture is available.",
+    description: "Capture a specified program window by HWND, title, or process name. Quiet-preferred by default: the adapter does not activate or raise the window, and visible-screen fallback output returns a decision warning before saving.",
     inputSchema: {
       type: "object",
       properties: {

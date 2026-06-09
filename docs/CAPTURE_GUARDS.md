@@ -21,7 +21,7 @@ All other checks are opt-in. This keeps ordinary screenshots fast and prevents o
 | `offscreen_window` | Off | Window is partly or fully outside the virtual desktop | Multi-monitor movement, disconnected display, bad window coordinates | Move window visible then capture, reselect target |
 | `tiny_capture` | Off | Capture box width or height is below `guard_tiny_min_pixels` | Bad region coordinates, wrong display, overly small UI target | Reselect region/window, force capture now |
 | `stale_frame` | Off | Retry attempts return the same sampled frame | Frozen app, stale capture backend, no visible change during retry | Refresh or wait for change, force capture now |
-| `occlusion_risk` | Off | Window capture used a bbox fallback that may include another window | GPU/protected window fallback, non-topmost window, overlap | Bring window forward or capture visible screen/region |
+| `occlusion_risk` | On for quiet-preferred window capture; otherwise off | Window capture used a bbox fallback that may include another window | GPU/protected window fallback, non-topmost window, overlap | Retry quiet capture, allow visible fallback, bring window forward, or capture visible screen/region |
 
 ## Decision Payload
 
@@ -74,6 +74,17 @@ Enable all guard checks for a fragile window capture:
   "task": "capture_window",
   "render_guard": "warn",
   "guard_checks": ["all"]
+}
+```
+
+Disable quiet preference only when visible-screen fallback is acceptable:
+
+```json
+{
+  "task": "capture_window",
+  "target": {"title_contains": "Chrome"},
+  "quiet_preferred": false,
+  "render_guard_confirmed": true
 }
 ```
 
