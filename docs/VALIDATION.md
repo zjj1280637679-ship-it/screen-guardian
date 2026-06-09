@@ -55,6 +55,30 @@ The stress test also calls `guardian_check` and `guardian_prepare_workflow` so t
 
 It also calls `guardian_list_commands`, `guardian_run_command`, and `guardian_prepare_exec`. Stress does not run raw local code.
 
+## Runtime Evaluation
+
+Run:
+
+```powershell
+npm run evaluate
+```
+
+This is a product-health evaluation for the AI-first runtime surface. It checks that the AI-first tools and capability-runtime tools are present, that registered commands are discoverable, that the readiness command runs, that workflow and break-glass envelopes are local-only, and that raw local execution remains disabled by default and confirmation-gated after persistent enablement.
+
+The evaluator uses a temporary `APPDATA` directory and temporary output directory. It does not capture the screen, record audio, call external APIs, invoke subagents, or start background monitors unless you explicitly add the optional capture flag:
+
+```powershell
+python scripts/evaluate_runtime.py --include-capture
+```
+
+For a machine-readable report:
+
+```powershell
+python scripts/evaluate_runtime.py --output .tmp/evaluation-report.json
+```
+
+See `docs/EVALUATION.md` for measurement scope and interpretation.
+
 ## Windows Smoke Test
 
 Run:
