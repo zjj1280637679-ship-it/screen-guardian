@@ -69,6 +69,20 @@ const imageOutputProperties = {
     default: false,
     description: "Set true only after confirming that a suspected blank/unrendered frame should still be saved.",
   },
+  guard_checks: {
+    type: "array",
+    items: {
+      type: "string",
+      enum: ["unrendered", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "all", "none", "off"],
+    },
+    description: "Optional capture-quality checks. Defaults to ['unrendered']; other checks are opt-in and return decision actions rather than blocking ordinary capture.",
+  },
+  guard_tiny_min_pixels: {
+    type: "integer",
+    minimum: 1,
+    default: 16,
+    description: "Minimum width or height used by the optional tiny_capture guard check.",
+  },
   render_retry_count: {
     type: "integer",
     minimum: 0,

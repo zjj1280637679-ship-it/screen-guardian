@@ -244,4 +244,6 @@ Use `render_guard` when the capture should not quietly save a likely unrendered 
 
 The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
 
+`guard_checks` controls which quality checks run. The default is `["unrendered"]`. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, `stale_frame`, and `occlusion_risk` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
+
 For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.

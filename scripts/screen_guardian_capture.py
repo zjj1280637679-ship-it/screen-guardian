@@ -43,6 +43,16 @@ DEFAULT_LIMITS = {
     "raw_exec_output_chars_max": 12000,
 }
 
+CAPTURE_GUARD_CHECKS = {
+    "unrendered": "Detect blank, uniform, or very low-information frames that often mean rendering has not completed.",
+    "minimized_window": "Detect target windows that are minimized before capture.",
+    "offscreen_window": "Detect target windows that are outside or partly outside the virtual desktop.",
+    "tiny_capture": "Detect capture boxes that are probably too small to be intentional.",
+    "stale_frame": "Detect retry attempts that returned the same frame repeatedly.",
+    "occlusion_risk": "Detect best-effort bbox fallback window captures that may include occluding windows.",
+}
+DEFAULT_GUARD_CHECKS = ["unrendered"]
+
 DEFAULT_FEATURE_FLAGS = {
     "screen_capture": True,
     "window_capture": True,
@@ -1280,7 +1290,41 @@ def image_blank_metrics(image, libs):
         "contrast": round(contrast, 2),
         "edge_mean": round(edge_mean, 2),
         "entropy": round(entropy, 2),
+        "sample_hash": hashlib.sha256(gray.tobytes()).hexdigest()[:16],
     }
+
+
+def rect_area(rect):
+    if not isinstance(rect, dict):
+        return 0
+    width = int(rect.get("width") or (int(rect.get("right", 0)) - int(rect.get("left", 0))))
+    height = int(rect.get("height") or (int(rect.get("bottom", 0)) - int(rect.get("top", 0))))
+    return max(0, width) * max(0, height)
+
+
+def virtual_screen_rect():
+    if os.name != "nt":
+        return {}
+    user32 = ctypes.windll.user32
+    left = int(user32.GetSystemMetrics(76))
+    top = int(user32.GetSystemMetrics(77))
+    width = int(user32.GetSystemMetrics(78))
+    height = int(user32.GetSystemMetrics(79))
+    return {"left": left, "top": top, "right": left + width, "bottom": top + height, "width": width, "height": height}
+
+
+def rect_intersection_ratio(rect, bounds):
+    if not isinstance(rect, dict) or not isinstance(bounds, dict):
+        return 1.0
+    area = rect_area(rect)
+    if area <= 0:
+        return 0.0
+    left = max(int(rect.get("left", 0)), int(bounds.get("left", 0)))
+    top = max(int(rect.get("top", 0)), int(bounds.get("top", 0)))
+    right = min(int(rect.get("right", int(rect.get("left", 0)) + int(rect.get("width", 0)))), int(bounds.get("right", 0)))
+    bottom = min(int(rect.get("bottom", int(rect.get("top", 0)) + int(rect.get("height", 0)))), int(bounds.get("bottom", 0)))
+    visible = max(0, right - left) * max(0, bottom - top)
+    return visible / float(area)
 
 
 def capture_settle_delay_seconds(args):
@@ -1310,6 +1354,32 @@ def normalize_render_guard(args, source_type="screen"):
     if mode not in ("save", "warn", "wait", "fail"):
         raise ValueError("render_guard must be save, warn, wait, or fail")
     return mode
+
+
+def normalize_guard_checks(args):
+    raw = args.get("guard_checks")
+    if raw is None:
+        return list(DEFAULT_GUARD_CHECKS)
+    if isinstance(raw, str):
+        items = [item.strip().lower() for item in raw.replace(",", " ").split() if item.strip()]
+    elif isinstance(raw, list):
+        items = [str(item).strip().lower() for item in raw if str(item).strip()]
+    else:
+        raise ValueError("guard_checks must be an array of strings, a comma-separated string, 'all', or 'none'")
+    if not items:
+        return []
+    if any(item in ("none", "off", "disabled") for item in items):
+        return []
+    if any(item == "all" for item in items):
+        return list(CAPTURE_GUARD_CHECKS.keys())
+    unknown = [item for item in items if item not in CAPTURE_GUARD_CHECKS]
+    if unknown:
+        raise ValueError(f"Unknown guard_checks: {', '.join(unknown)}")
+    normalized = []
+    for item in items:
+        if item not in normalized:
+            normalized.append(item)
+    return normalized
 
 
 def render_retry_options(args, default_wait_for_nonblank=False):
@@ -1350,9 +1420,11 @@ def render_guard_status(source, args):
     final_attempt = timing.get("final_attempt") if isinstance(timing.get("final_attempt"), dict) else {}
     source_type = str(source.get("type") or "screen")
     mode = normalize_render_guard(args, source_type)
-    suspected_unrendered = bool(final_attempt.get("likely_blank", False))
+    checks = normalize_guard_checks(args)
+    issues = capture_guard_issues(source, args, checks)
+    suspected_unrendered = any(issue.get("id") == "unrendered" for issue in issues)
     confirmed = bool(args.get("render_guard_confirmed", False))
-    if not suspected_unrendered:
+    if not issues:
         status = "passed"
     elif confirmed:
         status = "confirmed_save"
@@ -1367,6 +1439,9 @@ def render_guard_status(source, args):
     return {
         "mode": mode,
         "status": status,
+        "enabled_checks": checks,
+        "available_checks": CAPTURE_GUARD_CHECKS,
+        "issues": issues,
         "suspected_unrendered": suspected_unrendered,
         "confirmed": confirmed,
         "final_attempt": final_attempt,
@@ -1376,9 +1451,97 @@ def render_guard_status(source, args):
     }
 
 
+def capture_guard_issues(source, args, checks):
+    timing = source.get("render_timing") if isinstance(source.get("render_timing"), dict) else {}
+    final_attempt = timing.get("final_attempt") if isinstance(timing.get("final_attempt"), dict) else {}
+    attempts = timing.get("attempts") if isinstance(timing.get("attempts"), list) else []
+    capture_box = source.get("capture_box") if isinstance(source.get("capture_box"), dict) else {}
+    window = source.get("window") if isinstance(source.get("window"), dict) else {}
+    issues = []
+
+    if "unrendered" in checks and bool(final_attempt.get("likely_blank", False)):
+        brightness = float(final_attempt.get("brightness") or 0)
+        if brightness <= 3:
+            subtype = "black_or_protected_like"
+        elif brightness >= 252:
+            subtype = "white_or_loading_like"
+        else:
+            subtype = "low_information"
+        issues.append(
+            {
+                "id": "unrendered",
+                "subtype": subtype,
+                "severity": "decision",
+                "message": "Final capture attempt looks blank, uniform, or very low-information.",
+                "evidence": final_attempt,
+            }
+        )
+
+    if "minimized_window" in checks and source.get("type") == "window" and bool(window.get("is_minimized", False)):
+        issues.append(
+            {
+                "id": "minimized_window",
+                "severity": "decision",
+                "message": "The target window is minimized, so window capture may return blank, stale, or incomplete pixels.",
+                "evidence": {"hwnd": window.get("hwnd"), "title": window.get("title"), "process_name": window.get("process_name")},
+            }
+        )
+
+    if "offscreen_window" in checks and source.get("type") == "window":
+        ratio = rect_intersection_ratio(window.get("rect") or capture_box, source.get("virtual_screen") or {})
+        if ratio < 0.98:
+            issues.append(
+                {
+                    "id": "offscreen_window",
+                    "severity": "decision",
+                    "message": "The target window appears partly or fully outside the virtual desktop.",
+                    "evidence": {"visible_ratio": round(ratio, 3), "rect": window.get("rect") or capture_box, "virtual_screen": source.get("virtual_screen")},
+                }
+            )
+
+    if "tiny_capture" in checks:
+        width = int(capture_box.get("width") or 0)
+        height = int(capture_box.get("height") or 0)
+        min_pixels = int(args.get("guard_tiny_min_pixels") or 16)
+        if width > 0 and height > 0 and (width < min_pixels or height < min_pixels):
+            issues.append(
+                {
+                    "id": "tiny_capture",
+                    "severity": "decision",
+                    "message": "The capture box is very small and may be a bad coordinate or target selection.",
+                    "evidence": {"capture_box": capture_box, "min_pixels": min_pixels},
+                }
+            )
+
+    if "stale_frame" in checks and len(attempts) >= 2:
+        hashes = [item.get("sample_hash") for item in attempts if item.get("sample_hash")]
+        if len(hashes) >= 2 and len(set(hashes)) == 1:
+            issues.append(
+                {
+                    "id": "stale_frame",
+                    "severity": "decision",
+                    "message": "Repeated retry attempts returned the same sampled frame.",
+                    "evidence": {"attempt_count": len(hashes), "sample_hash": hashes[-1]},
+                }
+            )
+
+    capture_method = str(source.get("capture_method") or "")
+    if "occlusion_risk" in checks and source.get("type") == "window" and "bbox" in capture_method:
+        issues.append(
+            {
+                "id": "occlusion_risk",
+                "severity": "advisory",
+                "message": "Window capture used a screen-bbox fallback, so another window may have occluded the target.",
+                "evidence": {"capture_method": capture_method, "window": {"hwnd": window.get("hwnd"), "title": window.get("title")}},
+            }
+        )
+
+    return issues
+
+
 def render_guard_warning_payload(source, args):
     guard = render_guard_status(source, args)
-    if not guard["suspected_unrendered"]:
+    if not guard["issues"]:
         return None
     if guard["confirmed"] or guard["mode"] == "save":
         return None
@@ -1388,11 +1551,14 @@ def render_guard_warning_payload(source, args):
     current_retry_count = int(args.get("render_retry_count", 2))
     current_retry_interval_ms = int(args.get("render_retry_interval_ms", 250))
     is_strict_failure = guard["mode"] == "fail"
+    issue_ids = [issue.get("id") for issue in guard["issues"]]
     payload = {
         "ok": not is_strict_failure,
-        "warning": "Suspected unrendered or blank capture. Capture was deferred for a user/agent decision.",
-        "message": "Choose whether to force a capture now, capture later, or auto-wait until the frame appears rendered.",
-        "reason": "suspected_unrendered",
+        "warning": "Capture guard detected possible incomplete output. Capture was deferred for a user/agent decision.",
+        "message": "Choose whether to force a capture now, capture later, auto-wait until the frame appears rendered, or adjust the target before capture.",
+        "reason": "capture_guard_decision",
+        "issue_ids": issue_ids,
+        "suspected_unrendered": guard["suspected_unrendered"],
         "capture_deferred": True,
         "requires_decision": not is_strict_failure,
         "requires_confirmation": not is_strict_failure,
@@ -1416,11 +1582,35 @@ def render_guard_warning_payload(source, args):
                 "note": "Retry until the frame no longer looks blank within runtime limits, then save automatically.",
             },
         },
+        "issue_specific_actions": {},
         "recommended_next": "Choose one of available_actions and call the same capture tool again with those arguments.",
         "privacy": "No screenshot was saved, uploaded, sent to a model, or retried in the background after this decision warning.",
     }
+    if "minimized_window" in issue_ids:
+        payload["issue_specific_actions"]["restore_window_then_capture"] = {
+            "note": "Restore or bring the window visible, then retry with render_guard='wait'.",
+            "render_guard": "wait",
+        }
+    if "offscreen_window" in issue_ids:
+        payload["issue_specific_actions"]["move_window_visible_then_capture"] = {
+            "note": "Move the target window fully onto a display, then retry capture.",
+            "render_guard": "wait",
+        }
+    if "tiny_capture" in issue_ids:
+        payload["issue_specific_actions"]["reselect_region_or_window"] = {
+            "note": "Call list_displays/list_windows or choose a larger region before retrying.",
+        }
+    if "stale_frame" in issue_ids:
+        payload["issue_specific_actions"]["refresh_or_wait_for_change"] = {
+            "note": "Refresh the UI or use watch_change before retrying the capture.",
+            "task": "watch_change",
+        }
+    if "occlusion_risk" in issue_ids:
+        payload["issue_specific_actions"]["bring_window_front_or_capture_screen"] = {
+            "note": "Bring the target window forward or capture the visible screen/region instead of a fallback bbox.",
+        }
     if is_strict_failure:
-        payload["error"] = "Suspected unrendered or blank capture blocked by render_guard='fail'."
+        payload["error"] = "Capture guard blocked suspected incomplete output because render_guard='fail'."
         payload["requires_confirmation"] = False
         payload["requires_decision"] = False
         payload["recommended_next"] = "Use render_guard='warn' or render_guard='wait' if the caller should receive decision options instead of a strict failure."
@@ -1481,6 +1671,7 @@ def grab_window_once(args, status, libs, window):
         "adapter": status["id"],
         "capture_method": capture_method,
         "window": window,
+        "virtual_screen": virtual_screen_rect(),
         "capture_box": window.get("rect"),
         "compatibility_note": "HWND capture is best-effort. Minimized, protected, or GPU-rendered windows may return blank or stale frames.",
     }
@@ -2383,6 +2574,8 @@ def guardian_base_context(args, default_source_label):
         "wait_for_nonblank",
         "render_guard",
         "render_guard_confirmed",
+        "guard_checks",
+        "guard_tiny_min_pixels",
         "render_retry_count",
         "render_retry_interval_ms",
         "runtime_limits",
