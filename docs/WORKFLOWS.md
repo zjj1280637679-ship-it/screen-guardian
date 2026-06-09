@@ -83,6 +83,12 @@ Current default limits:
 - `capture_settle_delay_ms_max`: `5000`
 - `capture_render_retry_count_max`: `8`
 - `capture_render_retry_interval_ms_max`: `2000`
+- `capture_stable_wait_seconds_max`: `10`
+- `capture_stable_interval_ms_min`: `100`
+- `capture_stable_interval_ms_max`: `2000`
+- `capture_error_wait_seconds_max`: `30`
+- `capture_error_poll_interval_ms_min`: `100`
+- `capture_error_poll_interval_ms_max`: `5000`
 - `window_survey_window_count_max`: `100`
 - `window_survey_capture_count_max`: `12`
 - `audio_duration_seconds_max`: `120`
@@ -240,7 +246,17 @@ These defaults catch short UI changes while preserving the no-background-service
 
 ## Render Timing And Delayed Capture
 
-Capture tools accept `delay_seconds` or `settle_delay_ms` when the user wants a screenshot a few seconds later, such as after opening a slow program or waiting for a popup.
+`guardian_perceive` defaults to fast direct capture. Use stackable `capture_modes` only when the user or AI wants a non-default condition before saving:
+
+- `fast`: direct screenshot; this is the default when `capture_modes` is omitted.
+- `delay`: wait first, using `delay_seconds` or a default one-second delay.
+- `wait_render`: retry clearly blank frames and use `render_guard="wait"`.
+- `wait_buffer`: wait until consecutive local samples look visually stable, useful for buffering, animations, and late layout updates.
+- `wait_error`: wait for an explicit error-window title/process signal, then capture the original target or the matching error window.
+
+These modes can be combined, such as `["delay","wait_render","wait_buffer"]`. `wait_error` does not perform OCR, DOM inspection, log parsing, model calls, or hidden monitoring in the ultra-light core; those belong to semantic routes, capture-chain envelopes, or future adapters.
+
+Capture tools also accept `delay_seconds` or `settle_delay_ms` directly when the user wants a screenshot a few seconds later, such as after opening a slow program or waiting for a popup.
 
 Window capture defaults to `wait_for_nonblank=true`. If the first frame is clearly blank, black, or white with very low visual information, Screen Guardian retries briefly before saving. Use `render_retry_count` and `render_retry_interval_ms` to tune that behavior within runtime limits.
 

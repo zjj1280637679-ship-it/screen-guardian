@@ -24,6 +24,8 @@ For "report all program windows" tasks, use `guardian_survey_windows` instead of
 
 Use `quiet_preferred=false` only when the user accepts visible-screen fallback behavior, such as bringing a target forward or capturing a known visible region. Quiet preference is a strategy default, not a guarantee that every application can be captured while hidden, minimized, protected, or GPU-rendered.
 
+For one-shot application captures, `guardian_perceive` can stack pre-capture modes such as `delay`, `wait_render`, `wait_buffer`, and `wait_error`. These are bounded foreground conditions for one capture call, not a hidden background monitor.
+
 Webpage capture is a browser-rendered route. It does not need the page to be in the desktop foreground. It navigates an explicit URL with an optional Playwright/Chromium adapter, then captures the viewport, full page, element, or nested scroll container. `list_capture_routes` reports `webpage.active=false` and `nested_scroll.active=false` until the persistent `webpage_capture` feature flag is enabled and optional Playwright dependencies are installed.
 
 ## Nested Scroll Containers

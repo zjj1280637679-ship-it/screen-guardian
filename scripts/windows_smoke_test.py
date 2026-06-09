@@ -203,7 +203,14 @@ def main():
         isolated_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "APPDATA": appdata, "SCREEN_GUARDIAN_TOOL_SURFACE": "full"}
         limits_payload = call_tool(
             "set_runtime_limits",
-            {"limits": {"watch_duration_seconds_max": 1, "capture_settle_delay_ms_max": 1, "window_survey_capture_count_max": 0}},
+            {
+                "limits": {
+                    "watch_duration_seconds_max": 1,
+                    "capture_settle_delay_ms_max": 1,
+                    "capture_stable_wait_seconds_max": 0,
+                    "window_survey_capture_count_max": 0,
+                }
+            },
             env_updates=isolated_env,
         )
         require_ok("set_runtime_limits isolated", limits_payload)
@@ -254,6 +261,19 @@ def main():
         if survey_limit_payload.get("ok") or "no more than 0" not in str(survey_limit_payload.get("error", "")):
             raise SmokeFailure(f"guardian_survey_windows loosened a persistent capture max: {survey_limit_payload}")
         checks.append({"name": "guardian_survey_windows_capture_limit_cannot_loosen", "ok": True})
+
+        stable_limit_payload = call_tool(
+            "guardian_perceive",
+            {
+                "capture_modes": ["wait_buffer"],
+                "stable_wait_seconds": 0.1,
+                "runtime_limits": {"capture_stable_wait_seconds_max": 5},
+            },
+            env_updates=isolated_env,
+        )
+        if stable_limit_payload.get("ok") or "no more than 0" not in str(stable_limit_payload.get("error", "")):
+            raise SmokeFailure(f"guardian_perceive loosened a persistent stable wait max: {stable_limit_payload}")
+        checks.append({"name": "guardian_perceive_stable_wait_cannot_loosen_limits", "ok": True})
 
         raw_disabled_payload = call_tool(
             "guardian_run_exec",
@@ -371,6 +391,60 @@ def main():
                 raise SmokeFailure(f"capture_region reported a missing file: {path}")
             checks.append({"name": "tiny_region_capture", "ok": True, "path": str(path)})
 
+            fast_payload = call_tool(
+                "guardian_perceive",
+                {
+                    "task": "quick_look",
+                    "target": {
+                        "type": "region",
+                        "box": {
+                            "left": 0,
+                            "top": 0,
+                            "width": 1,
+                            "height": 1,
+                            "relative_to_display": True,
+                        },
+                    },
+                    "source_label": "guardian-fast-smoke",
+                    "output_dir": tmp,
+                },
+                env_updates=explicit_env,
+            )
+            require_ok("guardian_perceive fast default", fast_payload)
+            fast_strategy = fast_payload.get("capture_strategy") or {}
+            if fast_strategy.get("modes") != ["fast"] or fast_strategy.get("default_fast") is not True:
+                raise SmokeFailure(f"guardian_perceive did not report fast default strategy: {fast_payload}")
+            checks.append({"name": "guardian_perceive_fast_default", "ok": True, "path": fast_payload.get("path")})
+
+            stable_payload = call_tool(
+                "guardian_perceive",
+                {
+                    "task": "quick_look",
+                    "capture_modes": ["wait_buffer"],
+                    "stable_wait_seconds": 0.5,
+                    "stable_interval_ms": 100,
+                    "stable_required_samples": 1,
+                    "target": {
+                        "type": "region",
+                        "box": {
+                            "left": 0,
+                            "top": 0,
+                            "width": 1,
+                            "height": 1,
+                            "relative_to_display": True,
+                        },
+                    },
+                    "source_label": "guardian-buffer-smoke",
+                    "output_dir": tmp,
+                },
+                env_updates=explicit_env,
+            )
+            require_ok("guardian_perceive wait_buffer", stable_payload)
+            stable_strategy = stable_payload.get("capture_strategy") or {}
+            if stable_strategy.get("modes") != ["wait_buffer"] or not isinstance(stable_strategy.get("stable_wait"), dict):
+                raise SmokeFailure(f"guardian_perceive did not record wait_buffer strategy: {stable_payload}")
+            checks.append({"name": "guardian_perceive_wait_buffer", "ok": True, "path": stable_payload.get("path")})
+
             guardian_payload = call_tool(
                 "guardian_perceive",
                 {
@@ -406,32 +480,6 @@ def main():
                 window = wait_for_window("Screen Guardian Watch Smoke", explicit_env)
                 if not window:
                     raise SmokeFailure("changing watch smoke window did not appear")
-                survey_capture_payload = call_tool(
-                    "guardian_survey_windows",
-                    {
-                        "capture_mode": "hold_file",
-                        "hwnd": int(window["hwnd"]),
-                        "limit": 1,
-                        "capture_limit": 1,
-                        "context_budget": "hold_file",
-                        "render_guard": "save",
-                        "output_dir": tmp,
-                    },
-                    env_updates=explicit_env,
-                )
-                require_ok("guardian_survey_windows hold_file capture", survey_capture_payload)
-                if int(survey_capture_payload.get("saved_count") or 0) < 1:
-                    raise SmokeFailure(f"guardian_survey_windows did not save a hold-file capture: {survey_capture_payload}")
-                survey_capture_path = Path(str((survey_capture_payload.get("captures") or [{}])[0].get("result", {}).get("path") or ""))
-                if not survey_capture_path.exists():
-                    raise SmokeFailure(f"guardian_survey_windows reported a missing file: {survey_capture_path}")
-                checks.append(
-                    {
-                        "name": "guardian_survey_windows_hold_file_capture",
-                        "ok": True,
-                        "saved_count": survey_capture_payload.get("saved_count"),
-                    }
-                )
                 watch_change_payload = call_tool(
                     "guardian_perceive",
                     {
@@ -458,6 +506,53 @@ def main():
                         "ok": True,
                         "events": watch_change_payload.get("events"),
                         "captures": len(watch_change_payload.get("captures") or []),
+                    }
+                )
+
+                error_wait_payload = call_tool(
+                    "guardian_perceive",
+                    {
+                        "task": "capture_window",
+                        "capture_modes": ["wait_error"],
+                        "error_title_contains": "Screen Guardian Watch Smoke",
+                        "error_capture_target": "matching_window",
+                        "error_wait_seconds": 2,
+                        "render_guard": "save",
+                        "output_dir": tmp,
+                    },
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_perceive wait_error", error_wait_payload)
+                error_strategy = error_wait_payload.get("capture_strategy") or {}
+                error_wait = error_strategy.get("error_wait") if isinstance(error_strategy.get("error_wait"), dict) else {}
+                if error_wait.get("status") != "detected":
+                    raise SmokeFailure(f"guardian_perceive did not detect explicit error-window signal: {error_wait_payload}")
+                checks.append({"name": "guardian_perceive_wait_error", "ok": True, "path": error_wait_payload.get("path")})
+
+                survey_capture_payload = call_tool(
+                    "guardian_survey_windows",
+                    {
+                        "capture_mode": "hold_file",
+                        "hwnd": int(window["hwnd"]),
+                        "limit": 1,
+                        "capture_limit": 1,
+                        "context_budget": "hold_file",
+                        "render_guard": "save",
+                        "output_dir": tmp,
+                    },
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_survey_windows hold_file capture", survey_capture_payload)
+                if int(survey_capture_payload.get("saved_count") or 0) < 1:
+                    raise SmokeFailure(f"guardian_survey_windows did not save a hold-file capture: {survey_capture_payload}")
+                survey_capture_path = Path(str((survey_capture_payload.get("captures") or [{}])[0].get("result", {}).get("path") or ""))
+                if not survey_capture_path.exists():
+                    raise SmokeFailure(f"guardian_survey_windows reported a missing file: {survey_capture_path}")
+                checks.append(
+                    {
+                        "name": "guardian_survey_windows_hold_file_capture",
+                        "ok": True,
+                        "saved_count": survey_capture_payload.get("saved_count"),
                     }
                 )
             finally:

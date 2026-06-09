@@ -27,8 +27,11 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Save selected window evidence | `guardian_survey_windows` with `capture_mode="hold_file"` | Bounded quiet window captures saved as marked local files for later selective review |
 | Short change watch | `guardian_perceive` with `task="watch_change"` | Existing bounded `watch_screen` behavior and runtime limits |
 | Hold file out of context | `guardian_perceive` with `task="hold_file"` or `context_budget="hold_file"` | Local save with `context_policy="hold_file"` and `marked_file_only=true` |
-| Delayed capture | Any capture intent with `delay_seconds` | Wait before capture, bounded by runtime limits |
-| Render-complete capture | Window capture with `wait_for_nonblank=true` | Retry clearly blank frames before saving |
+| Fast capture | Omit `capture_modes` or pass `capture_modes=["fast"]` | Direct screenshot with no extra strategy wait |
+| Delayed capture | `capture_modes=["delay"]` plus optional `delay_seconds` | Wait before capture, bounded by runtime limits |
+| Render-complete capture | `capture_modes=["wait_render"]` | Retry clearly blank frames before saving |
+| Buffer/stability capture | `capture_modes=["wait_buffer"]` | Wait until consecutive local samples look visually stable before the final screenshot |
+| Error-signal capture | `capture_modes=["wait_error"]` plus an error title/process signal | Wait for an explicit error-window signal, then capture the original target or matching error window |
 | Suspected-unrendered protection | Window capture with `render_guard="wait"` or `render_guard="warn"` | Auto-wait for a nonblank frame or return decision actions: force now, capture later, or auto-wait |
 | Choose a quiet webpage route | `list_capture_routes` | Compare desktop, application, webpage, `nested_scroll`, and mixed routes before capturing |
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
@@ -36,6 +39,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
 
 `guardian_survey_windows` is the batch version of that strategy. It does not start a monitor, upload images, or call a model. It first returns a window-status report. If captures are requested, `window_survey_window_count_max` and `window_survey_capture_count_max` limit how many windows can be reported or saved in one call, and per-call limits can only tighten those bounds.
+
+`capture_modes` are stackable. For example, `["delay","wait_render","wait_buffer"]` waits a fixed delay, retries blank render frames, then waits for visual stability before saving. `wait_error` is intentionally narrow in the ultra-light core: it detects explicit window-title/process signals such as an error dialog. OCR, DOM, log, or model-detected errors should use future semantic routes or `prepare_capture_chain`/monitor envelopes.
 
 `read_text` keeps its name for compatibility with existing callers. In the current ultra-light core it returns a sharpened text-oriented image and `text_handling.ocr_available=false`; actual OCR remains a future route or external model handoff.
 

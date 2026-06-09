@@ -36,6 +36,12 @@ DEFAULT_LIMITS = {
     "capture_settle_delay_ms_max": 5000,
     "capture_render_retry_count_max": 8,
     "capture_render_retry_interval_ms_max": 2000,
+    "capture_stable_wait_seconds_max": 10,
+    "capture_stable_interval_ms_min": 100,
+    "capture_stable_interval_ms_max": 2000,
+    "capture_error_wait_seconds_max": 30,
+    "capture_error_poll_interval_ms_min": 100,
+    "capture_error_poll_interval_ms_max": 5000,
     "window_survey_window_count_max": 100,
     "window_survey_capture_count_max": 12,
     "jpeg_quality_min": 1,
@@ -982,6 +988,8 @@ def grab_screen_image(args):
     settle_delay = capture_settle_delay_seconds(args)
     if settle_delay:
         time.sleep(settle_delay)
+    if capture_modes_include(args, "wait_buffer"):
+        wait_for_stable_frames(args, lambda: grab_screen_once(args))
     wait_for_nonblank, retry_count, retry_interval = render_retry_options(args, default_wait_for_nonblank=False)
     attempts = []
     image = source = libs = None
@@ -993,6 +1001,7 @@ def grab_screen_image(args):
             break
         time.sleep(retry_interval)
     source = with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank)
+    source = with_capture_strategy(source, args)
     return image, source, libs
 
 
@@ -1204,6 +1213,7 @@ def save_capture_image(image, source, libs, args):
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": source,
         "context": capture_context(args),
+        "capture_strategy": copy.deepcopy(strategy_from_args(args)),
         "format": fmt,
         "path": str(output_path),
         "original_size": {"width": original_width, "height": original_height},
@@ -1254,6 +1264,7 @@ def save_capture_image(image, source, libs, args):
         "analysis": analysis_after,
         "text_handling": metadata["text_handling"],
         "render_guard": render_guard,
+        "capture_strategy": metadata["capture_strategy"],
         "context": metadata["context"],
         "cursor_included": False,
         "privacy": "Saved locally only.",
@@ -1691,6 +1702,133 @@ def render_retry_options(args, default_wait_for_nonblank=False):
     check_min_max(retry_count, 0, limits.get("capture_render_retry_count_max"), "render_retry_count")
     check_min_max(retry_interval_ms, 0, limits.get("capture_render_retry_interval_ms_max"), "render_retry_interval_ms")
     return wait_for_nonblank, retry_count, retry_interval_ms / 1000.0
+
+
+def normalize_capture_modes(args):
+    raw = args.get("capture_modes")
+    if raw is None:
+        raw = args.get("capture_strategy")
+    if raw is None:
+        return ["fast"]
+    if isinstance(raw, str):
+        items = [item.strip().lower() for item in raw.replace(",", " ").split() if item.strip()]
+    elif isinstance(raw, list):
+        items = [str(item).strip().lower() for item in raw if str(item).strip()]
+    else:
+        raise ValueError("capture_modes must be an array of strings or a comma-separated string")
+    if not items:
+        return ["fast"]
+    aliases = {
+        "direct": "fast",
+        "quick": "fast",
+        "quick_capture": "fast",
+        "time_delay": "delay",
+        "delayed": "delay",
+        "render": "wait_render",
+        "render_complete": "wait_render",
+        "render_ready": "wait_render",
+        "buffer": "wait_buffer",
+        "buffer_stable": "wait_buffer",
+        "stable": "wait_buffer",
+        "wait_stable": "wait_buffer",
+        "error": "wait_error",
+        "error_text": "wait_error",
+        "error_window": "wait_error",
+    }
+    allowed = {"fast", "delay", "wait_render", "wait_buffer", "wait_error"}
+    normalized = []
+    for item in items:
+        item = aliases.get(item, item)
+        if item not in allowed:
+            raise ValueError("capture_modes must contain fast, delay, wait_render, wait_buffer, or wait_error")
+        if item not in normalized:
+            normalized.append(item)
+    if len(normalized) > 1 and "fast" in normalized:
+        normalized = [item for item in normalized if item != "fast"]
+    return normalized or ["fast"]
+
+
+def strategy_from_args(args):
+    strategy = args.get("_capture_strategy")
+    return strategy if isinstance(strategy, dict) else {}
+
+
+def capture_modes_include(args, mode):
+    return mode in normalize_capture_modes(args)
+
+
+def stable_wait_options(args):
+    limits = runtime_limits(args)
+    timeout = float(args.get("stable_wait_seconds", args.get("buffer_wait_seconds", 2.0)))
+    interval_ms = float(args.get("stable_interval_ms", args.get("buffer_interval_ms", 250)))
+    threshold = float(args.get("stable_threshold", args.get("buffer_stable_threshold", 1.5)))
+    required_samples = int(args.get("stable_required_samples", 2))
+    if timeout < 0:
+        raise ValueError("stable_wait_seconds must be zero or greater")
+    if interval_ms <= 0:
+        raise ValueError("stable_interval_ms must be greater than zero")
+    if threshold < 0:
+        raise ValueError("stable_threshold must be zero or greater")
+    if required_samples < 1:
+        raise ValueError("stable_required_samples must be at least 1")
+    check_min_max(timeout, 0, limits.get("capture_stable_wait_seconds_max"), "stable_wait_seconds")
+    check_min_max(interval_ms, limits.get("capture_stable_interval_ms_min"), limits.get("capture_stable_interval_ms_max"), "stable_interval_ms")
+    return timeout, interval_ms / 1000.0, threshold, required_samples
+
+
+def wait_for_stable_frames(args, grab_once):
+    timeout, interval, threshold, required_samples = stable_wait_options(args)
+    strategy = args.setdefault("_capture_strategy", {})
+    if timeout <= 0:
+        strategy["stable_wait"] = {"enabled": True, "skipped": True, "reason": "stable_wait_seconds is zero"}
+        return
+    deadline = time.time() + timeout
+    previous = None
+    stable_count = 0
+    samples = []
+    libs = None
+    while time.time() <= deadline:
+        image, _source, libs = grab_once()
+        metrics = image_blank_metrics(image, libs)
+        diff = None
+        stable = False
+        if previous is not None:
+            diff = image_difference_score(image, previous, libs)
+            stable = diff <= threshold
+            stable_count = stable_count + 1 if stable else 0
+        samples.append(
+            {
+                "sample": len(samples) + 1,
+                "stable": bool(stable),
+                "diff": None if diff is None else round(float(diff), 3),
+                "likely_blank": bool(metrics.get("likely_blank", False)),
+                "sample_hash": metrics.get("sample_hash"),
+            }
+        )
+        previous = image
+        if stable_count >= required_samples:
+            break
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval, max(0.0, remaining)))
+    strategy["stable_wait"] = {
+        "enabled": True,
+        "status": "stable" if stable_count >= required_samples else "timeout",
+        "samples": samples,
+        "threshold": threshold,
+        "required_samples": required_samples,
+        "timeout_seconds": timeout,
+        "interval_seconds": round(interval, 3),
+        "note": "wait_buffer waits until consecutive local captures look stable before the final screenshot.",
+    }
+
+
+def with_capture_strategy(source, args):
+    strategy = strategy_from_args(args)
+    if strategy:
+        source["capture_strategy"] = copy.deepcopy(strategy)
+    return source
 
 
 def with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank):
@@ -2408,6 +2546,8 @@ def grab_known_window_image(args, window, status=None, libs=None):
     settle_delay = capture_settle_delay_seconds(args)
     if settle_delay:
         time.sleep(settle_delay)
+    if capture_modes_include(args, "wait_buffer"):
+        wait_for_stable_frames(args, lambda: grab_window_once(args, status, libs, window))
     wait_for_nonblank, retry_count, retry_interval = render_retry_options(args, default_wait_for_nonblank=True)
     attempts = []
     image = source = None
@@ -2419,6 +2559,7 @@ def grab_known_window_image(args, window, status=None, libs=None):
             break
         time.sleep(retry_interval)
     source = with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank)
+    source = with_capture_strategy(source, args)
     return image, source, libs
 
 
@@ -2654,6 +2795,12 @@ def action_get_runtime_settings(args):
                 "capture_settle_delay_ms_max": "milliseconds",
                 "capture_render_retry_count_max": "attempts",
                 "capture_render_retry_interval_ms_max": "milliseconds",
+                "capture_stable_wait_seconds_max": "seconds",
+                "capture_stable_interval_ms_min": "milliseconds",
+                "capture_stable_interval_ms_max": "milliseconds",
+                "capture_error_wait_seconds_max": "seconds",
+                "capture_error_poll_interval_ms_min": "milliseconds",
+                "capture_error_poll_interval_ms_max": "milliseconds",
                 "window_survey_window_count_max": "windows",
                 "window_survey_capture_count_max": "captures",
                 "jpeg_quality_min": "encoder quality",
@@ -3481,6 +3628,13 @@ def guardian_base_context(args, default_source_label):
         "guard_tiny_min_pixels",
         "render_retry_count",
         "render_retry_interval_ms",
+        "stable_wait_seconds",
+        "stable_interval_ms",
+        "stable_threshold",
+        "stable_required_samples",
+        "buffer_wait_seconds",
+        "buffer_interval_ms",
+        "buffer_stable_threshold",
         "runtime_limits",
         "feature_flags",
     ):
@@ -3528,6 +3682,93 @@ def apply_guardian_target(forwarded, target):
     return target_type
 
 
+def error_wait_options(args):
+    limits = runtime_limits(args)
+    timeout = float(args.get("error_wait_seconds", 10))
+    interval_ms = float(args.get("error_poll_interval_ms", 500))
+    if timeout < 0:
+        raise ValueError("error_wait_seconds must be zero or greater")
+    if interval_ms <= 0:
+        raise ValueError("error_poll_interval_ms must be greater than zero")
+    check_min_max(timeout, 0, limits.get("capture_error_wait_seconds_max"), "error_wait_seconds")
+    check_min_max(interval_ms, limits.get("capture_error_poll_interval_ms_min"), limits.get("capture_error_poll_interval_ms_max"), "error_poll_interval_ms")
+    return timeout, interval_ms / 1000.0
+
+
+def error_signal_filters(args):
+    filters = {}
+    if args.get("error_title_contains"):
+        filters["title_contains"] = str(args.get("error_title_contains"))
+    if args.get("error_title_contains_any"):
+        filters["title_contains_any"] = normalized_tags(args.get("error_title_contains_any"))
+    if args.get("error_process_name"):
+        filters["process_name"] = str(args.get("error_process_name"))
+    if args.get("error_process_names"):
+        filters["process_names"] = normalized_tags(args.get("error_process_names"))
+    if not filters and args.get("error_text"):
+        filters["title_contains"] = str(args.get("error_text"))
+    return filters
+
+
+def wait_for_error_signal(args, forwarded):
+    filters = error_signal_filters(args)
+    if not filters:
+        raise ValueError("wait_error requires error_title_contains, error_title_contains_any, error_process_name, error_process_names, or error_text")
+    timeout, interval = error_wait_options(args)
+    deadline = time.time() + timeout
+    samples = 0
+    matched = []
+    while True:
+        samples += 1
+        matched = enum_windows(filters)
+        if matched or time.time() >= deadline:
+            break
+        time.sleep(min(interval, max(0.0, deadline - time.time())))
+    strategy = forwarded.setdefault("_capture_strategy", {})
+    strategy["error_wait"] = {
+        "enabled": True,
+        "filters": filters,
+        "status": "detected" if matched else "timeout",
+        "samples": samples,
+        "timeout_seconds": timeout,
+        "interval_seconds": round(interval, 3),
+        "matched_windows": summarize_windows(matched, 5),
+        "note": "wait_error currently detects explicit window-title/process signals; OCR, DOM, and log parsing belong to future semantic routes or caller-provided signals.",
+    }
+    if not matched:
+        raise RuntimeError("No matching error signal was detected before timeout")
+    capture_target = str(args.get("error_capture_target") or "original").strip().lower()
+    if capture_target not in ("original", "matching_window"):
+        raise ValueError("error_capture_target must be original or matching_window")
+    if capture_target == "matching_window":
+        forwarded["hwnd"] = int(matched[0].get("hwnd"))
+        forwarded.pop("title_contains", None)
+        forwarded.pop("exact_title", None)
+        forwarded.pop("process_name", None)
+        return "window"
+    return None
+
+
+def apply_guardian_capture_modes(forwarded, args):
+    modes = normalize_capture_modes(args)
+    forwarded["capture_modes"] = list(modes)
+    strategy = forwarded.setdefault("_capture_strategy", {})
+    strategy["modes"] = list(modes)
+    strategy["default_fast"] = modes == ["fast"]
+    strategy["note"] = "Default mode is fast direct capture. Optional modes add explicit delay, render-ready retry, buffer-stability wait, or error-signal wait."
+    if "delay" in modes:
+        forwarded.setdefault("delay_seconds", float(args.get("delay_seconds") or 1.0))
+    if "wait_render" in modes:
+        forwarded["wait_for_nonblank"] = True
+        forwarded.setdefault("render_guard", "wait")
+        forwarded.setdefault("render_retry_count", 4)
+        forwarded.setdefault("render_retry_interval_ms", 500)
+    else:
+        forwarded.setdefault("wait_for_nonblank", False)
+        forwarded.setdefault("render_guard", "save")
+    return modes
+
+
 def action_guardian_perceive(args):
     try:
         task = str(args.get("task") or "quick_look").strip().lower()
@@ -3535,6 +3776,7 @@ def action_guardian_perceive(args):
         if task not in allowed_tasks:
             return error("task must be quick_look, read_text, debug_ui, capture_window, watch_change, or hold_file")
         forwarded = guardian_base_context(args, f"guardian-{task}")
+        modes = apply_guardian_capture_modes(forwarded, args)
         budget = apply_guardian_budget(forwarded, args.get("context_budget") or "normal")
         if task == "hold_file":
             forwarded["context_policy"] = "hold_file"
@@ -3551,6 +3793,10 @@ def action_guardian_perceive(args):
         target_type = apply_guardian_target(forwarded, args.get("target"))
         if task == "capture_window":
             target_type = "window"
+        if "wait_error" in modes:
+            detected_target_type = wait_for_error_signal(args, forwarded)
+            if detected_target_type:
+                target_type = detected_target_type
         if task == "watch_change":
             return action_watch_screen(forwarded)
         if target_type == "window":

@@ -351,6 +351,85 @@ const captureChainProperties = {
   feature_flags: imageOutputProperties.feature_flags,
 };
 
+const captureModeProperties = {
+  capture_modes: {
+    type: "array",
+    items: {
+      type: "string",
+      enum: ["fast", "delay", "wait_render", "wait_buffer", "wait_stable", "wait_error"],
+    },
+    description: "Stackable AI-first capture modes. Omit for fast direct capture. Use delay, wait_render, wait_buffer/wait_stable, and wait_error only when the caller wants explicit waiting.",
+  },
+  capture_strategy: {
+    type: "string",
+    description: "Comma-separated alias for capture_modes, such as 'delay wait_render wait_buffer'.",
+  },
+  stable_wait_seconds: {
+    type: "number",
+    minimum: 0,
+    default: 2,
+    description: "Maximum seconds to wait for wait_buffer/wait_stable before final capture. Bounded by runtime limits.",
+  },
+  stable_interval_ms: {
+    type: "integer",
+    minimum: 1,
+    default: 250,
+    description: "Sampling interval for wait_buffer/wait_stable. Bounded by runtime limits.",
+  },
+  stable_threshold: {
+    type: "number",
+    minimum: 0,
+    default: 1.5,
+    description: "Average pixel-difference threshold below which consecutive samples count as stable.",
+  },
+  stable_required_samples: {
+    type: "integer",
+    minimum: 1,
+    default: 2,
+    description: "Number of consecutive stable comparisons required before final capture.",
+  },
+  error_wait_seconds: {
+    type: "number",
+    minimum: 0,
+    default: 10,
+    description: "Maximum seconds to wait for wait_error before returning an error. Bounded by runtime limits.",
+  },
+  error_poll_interval_ms: {
+    type: "integer",
+    minimum: 1,
+    default: 500,
+    description: "Polling interval for wait_error. Bounded by runtime limits.",
+  },
+  error_title_contains: {
+    type: "string",
+    description: "Window-title text that signals an error for wait_error.",
+  },
+  error_title_contains_any: {
+    type: "array",
+    items: { type: "string" },
+    description: "Any window-title text that signals an error for wait_error.",
+  },
+  error_process_name: {
+    type: "string",
+    description: "Process-name text that signals an error for wait_error.",
+  },
+  error_process_names: {
+    type: "array",
+    items: { type: "string" },
+    description: "Any process-name text that signals an error for wait_error.",
+  },
+  error_text: {
+    type: "string",
+    description: "Caller-provided error text used as a title signal in the ultra-light implementation. OCR/DOM error detection belongs to future semantic routes.",
+  },
+  error_capture_target: {
+    type: "string",
+    enum: ["original", "matching_window"],
+    default: "original",
+    description: "When wait_error detects an error window, capture the original target or the matching error window.",
+  },
+};
+
 const audioCommonProperties = {
   output_dir: imageOutputProperties.output_dir,
   output_dirs: imageOutputProperties.output_dirs,
@@ -446,6 +525,7 @@ const tools = [
         },
         output_dir: imageOutputProperties.output_dir,
         source_label: imageOutputProperties.source_label,
+        ...captureModeProperties,
         delay_seconds: imageOutputProperties.delay_seconds,
         settle_delay_ms: imageOutputProperties.settle_delay_ms,
         wait_for_nonblank: imageOutputProperties.wait_for_nonblank,

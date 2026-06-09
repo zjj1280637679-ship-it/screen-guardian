@@ -28,7 +28,9 @@ Screen Guardian exposes a broad expert tool surface, but the default MCP surface
 
 The normal tools are safe wrappers. They do not bypass feature flags, runtime limits, cache routing, local-only defaults, or the no-hidden-upload/no-hidden-scheduler boundary. The break-glass execution tools are different: they can run local code, but only when visibly enabled and confirmed.
 
-For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
+`guardian_perceive` defaults to fast direct capture. When the user or AI wants a non-default strategy, pass stackable `capture_modes`: `delay` for delayed screenshots, `wait_render` for render-complete retry, `wait_buffer` for visual-stability/buffer settling before the final screenshot, and `wait_error` for capturing after an explicit error-window signal. These modes can be combined, for example `["delay","wait_render","wait_buffer"]`.
+
+For slow or older systems, the lower-level timing controls are still available: `delay_seconds`, `wait_for_nonblank`, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
 
