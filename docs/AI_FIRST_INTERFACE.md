@@ -24,6 +24,7 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Hold file out of context | `guardian_perceive` with `task="hold_file"` or `context_budget="hold_file"` | Local save with `context_policy="hold_file"` and `marked_file_only=true` |
 | Delayed capture | Any capture intent with `delay_seconds` | Wait before capture, bounded by runtime limits |
 | Render-complete capture | Window capture with `wait_for_nonblank=true` | Retry clearly blank frames before saving |
+| Suspected-unrendered protection | Window capture with `render_guard="wait"` or `render_guard="warn"` | Auto-wait for a nonblank frame or return a confirmation warning before saving |
 
 ## Context Budget Defaults
 

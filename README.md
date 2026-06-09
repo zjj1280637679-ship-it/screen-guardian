@@ -25,7 +25,7 @@ Screen Guardian exposes a broad expert tool surface, but AI agents should usuall
 
 The normal tools are safe wrappers. They do not bypass feature flags, runtime limits, cache routing, local-only defaults, or the no-hidden-upload/no-hidden-scheduler boundary. The break-glass execution tools are different: they can run local code, but only when visibly enabled and confirmed.
 
-For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, and `watch_change` for screen transitions or popups.
+For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered confirmation warnings, and `watch_change` for screen transitions or popups.
 
 See [docs/AI_FIRST_INTERFACE.md](docs/AI_FIRST_INTERFACE.md) for the intuitive task mapping.
 See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered command catalog and break-glass execution model.

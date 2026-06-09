@@ -138,7 +138,7 @@ This preserves the "private vision company" idea without turning the plugin into
 | Keep visible data local by default | Screen/audio data is sensitive | local cache, hold-file policy, no hidden upload |
 | Let fuzzy requests become explicit workflows | Natural language is useful, but unbounded action is risky | workflow envelopes, decision policies, monitor profiles |
 | Support older systems and missing dependencies | Users should not lose visual access because one path fails | adapter discovery, robust Python/runtime strategy, optional helper exe |
-| Capture after rendering | Slow machines often show blank frames | delay, settle delay, nonblank retry |
+| Capture after rendering | Slow machines often show blank frames | delay, settle delay, nonblank retry, suspected-unrendered warning |
 | Use structured data before pixels when possible | Structured refs are smaller and more reliable | future browser/OS accessibility adapters |
 | Use pixels when structure is missing | Games, remote desktops, broken apps, and canvas UIs need vision | screenshot, OCR, screen parser, narration routes |
 | Keep heavy work inactive until needed | Audio/video/OCR/model routes can be expensive | persistent feature flags and route activation |

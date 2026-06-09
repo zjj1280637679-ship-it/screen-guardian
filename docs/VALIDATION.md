@@ -22,7 +22,7 @@ This verifies:
 - design principles are represented in docs and skill guidance
 - tool layers are represented as core tools, local control tools, and experimental envelope tools
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
-- delayed capture and render-complete retry controls are covered as timing safeguards for slow or older systems
+- delayed capture, render-complete retry, and suspected-unrendered guard controls are covered as timing safeguards for slow or older systems
 - safety boundaries are documented, including local-only defaults, no automatic uploads, no arbitrary decision-code execution, and no hidden scheduler
 - anti-abuse and disclaimer language is present for unsupported bypass or unauthorized-use scenarios
 - text files are valid UTF-8, README command examples stay ASCII-only, and common mojibake patterns are rejected

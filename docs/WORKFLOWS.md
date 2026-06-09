@@ -235,4 +235,13 @@ Capture tools accept `delay_seconds` or `settle_delay_ms` when the user wants a 
 
 Window capture defaults to `wait_for_nonblank=true`. If the first frame is clearly blank, black, or white with very low visual information, Screen Guardian retries briefly before saving. Use `render_retry_count` and `render_retry_interval_ms` to tune that behavior within runtime limits.
 
+Use `render_guard` when the capture should not quietly save a likely unrendered frame:
+
+- `render_guard="save"` keeps the old behavior and saves even if the final frame still looks blank.
+- `render_guard="warn"` returns a suspected-unrendered warning before saving; set `render_guard_confirmed=true` when the blank frame is expected.
+- `render_guard="wait"` forces render-aware retry and only saves when the final frame no longer looks blank; if the retry window expires, it returns the warning instead of saving.
+- `render_guard="fail"` blocks suspected-unrendered saves for stricter automation.
+
+The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
+
 For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.

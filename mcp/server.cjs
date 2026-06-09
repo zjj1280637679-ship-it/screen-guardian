@@ -59,6 +59,16 @@ const imageOutputProperties = {
     type: "boolean",
     description: "When true, retry clearly blank captures before saving. Window capture defaults to true when omitted.",
   },
+  render_guard: {
+    type: "string",
+    enum: ["save", "warn", "wait", "fail"],
+    description: "Protection mode for suspected unrendered blank captures. save keeps old behavior, warn returns a confirmation warning before saving, wait retries until nonblank within limits then warns, and fail blocks blank saves.",
+  },
+  render_guard_confirmed: {
+    type: "boolean",
+    default: false,
+    description: "Set true only after confirming that a suspected blank/unrendered frame should still be saved.",
+  },
   render_retry_count: {
     type: "integer",
     minimum: 0,

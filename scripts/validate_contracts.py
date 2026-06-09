@@ -119,7 +119,7 @@ DESIGN_COVERAGE = {
 SCENARIO_COVERAGE = {
     "ai quick look facade": ["quick look", "guardian_perceive", "quick_look"],
     "hold file context": ["hold file", "hold_file", "file_marked_only"],
-    "render timing capture": ["delay_seconds", "wait_for_nonblank", "render_retry_count"],
+    "render timing capture": ["delay_seconds", "wait_for_nonblank", "render_retry_count", "render_guard"],
     "registered command runtime": ["guardian_list_commands", "guardian_run_command", "command_id"],
     "break-glass execution": ["guardian_prepare_exec", "guardian_run_exec", "raw_local_exec"],
     "older system capture": ["older windows", "native screen capture", "computer use"],
@@ -285,6 +285,8 @@ def check_static_contracts() -> CheckSet:
         "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],
         "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
+        "render guard warns before saving suspected blank output": ["render_guard_warning_payload", "suspected_unrendered", "render_guard_confirmed"],
+        "render-aware command defaults to wait guard": ['"id": "perceive.window.after_render"', '"render_guard": "wait"'],
         "window capture retries blank frames by default": ["default_wait_for_nonblank=True", "image_blank_metrics", "render_retry_options"],
         "registered commands map through a registry": ["CAPABILITY_COMMANDS", "action_guardian_list_commands", "action_guardian_run_command"],
         "run_command rejects arbitrary code strings": ["guardian_run_command only runs registry entries", "command_id is required"],

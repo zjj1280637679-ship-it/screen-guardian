@@ -224,10 +224,10 @@ CAPABILITY_COMMANDS = [
         "execution_mode": "direct",
         "maps_to": "guardian_perceive",
         "required_features": ["window_capture"],
-        "default_args": {"task": "capture_window", "wait_for_nonblank": True, "render_retry_count": 2, "context_budget": "normal"},
+        "default_args": {"task": "capture_window", "wait_for_nonblank": True, "render_guard": "wait", "render_retry_count": 2, "context_budget": "normal"},
         "side_effects": ["local_file_write"],
         "context_strategy": "return_path",
-        "safety_note": "Retries clearly blank frames within runtime limits.",
+        "safety_note": "Retries clearly blank frames within runtime limits and warns before saving suspected unrendered output.",
     },
     {
         "id": "perceive.change.popup",
@@ -866,7 +866,7 @@ def grab_screen_image(args):
         if not wait_for_nonblank or not metrics["likely_blank"] or attempt >= retry_count:
             break
         time.sleep(retry_interval)
-    source = with_render_timing(source, args, attempts, settle_delay)
+    source = with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank)
     return image, source, libs
 
 
@@ -1032,6 +1032,7 @@ def mirror_media_file(output_path, metadata, args):
 
 
 def save_capture_image(image, source, libs, args):
+    render_guard = render_guard_status(source, args)
     fmt = normalized_format(args.get("format", "png"))
     output_dir, mirror_dirs = output_routes(args)
     output_dir = ensure_cache_dir(output_dir)
@@ -1084,6 +1085,7 @@ def save_capture_image(image, source, libs, args):
         "preprocess": {"requested": str(args.get("preprocess", "none")), "applied": applied_preprocess},
         "analysis": analysis_after,
         "analysis_before_preprocess": analysis_before,
+        "render_guard": render_guard,
         "storage": {
             "primary_path": str(output_path),
             "mirror_paths": mirror_paths,
@@ -1117,6 +1119,7 @@ def save_capture_image(image, source, libs, args):
         "saved_size": metadata["saved_size"],
         "preprocess": metadata["preprocess"],
         "analysis": analysis_after,
+        "render_guard": render_guard,
         "context": metadata["context"],
         "cursor_included": False,
         "privacy": "Saved locally only.",
@@ -1266,7 +1269,11 @@ def image_blank_metrics(image, libs):
     brightness = float(gray_stat.mean[0])
     contrast = float(gray_stat.stddev[0])
     entropy = image_entropy(gray)
-    likely_blank = (contrast <= 3.0 and edge_mean <= 1.2 and entropy <= 0.45) or (brightness >= 252 and contrast <= 6.0 and edge_mean <= 2.0)
+    uniform_dark = brightness <= 3.0 and contrast <= 1.0 and entropy <= 0.1
+    uniform_light = brightness >= 252.0 and contrast <= 1.0 and entropy <= 0.1
+    low_information = contrast <= 3.0 and edge_mean <= 1.2 and entropy <= 0.45
+    bright_low_information = brightness >= 252.0 and contrast <= 6.0 and entropy <= 0.2
+    likely_blank = uniform_dark or uniform_light or low_information or bright_low_information
     return {
         "likely_blank": bool(likely_blank),
         "brightness": round(brightness, 2),
@@ -1288,10 +1295,29 @@ def capture_settle_delay_seconds(args):
     return delay_ms / 1000.0
 
 
+def normalize_render_guard(args, source_type="screen"):
+    default_mode = "warn" if source_type == "window" else "save"
+    mode = str(args.get("render_guard") or default_mode).strip().lower()
+    aliases = {
+        "": default_mode,
+        "off": "save",
+        "none": "save",
+        "confirm": "warn",
+        "require_confirmation": "warn",
+        "auto": "wait",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ("save", "warn", "wait", "fail"):
+        raise ValueError("render_guard must be save, warn, wait, or fail")
+    return mode
+
+
 def render_retry_options(args, default_wait_for_nonblank=False):
     limits = runtime_limits(args)
     wait_value = args.get("wait_for_nonblank")
     wait_for_nonblank = bool(default_wait_for_nonblank if wait_value is None else wait_value)
+    if str(args.get("render_guard") or "").strip().lower() in ("wait", "auto"):
+        wait_for_nonblank = True
     retry_default = 2 if wait_for_nonblank else 0
     retry_count = int(args.get("render_retry_count", retry_default))
     retry_interval_ms = float(args.get("render_retry_interval_ms", 250))
@@ -1304,15 +1330,93 @@ def render_retry_options(args, default_wait_for_nonblank=False):
     return wait_for_nonblank, retry_count, retry_interval_ms / 1000.0
 
 
-def with_render_timing(source, args, attempts, settle_delay):
+def with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank):
+    guard_mode = normalize_render_guard(args, source.get("type", "screen"))
+    final_attempt = attempts[-1] if attempts else {}
     source["render_timing"] = {
         "delay_seconds": round(settle_delay, 3),
-        "wait_for_nonblank": bool(args.get("wait_for_nonblank", source.get("type") == "window")),
+        "wait_for_nonblank": bool(wait_for_nonblank),
+        "render_guard": guard_mode,
         "attempts": attempts,
-        "final_attempt": attempts[-1] if attempts else {},
-        "note": "Clearly blank frames can be retried before saving, useful when slower systems capture before a program finishes rendering.",
+        "final_attempt": final_attempt,
+        "final_likely_blank": bool(final_attempt.get("likely_blank", False)),
+        "note": "Clearly blank frames can be retried before saving. Render guard can warn or fail before saving a suspected unrendered frame.",
     }
     return source
+
+
+def render_guard_status(source, args):
+    timing = source.get("render_timing") if isinstance(source.get("render_timing"), dict) else {}
+    final_attempt = timing.get("final_attempt") if isinstance(timing.get("final_attempt"), dict) else {}
+    source_type = str(source.get("type") or "screen")
+    mode = normalize_render_guard(args, source_type)
+    suspected_unrendered = bool(final_attempt.get("likely_blank", False))
+    confirmed = bool(args.get("render_guard_confirmed", False))
+    if not suspected_unrendered:
+        status = "passed"
+    elif confirmed:
+        status = "confirmed_save"
+    elif mode == "save":
+        status = "saved_with_suspected_unrendered_warning"
+    elif mode == "wait":
+        status = "requires_confirmation_after_wait"
+    elif mode == "warn":
+        status = "requires_confirmation"
+    else:
+        status = "blocked"
+    return {
+        "mode": mode,
+        "status": status,
+        "suspected_unrendered": suspected_unrendered,
+        "confirmed": confirmed,
+        "final_attempt": final_attempt,
+        "wait_for_nonblank": bool(timing.get("wait_for_nonblank", False)),
+        "attempt_count": len(timing.get("attempts") or []),
+        "hint": "Set render_guard_confirmed=true or render_guard='save' if this blank frame is expected.",
+    }
+
+
+def render_guard_warning_payload(source, args):
+    guard = render_guard_status(source, args)
+    if not guard["suspected_unrendered"]:
+        return None
+    if guard["confirmed"] or guard["mode"] == "save":
+        return None
+    limits = runtime_limits(args)
+    max_retry_count = int(limits.get("capture_render_retry_count_max") or 8)
+    max_retry_interval_ms = int(limits.get("capture_render_retry_interval_ms_max") or 2000)
+    current_retry_count = int(args.get("render_retry_count", 2))
+    current_retry_interval_ms = int(args.get("render_retry_interval_ms", 250))
+    payload = {
+        "ok": False,
+        "error": "Suspected unrendered or blank capture. No image was saved.",
+        "reason": "suspected_unrendered",
+        "requires_confirmation": guard["mode"] in ("warn", "wait"),
+        "render_guard": guard,
+        "source": source,
+        "recommended_next": {
+            "retry_after_render": {
+                "wait_for_nonblank": True,
+                "render_guard": "wait",
+                "render_retry_count": min(max(current_retry_count, 2) + 2, max_retry_count),
+                "render_retry_interval_ms": min(max(current_retry_interval_ms, 500), max_retry_interval_ms),
+            },
+            "force_save_if_expected": {
+                "render_guard_confirmed": True,
+            },
+        },
+        "privacy": "No screenshot, upload, model call, or background retry was performed after the guard warning.",
+    }
+    if guard["mode"] == "fail":
+        payload["requires_confirmation"] = False
+    return payload
+
+
+def save_or_warn_capture(image, source, libs, args):
+    warning = render_guard_warning_payload(source, args)
+    if warning:
+        return warning
+    return save_capture_image(image, source, libs, args)
 
 
 def grab_screen_once(args):
@@ -1386,7 +1490,7 @@ def grab_window_image(args):
         if not wait_for_nonblank or not metrics["likely_blank"] or attempt >= retry_count:
             break
         time.sleep(retry_interval)
-    source = with_render_timing(source, args, attempts, settle_delay)
+    source = with_render_timing(source, args, attempts, settle_delay, wait_for_nonblank)
     return image, source, libs
 
 
@@ -2262,6 +2366,8 @@ def guardian_base_context(args, default_source_label):
         "delay_seconds",
         "settle_delay_ms",
         "wait_for_nonblank",
+        "render_guard",
+        "render_guard_confirmed",
         "render_retry_count",
         "render_retry_interval_ms",
         "runtime_limits",
@@ -2972,7 +3078,7 @@ def save_capture_from_args(args, region=None):
     if region is not None:
         args["region"] = region
     image, source, libs = grab_screen_image(args)
-    return write_json(save_capture_image(image, source, libs, args))
+    return write_json(save_or_warn_capture(image, source, libs, args))
 
 
 def action_capture_screen(args):
@@ -3001,7 +3107,7 @@ def action_capture_window(args):
     try:
         require_feature("window_capture", args)
         image, source, libs = grab_window_image(args)
-        return write_json(save_capture_image(image, source, libs, args))
+        return write_json(save_or_warn_capture(image, source, libs, args))
     except Exception as exc:
         return error(str(exc))
 
