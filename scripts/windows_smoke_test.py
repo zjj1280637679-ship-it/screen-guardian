@@ -264,6 +264,13 @@ def main():
             checks.append({"name": "clear_cache_rejects_unconfigured_dir", "ok": True})
 
     adapters = dependency_payload.get("adapters") or []
+    routes_payload = call_tool("list_capture_routes", {"include_examples": False}, env_updates=explicit_env)
+    require_ok("list_capture_routes", routes_payload)
+    routes = routes_payload.get("routes") or {}
+    if (routes.get("webpage") or {}).get("active") is not False:
+        raise SmokeFailure(f"webpage route did not report inactive default state: {routes_payload}")
+    checks.append({"name": "webpage_route_reports_inactive_default", "ok": True})
+
     screen_adapter = next((item for item in adapters if item.get("role") == "screen_capture"), {})
     if screen_adapter.get("available"):
         with tempfile.TemporaryDirectory(prefix="screen-guardian-smoke-") as tmp:
@@ -310,6 +317,8 @@ def main():
             require_ok("guardian_perceive read_text hold_file", guardian_payload)
             if guardian_payload.get("preprocess", {}).get("applied") != "text":
                 raise SmokeFailure(f"guardian_perceive did not apply text preprocessing: {guardian_payload}")
+            if guardian_payload.get("text_handling", {}).get("ocr_available") is not False:
+                raise SmokeFailure(f"guardian_perceive read_text did not report OCR unavailable in ultra-light mode: {guardian_payload}")
             if guardian_payload.get("context_delivery") != "file_marked_only":
                 raise SmokeFailure(f"guardian_perceive did not mark hold_file delivery: {guardian_payload}")
             checks.append({"name": "guardian_perceive_read_text_hold_file", "ok": True, "path": guardian_payload.get("path")})

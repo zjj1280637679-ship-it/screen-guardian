@@ -77,9 +77,14 @@ const imageOutputProperties = {
     type: "array",
     items: {
       type: "string",
-      enum: ["unrendered", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "all", "none", "off"],
+      enum: ["unrendered", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "bbox_identity_mismatch", "all", "none", "off"],
     },
     description: "Optional capture-quality checks. Defaults to ['unrendered']; other checks are opt-in and return decision actions rather than blocking ordinary capture.",
+  },
+  allow_unverified_bbox_fallback: {
+    type: "boolean",
+    default: false,
+    description: "Last-resort override for visible-screen bbox window fallback when the topmost-window identity check cannot verify the requested target. Prefer hwnd/exact_title or bringing the target forward.",
   },
   guard_tiny_min_pixels: {
     type: "integer",
@@ -445,6 +450,10 @@ const tools = [
         settle_delay_ms: imageOutputProperties.settle_delay_ms,
         wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
         quiet_preferred: imageOutputProperties.quiet_preferred,
+        render_guard: imageOutputProperties.render_guard,
+        render_guard_confirmed: imageOutputProperties.render_guard_confirmed,
+        allow_unverified_bbox_fallback: imageOutputProperties.allow_unverified_bbox_fallback,
+        guard_checks: imageOutputProperties.guard_checks,
         render_retry_count: imageOutputProperties.render_retry_count,
         render_retry_interval_ms: imageOutputProperties.render_retry_interval_ms,
         project_id: imageOutputProperties.project_id,

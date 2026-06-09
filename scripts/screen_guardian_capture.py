@@ -59,6 +59,7 @@ CAPTURE_GUARD_CHECKS = {
     "tiny_capture": "Detect capture boxes that are probably too small to be intentional.",
     "stale_frame": "Detect retry attempts that returned the same frame repeatedly.",
     "occlusion_risk": "Detect best-effort bbox fallback window captures that may include occluding windows.",
+    "bbox_identity_mismatch": "Detect visible-screen bbox fallback captures where the top visible window does not appear to be the requested target.",
 }
 DEFAULT_GUARD_CHECKS = ["unrendered"]
 
@@ -874,8 +875,12 @@ def normalized_format(value):
 
 
 def monitor_to_dict(index, monitor):
+    index = int(index)
     return {
         "index": index,
+        "display_index": index,
+        "scope": "virtual_desktop" if index == 0 else "physical_display",
+        "is_virtual": index == 0,
         "left": int(monitor["left"]),
         "top": int(monitor["top"]),
         "width": int(monitor["width"]),
@@ -891,7 +896,10 @@ def capture_box(sct, args):
     monitor = dict(sct.monitors[display_index])
     region = args.get("region")
     if not region:
-        return monitor, monitor_to_dict(display_index, monitor)
+        display = monitor_to_dict(display_index, monitor)
+        display["coordinate_space"] = display["scope"]
+        display["relative_to_display"] = False
+        return monitor, display
 
     left = int(region.get("left", 0))
     top = int(region.get("top", 0))
@@ -906,7 +914,10 @@ def capture_box(sct, args):
         top += int(monitor["top"])
 
     box = {"left": left, "top": top, "width": width, "height": height}
-    return box, monitor_to_dict(display_index, monitor)
+    display = monitor_to_dict(display_index, monitor)
+    display["coordinate_space"] = "physical_display_relative" if relative else "virtual_desktop_absolute"
+    display["relative_to_display"] = relative
+    return box, display
 
 
 def resize_dimensions(width, height, args):
@@ -1185,6 +1196,13 @@ def save_capture_image(image, source, libs, args):
         "preprocess": {"requested": str(args.get("preprocess", "none")), "applied": applied_preprocess},
         "analysis": analysis_after,
         "analysis_before_preprocess": analysis_before,
+        "text_handling": {
+            "mode": "text_optimized_image" if applied_preprocess == "text" else "none",
+            "ocr_available": bool((analysis_after.get("text_extraction") or {}).get("available", False)),
+            "note": "Text mode sharpens and analyzes the screenshot, but the ultra-light core does not extract OCR text."
+            if applied_preprocess == "text"
+            else "",
+        },
         "render_guard": render_guard,
         "storage": {
             "primary_path": str(output_path),
@@ -1219,6 +1237,7 @@ def save_capture_image(image, source, libs, args):
         "saved_size": metadata["saved_size"],
         "preprocess": metadata["preprocess"],
         "analysis": analysis_after,
+        "text_handling": metadata["text_handling"],
         "render_guard": render_guard,
         "context": metadata["context"],
         "cursor_included": False,
@@ -1244,6 +1263,18 @@ def window_rect(hwnd):
     }
 
 
+def window_text(hwnd):
+    if os.name != "nt":
+        return ""
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(int(hwnd))
+    if length <= 0:
+        return ""
+    title_buffer = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(int(hwnd), title_buffer, length + 1)
+    return title_buffer.value.strip()
+
+
 def process_name_for_pid(pid):
     if os.name != "nt":
         return ""
@@ -1261,6 +1292,29 @@ def process_name_for_pid(pid):
     return ""
 
 
+def window_info_for_hwnd(hwnd):
+    if os.name != "nt":
+        return None
+    hwnd = int(hwnd)
+    user32 = ctypes.windll.user32
+    if not user32.IsWindow(hwnd):
+        return None
+    rect = window_rect(hwnd)
+    if not rect or rect["width"] <= 0 or rect["height"] <= 0:
+        return None
+    pid = ctypes.wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return {
+        "hwnd": hwnd,
+        "title": window_text(hwnd),
+        "pid": int(pid.value),
+        "process_name": process_name_for_pid(pid.value),
+        "rect": rect,
+        "is_minimized": bool(user32.IsIconic(hwnd)),
+        "is_visible": bool(user32.IsWindowVisible(hwnd)),
+    }
+
+
 def enum_windows(args=None):
     if os.name != "nt":
         return []
@@ -1271,30 +1325,12 @@ def enum_windows(args=None):
     EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
 
     def callback(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
+        info = window_info_for_hwnd(hwnd)
+        if not info or not info.get("is_visible"):
             return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
+        if not info.get("title"):
             return True
-        title_buffer = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, title_buffer, length + 1)
-        title = title_buffer.value.strip()
-        rect = window_rect(hwnd)
-        if not rect or rect["width"] <= 0 or rect["height"] <= 0:
-            return True
-        pid = ctypes.wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        process_name = process_name_for_pid(pid.value)
-        windows.append(
-            {
-                "hwnd": int(hwnd),
-                "title": title,
-                "pid": int(pid.value),
-                "process_name": process_name,
-                "rect": rect,
-                "is_minimized": bool(user32.IsIconic(hwnd)),
-            }
-        )
+        windows.append(info)
         return True
 
     user32.EnumWindows(EnumWindowsProc(callback), 0)
@@ -1388,12 +1424,94 @@ def window_match_payload(args, reason, windows=None):
     }
 
 
+def root_window(hwnd):
+    if os.name != "nt" or not hwnd:
+        return int(hwnd or 0)
+    GA_ROOT = 2
+    root = ctypes.windll.user32.GetAncestor(int(hwnd), GA_ROOT)
+    return int(root or hwnd)
+
+
+def root_window_from_point(x, y):
+    if os.name != "nt":
+        return 0
+    point = ctypes.wintypes.POINT(int(x), int(y))
+    hwnd = ctypes.windll.user32.WindowFromPoint(point)
+    return root_window(hwnd)
+
+
+def windows_equivalent(a, b):
+    if not a or not b:
+        return False
+    return root_window(int(a)) == root_window(int(b))
+
+
+def bbox_identity_probe(window):
+    if os.name != "nt":
+        return {"available": False, "reason": "not_windows"}
+    rect = window.get("rect") if isinstance(window, dict) else {}
+    hwnd = int(window.get("hwnd") or 0)
+    if not hwnd or not isinstance(rect, dict):
+        return {"available": False, "reason": "missing_window_or_rect"}
+    left = int(rect.get("left", 0))
+    top = int(rect.get("top", 0))
+    width = int(rect.get("width") or (int(rect.get("right", left)) - left))
+    height = int(rect.get("height") or (int(rect.get("bottom", top)) - top))
+    if width <= 0 or height <= 0:
+        return {"available": False, "reason": "invalid_rect", "rect": rect}
+    points = [
+        (left + width * 0.50, top + height * 0.50),
+        (left + width * 0.25, top + height * 0.25),
+        (left + width * 0.75, top + height * 0.25),
+        (left + width * 0.25, top + height * 0.75),
+        (left + width * 0.75, top + height * 0.75),
+    ]
+    target_root = root_window(hwnd)
+    hits = []
+    match_count = 0
+    for x, y in points:
+        top_hwnd = root_window_from_point(x, y)
+        matched = windows_equivalent(hwnd, top_hwnd)
+        if matched:
+            match_count += 1
+        top_info = window_info_for_hwnd(top_hwnd) or {"hwnd": int(top_hwnd or 0), "title": "", "pid": 0, "process_name": ""}
+        hits.append(
+            {
+                "point": {"x": int(round(x)), "y": int(round(y))},
+                "top_hwnd": int(top_hwnd or 0),
+                "target_match": bool(matched),
+                "top_window": {
+                    "hwnd": top_info.get("hwnd"),
+                    "title": top_info.get("title"),
+                    "pid": top_info.get("pid"),
+                    "process_name": top_info.get("process_name"),
+                },
+            }
+        )
+    sample_count = len(hits)
+    match_ratio = match_count / float(sample_count or 1)
+    return {
+        "available": True,
+        "target_hwnd": hwnd,
+        "target_root_hwnd": target_root,
+        "target_title": window.get("title"),
+        "target_pid": window.get("pid"),
+        "target_process_name": window.get("process_name"),
+        "sample_count": sample_count,
+        "target_match_count": match_count,
+        "target_match_ratio": round(match_ratio, 3),
+        "identity_verified": match_ratio >= 0.6,
+        "samples": hits,
+        "note": "Visible-screen bbox fallback can only be identity-checked against currently topmost windows at sampled points.",
+    }
+
+
 def find_window(args):
     hwnd = args.get("hwnd")
     if hwnd:
-        rect = window_rect(int(hwnd))
-        if rect:
-            return {"hwnd": int(hwnd), "title": "", "pid": 0, "process_name": "", "rect": rect}
+        info = window_info_for_hwnd(int(hwnd))
+        if info:
+            return info
     windows = enum_windows(args)
     exact_title = str(args.get("exact_title") or "").lower()
     if exact_title:
@@ -1583,11 +1701,18 @@ def render_guard_status(source, args):
     checks = normalize_guard_checks(args)
     if source_type == "window" and quiet_capture_preferred(args, source_type) and "occlusion_risk" not in checks:
         checks.append("occlusion_risk")
+    capture_method = str(source.get("capture_method") or "")
+    if source_type == "window" and "bbox" in capture_method and "bbox_identity_mismatch" not in checks:
+        checks.append("bbox_identity_mismatch")
     issues = capture_guard_issues(source, args, checks)
     suspected_unrendered = any(issue.get("id") == "unrendered" for issue in issues)
+    identity_mismatch = any(issue.get("id") == "bbox_identity_mismatch" for issue in issues)
+    allow_unverified_bbox = bool(args.get("allow_unverified_bbox_fallback", False))
     confirmed = bool(args.get("render_guard_confirmed", False))
     if not issues:
         status = "passed"
+    elif identity_mismatch and not allow_unverified_bbox:
+        status = "awaiting_bbox_identity_decision"
     elif confirmed:
         status = "confirmed_save"
     elif mode == "save":
@@ -1605,6 +1730,8 @@ def render_guard_status(source, args):
         "available_checks": CAPTURE_GUARD_CHECKS,
         "issues": issues,
         "suspected_unrendered": suspected_unrendered,
+        "bbox_identity_mismatch": identity_mismatch,
+        "allow_unverified_bbox_fallback": allow_unverified_bbox,
         "confirmed": confirmed,
         "final_attempt": final_attempt,
         "wait_for_nonblank": bool(timing.get("wait_for_nonblank", False)),
@@ -1699,6 +1826,18 @@ def capture_guard_issues(source, args, checks):
             }
         )
 
+    if "bbox_identity_mismatch" in checks and source.get("type") == "window" and "bbox" in capture_method:
+        identity = source.get("visible_screen_identity") if isinstance(source.get("visible_screen_identity"), dict) else {}
+        if identity.get("available") and not bool(identity.get("identity_verified", False)):
+            issues.append(
+                {
+                    "id": "bbox_identity_mismatch",
+                    "severity": "decision",
+                    "message": "Visible-screen bbox fallback appears to be pointed at another topmost window, so saving could capture the wrong application.",
+                    "evidence": identity,
+                }
+            )
+
     return issues
 
 
@@ -1706,7 +1845,8 @@ def render_guard_warning_payload(source, args):
     guard = render_guard_status(source, args)
     if not guard["issues"]:
         return None
-    if guard["confirmed"] or guard["mode"] == "save":
+    identity_mismatch_requires_decision = bool(guard.get("bbox_identity_mismatch")) and not bool(guard.get("allow_unverified_bbox_fallback"))
+    if not identity_mismatch_requires_decision and (guard["confirmed"] or guard["mode"] == "save"):
         return None
     limits = runtime_limits(args)
     max_retry_count = int(limits.get("capture_render_retry_count_max") or 8)
@@ -1783,6 +1923,21 @@ def render_guard_warning_payload(source, args):
         payload["issue_specific_actions"]["bring_window_front_or_capture_screen"] = {
             "note": "Bring the target window forward or capture the visible screen/region instead of a fallback bbox.",
         }
+    if "bbox_identity_mismatch" in issue_ids:
+        payload["warning"] = "Visible-screen bbox fallback may be pointed at another topmost window. Capture was deferred to avoid saving the wrong application."
+        payload["message"] = "Choose a safer retry path, bring the target forward, or explicitly allow an unverified visible-screen bbox capture."
+        payload["available_actions"].pop("force_capture_now", None)
+        payload["issue_specific_actions"].pop("allow_visible_bbox_fallback", None)
+        payload["issue_specific_actions"]["retry_with_hwnd_or_exact_title"] = {
+            "note": "Call list_windows, then retry with a specific hwnd or exact_title so the target identity is unambiguous.",
+        }
+        payload["issue_specific_actions"]["allow_unverified_bbox_fallback"] = {
+            "quiet_preferred": False,
+            "render_guard_confirmed": True,
+            "allow_unverified_bbox_fallback": True,
+            "note": "Last-resort visible-pixel capture. This may save another window if it is covering the target.",
+        }
+        payload["recommended_next"] = "Prefer retry_with_hwnd_or_exact_title or bring_window_front_or_capture_screen. Use allow_unverified_bbox_fallback only as a last resort."
     if is_strict_failure:
         payload["error"] = "Capture guard blocked suspected incomplete output because render_guard='fail'."
         payload["requires_confirmation"] = False
@@ -2169,6 +2324,8 @@ def grab_screen_once(args):
         "type": "screen",
         "adapter": adapter_id,
         "display": display,
+        "display_index": display.get("display_index"),
+        "coordinate_space": display.get("coordinate_space"),
         "capture_box": {
             "left": int(box["left"]),
             "top": int(box["top"]),
@@ -2215,6 +2372,8 @@ def grab_window_once(args, status, libs, window):
         "capture_box": window.get("rect"),
         "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Minimized, protected, GPU-rendered, or occluded windows may return blank, stale, or fallback-visible frames.",
     }
+    if "bbox" in capture_method:
+        source["visible_screen_identity"] = bbox_identity_probe(window)
     return image.convert("RGB"), source, libs
 
 
@@ -2598,6 +2757,13 @@ def action_set_feature_flags(args):
 def action_list_capture_routes(args):
     include_examples = bool(args.get("include_examples", True))
     routes = copy.deepcopy(CAPTURE_ROUTE_CATALOG)
+    flags = feature_flags(args)
+    routes["webpage"]["active"] = bool(flags.get("webpage_capture"))
+    routes["webpage"]["status"] = "enabled" if routes["webpage"]["active"] else "inactive_optional_adapter"
+    routes["webpage"]["activation_hint"] = "Enable feature flag webpage_capture and install scripts/optional-web-requirements.txt before direct capture_webpage use."
+    routes["nested_scroll"]["active"] = bool(flags.get("webpage_capture"))
+    routes["nested_scroll"]["status"] = "enabled" if routes["nested_scroll"]["active"] else "inactive_optional_adapter"
+    routes["nested_scroll"]["activation_hint"] = routes["webpage"]["activation_hint"]
     if include_examples:
         routes["desktop"]["example"] = {"tool": "capture_region", "args": {"left": 0, "top": 0, "width": 800, "height": 600}}
         routes["application"]["example"] = {"tool": "capture_window", "args": {"title_contains": "Chrome", "render_guard": "wait"}}
@@ -2629,6 +2795,10 @@ def action_list_capture_routes(args):
                 "desktop": "not quiet; captures visible desktop pixels",
                 "application": "quiet-preferred by default through HWND/window adapter; visible-screen bbox fallback returns a decision warning before saving",
                 "webpage": "quiet through headless browser when webpage_capture is enabled",
+            },
+            "feature_flags": {
+                "webpage_capture": bool(flags.get("webpage_capture")),
+                "note": "Webpage and nested_scroll routes are listed for route planning, but direct browser-rendered capture is inactive until webpage_capture=true.",
             },
             "privacy": "Listing routes does not capture, navigate, record, upload, call a model, or start monitoring.",
         }
@@ -3280,6 +3450,7 @@ def guardian_base_context(args, default_source_label):
         "wait_for_nonblank",
         "render_guard",
         "render_guard_confirmed",
+        "allow_unverified_bbox_fallback",
         "guard_checks",
         "guard_tiny_min_pixels",
         "render_retry_count",

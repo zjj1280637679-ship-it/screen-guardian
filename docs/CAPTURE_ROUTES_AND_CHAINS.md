@@ -8,8 +8,8 @@ Screen Guardian now separates capture intent into routes. This keeps the main AI
 | --- | --- | --- | --- |
 | `desktop` | Visible desktop pixels, multi-display fallback, old-system capture | No. It sees what is visible on the desktop. | `capture_screen`, `capture_region`, `watch_screen` |
 | `application` | A specific Windows program, HWND, process, or title | Quiet-preferred by default. It does not activate or raise the window, but minimized, protected, GPU-rendered, or occluded windows can still fail. | `list_windows`, `capture_window` |
-| `webpage` | Browser-rendered viewport, element, or full scrollable webpage | Yes, when optional `webpage_capture` is enabled. | `prepare_webpage_capture`, `capture_webpage` |
-| `nested_scroll` | Admin tables, scrollable panels, and embedded iframes inside a page | Yes, through a headless browser route. | `capture_webpage` with `mode="scroll_container"` |
+| `webpage` | Browser-rendered viewport, element, or full scrollable webpage | Yes, when optional `webpage_capture` is enabled. Default status is inactive. | `prepare_webpage_capture`, `capture_webpage` |
+| `nested_scroll` | Admin tables, scrollable panels, and embedded iframes inside a page | Yes, through a headless browser route when `webpage_capture=true`. Default status is inactive. | `capture_webpage` with `mode="scroll_container"` |
 | `mixed` or `auto` | A caller wants a route plan before choosing exact tools | Depends on selected steps. | `prepare_capture_chain` |
 
 Use `list_capture_routes` when the AI is unsure which route to choose.
@@ -18,11 +18,11 @@ Use `list_capture_routes` when the AI is unsure which route to choose.
 
 Desktop capture is a pixel fallback. It is the right first route when compatibility is the problem and the user needs the currently visible screen. It is also the route for short visible change capture.
 
-Application capture is a window route. It should start with `list_windows` when the target is ambiguous, then use `capture_window` with `hwnd` or exact match. It is quiet-preferred by default: Screen Guardian does not activate, focus, raise, or make the target topmost. If the HWND route has to fall back to a visible-screen bbox capture, the plugin returns a decision warning before saving unless the caller disables quiet preference.
+Application capture is a window route. It should start with `list_windows` when the target is ambiguous, then use `capture_window` with `hwnd` or exact match. It is quiet-preferred by default: Screen Guardian does not activate, focus, raise, or make the target topmost. If the HWND route has to fall back to a visible-screen bbox capture, the plugin samples the topmost window identity inside the bbox before saving. If the sampled visible window does not match the requested HWND, it returns a decision warning even if the caller already set `render_guard_confirmed=true`.
 
 Use `quiet_preferred=false` only when the user accepts visible-screen fallback behavior, such as bringing a target forward or capturing a known visible region. Quiet preference is a strategy default, not a guarantee that every application can be captured while hidden, minimized, protected, or GPU-rendered.
 
-Webpage capture is a browser-rendered route. It does not need the page to be in the desktop foreground. It navigates an explicit URL with an optional Playwright/Chromium adapter, then captures the viewport, full page, element, or nested scroll container.
+Webpage capture is a browser-rendered route. It does not need the page to be in the desktop foreground. It navigates an explicit URL with an optional Playwright/Chromium adapter, then captures the viewport, full page, element, or nested scroll container. `list_capture_routes` reports `webpage.active=false` and `nested_scroll.active=false` until the persistent `webpage_capture` feature flag is enabled and optional Playwright dependencies are installed.
 
 ## Nested Scroll Containers
 

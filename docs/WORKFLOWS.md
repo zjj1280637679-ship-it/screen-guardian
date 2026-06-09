@@ -44,6 +44,10 @@ Use `set_storage_routes` to add persistent mirror folders. Per-call `output_dirs
 
 Each mirror can receive a copied image and metadata sidecar.
 
+## Display Indexes
+
+Display indexes follow the `mss` convention: `0` is the full virtual desktop and `1+` are physical displays. Capture results now include both `display.index` and `display.scope` (`virtual_desktop` or `physical_display`) plus `coordinate_space`. A region with `relative_to_display=true` uses physical-display-relative coordinates; a region with `relative_to_display=false` uses absolute virtual-desktop coordinates. This keeps full-screen and region captures comparable without pretending that virtual desktop index `0` and physical display index `1` are the same thing.
+
 ## Project And Workflow Markers
 
 Capture tools accept:
@@ -247,9 +251,9 @@ Use `render_guard` when the capture should not quietly save a likely unrendered 
 
 The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
 
-Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If the HWND route needs a visible-screen bbox fallback, `occlusion_risk` is added automatically and the result returns a decision warning before saving. Set `quiet_preferred=false` only when the user accepts visible-screen fallback behavior.
+Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If the HWND route needs a visible-screen bbox fallback, `occlusion_risk` and `bbox_identity_mismatch` checks are attached automatically. If the visible bbox appears to belong to another topmost window, `render_guard_confirmed=true` is not enough to save; use HWND/exact title, bring the target forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
 
-`guard_checks` controls which quality checks run. The default is `["unrendered"]`, with `occlusion_risk` added automatically for quiet-preferred window capture. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, and `stale_frame` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
+`guard_checks` controls which quality checks run. The ordinary default is `["unrendered"]`, with fallback-specific checks added automatically for window bbox fallback. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, and `stale_frame` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
 
 For screen or region capture, `wait_for_nonblank` is opt-in because a whole desktop or document page can legitimately be mostly white. Use `watch_screen` or `guardian_perceive` with `task="watch_change"` for screen changes, popup transitions, and other event-like moments.
 

@@ -2,7 +2,7 @@
 
 Capture guards are lightweight quality checks that run before a capture is saved. They are not permission blockers. They are decision helpers for cases where the screenshot may be incomplete, stale, tiny, hidden, or otherwise misleading.
 
-The default guard is intentionally small:
+The ordinary screenshot default guard is intentionally small:
 
 ```json
 {
@@ -10,7 +10,7 @@ The default guard is intentionally small:
 }
 ```
 
-All other checks are opt-in. This keeps ordinary screenshots fast and prevents optional heuristics from interrupting normal work.
+Most other checks are opt-in. Window bbox fallback is the exception: `occlusion_risk` and `bbox_identity_mismatch` can be attached automatically because visible-screen fallback can save the wrong pixels when another window overlaps the target. This keeps ordinary screenshots fast while making fragile window fallback honest.
 
 ## Guard Checks
 
@@ -22,6 +22,7 @@ All other checks are opt-in. This keeps ordinary screenshots fast and prevents o
 | `tiny_capture` | Off | Capture box width or height is below `guard_tiny_min_pixels` | Bad region coordinates, wrong display, overly small UI target | Reselect region/window, force capture now |
 | `stale_frame` | Off | Retry attempts return the same sampled frame | Frozen app, stale capture backend, no visible change during retry | Refresh or wait for change, force capture now |
 | `occlusion_risk` | On for quiet-preferred window capture; otherwise off | Window capture used a bbox fallback that may include another window | GPU/protected window fallback, non-topmost window, overlap | Retry quiet capture, allow visible fallback, bring window forward, or capture visible screen/region |
+| `bbox_identity_mismatch` | On for any window bbox fallback | Sampled visible pixels appear to belong to another topmost window | Overlapping UWP/ApplicationFrameHost windows, same-size windows, Store/Settings style fallback collision | Retry with HWND/exact title, bring target forward, or explicitly allow unverified bbox fallback |
 
 ## Decision Payload
 
@@ -85,6 +86,17 @@ Disable quiet preference only when visible-screen fallback is acceptable:
   "target": {"title_contains": "Chrome"},
   "quiet_preferred": false,
   "render_guard_confirmed": true
+}
+```
+
+If the bbox identity probe sees another topmost window at the sampled points, `render_guard_confirmed=true` alone does not save the image. This prevents cases where a requested Store window silently saves a same-sized Settings window. The explicit last-resort override is:
+
+```json
+{
+  "task": "capture_window",
+  "quiet_preferred": false,
+  "render_guard_confirmed": true,
+  "allow_unverified_bbox_fallback": true
 }
 ```
 

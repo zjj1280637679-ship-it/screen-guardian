@@ -4,6 +4,8 @@ Screen and window capture can only see visible pixels. A full webpage screenshot
 
 Screen Guardian treats this as an optional browser adapter, not part of the ultra-light screen core.
 
+The route is documented for planning, but direct webpage capture is inactive by default: `webpage_capture=false`. `list_capture_routes` reports this as `inactive_optional_adapter` until the feature flag and optional Playwright dependencies are enabled.
+
 ## Reference Projects And APIs
 
 | Reference | Relevant capability | Design lesson |

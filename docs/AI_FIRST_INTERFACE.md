@@ -19,7 +19,7 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Scenario | AI-first call | What it maps to |
 | --- | --- | --- |
 | Quick look | `guardian_perceive` with `task="quick_look"` | A normal local screen or region capture |
-| Read text screenshot | `guardian_perceive` with `task="read_text"` | Capture plus `preprocess="text"` and local image analysis |
+| Read text screenshot | `guardian_perceive` with `task="read_text"` | Capture plus `preprocess="text"` and local image analysis; this is text-friendly image handling, not bundled OCR |
 | Debug UI | `guardian_perceive` with `task="debug_ui"` | Capture plus UI sharpening and local image analysis |
 | Capture a program window | `guardian_perceive` with `task="capture_window"` | Existing `capture_window` behavior and ambiguity rules |
 | Short change watch | `guardian_perceive` with `task="watch_change"` | Existing bounded `watch_screen` behavior and runtime limits |
@@ -30,7 +30,9 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Choose a quiet webpage route | `list_capture_routes` | Compare desktop, application, webpage, `nested_scroll`, and mixed routes before capturing |
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
 
-Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it returns a decision warning before saving so the caller can retry quietly, allow visible fallback, or ask the user to bring the window forward.
+Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
+
+`read_text` keeps its name for compatibility with existing callers. In the current ultra-light core it returns a sharpened text-oriented image and `text_handling.ocr_available=false`; actual OCR remains a future route or external model handoff.
 
 ## Context Budget Defaults
 
