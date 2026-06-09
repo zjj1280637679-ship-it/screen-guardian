@@ -62,7 +62,7 @@ const imageOutputProperties = {
   render_guard: {
     type: "string",
     enum: ["save", "warn", "wait", "fail"],
-    description: "Protection mode for suspected unrendered blank captures. save keeps old behavior, warn returns a confirmation warning before saving, wait retries until nonblank within limits then warns, and fail blocks blank saves.",
+    description: "Protection mode for suspected unrendered blank captures. save keeps old behavior, warn defers saving and returns decision actions, wait retries until nonblank within limits then defers if still blank, and fail blocks blank saves.",
   },
   render_guard_confirmed: {
     type: "boolean",

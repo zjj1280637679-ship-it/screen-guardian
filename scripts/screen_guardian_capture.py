@@ -1359,9 +1359,9 @@ def render_guard_status(source, args):
     elif mode == "save":
         status = "saved_with_suspected_unrendered_warning"
     elif mode == "wait":
-        status = "requires_confirmation_after_wait"
+        status = "awaiting_decision_after_wait"
     elif mode == "warn":
-        status = "requires_confirmation"
+        status = "awaiting_decision"
     else:
         status = "blocked"
     return {
@@ -1387,28 +1387,43 @@ def render_guard_warning_payload(source, args):
     max_retry_interval_ms = int(limits.get("capture_render_retry_interval_ms_max") or 2000)
     current_retry_count = int(args.get("render_retry_count", 2))
     current_retry_interval_ms = int(args.get("render_retry_interval_ms", 250))
+    is_strict_failure = guard["mode"] == "fail"
     payload = {
-        "ok": False,
-        "error": "Suspected unrendered or blank capture. No image was saved.",
+        "ok": not is_strict_failure,
+        "warning": "Suspected unrendered or blank capture. Capture was deferred for a user/agent decision.",
+        "message": "Choose whether to force a capture now, capture later, or auto-wait until the frame appears rendered.",
         "reason": "suspected_unrendered",
-        "requires_confirmation": guard["mode"] in ("warn", "wait"),
+        "capture_deferred": True,
+        "requires_decision": not is_strict_failure,
+        "requires_confirmation": not is_strict_failure,
         "render_guard": guard,
         "source": source,
-        "recommended_next": {
-            "retry_after_render": {
+        "available_actions": {
+            "force_capture_now": {
+                "render_guard_confirmed": True,
+                "note": "Save the current blank-looking frame because the user/agent confirms it is expected or still useful.",
+            },
+            "capture_later": {
+                "delay_seconds": 1,
+                "render_guard": "warn",
+                "note": "Wait a short fixed delay, then capture again and return the same decision warning if it still looks blank.",
+            },
+            "auto_detect_render_then_capture": {
                 "wait_for_nonblank": True,
                 "render_guard": "wait",
                 "render_retry_count": min(max(current_retry_count, 2) + 2, max_retry_count),
                 "render_retry_interval_ms": min(max(current_retry_interval_ms, 500), max_retry_interval_ms),
-            },
-            "force_save_if_expected": {
-                "render_guard_confirmed": True,
+                "note": "Retry until the frame no longer looks blank within runtime limits, then save automatically.",
             },
         },
-        "privacy": "No screenshot, upload, model call, or background retry was performed after the guard warning.",
+        "recommended_next": "Choose one of available_actions and call the same capture tool again with those arguments.",
+        "privacy": "No screenshot was saved, uploaded, sent to a model, or retried in the background after this decision warning.",
     }
-    if guard["mode"] == "fail":
+    if is_strict_failure:
+        payload["error"] = "Suspected unrendered or blank capture blocked by render_guard='fail'."
         payload["requires_confirmation"] = False
+        payload["requires_decision"] = False
+        payload["recommended_next"] = "Use render_guard='warn' or render_guard='wait' if the caller should receive decision options instead of a strict failure."
     return payload
 
 

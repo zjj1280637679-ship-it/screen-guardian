@@ -50,7 +50,7 @@ Prefer the AI-first facade tools before the expert tool surface:
 
 - Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
 - Use `guardian_perceive` for ordinary visual tasks: quick look, text-heavy screenshot, UI debugging, window capture, short bounded change watch, or hold-file context control.
-- Use `delay_seconds` for delayed screenshots, `render_guard="wait"` for slow-rendering windows, `render_guard="warn"` when suspected-unrendered frames should return a confirmation warning before saving, and `task="watch_change"` for screen transitions or popups.
+- Use `delay_seconds` for delayed screenshots, `render_guard="wait"` for slow-rendering windows, `render_guard="warn"` when suspected-unrendered frames should return decision actions before saving, and `task="watch_change"` for screen transitions or popups.
 - Use `guardian_prepare_workflow` when preparing a local model, decision, or monitor envelope without executing that route.
 - Use `guardian_list_commands` and `guardian_run_command` when the main AI should choose from reusable capability commands instead of composing low-level tools.
 - Treat `guardian_prepare_exec` and `guardian_run_exec` as break-glass local execution tools. Do not use `guardian_run_exec` unless the user explicitly asks for local code execution; it requires persistent `raw_local_exec=true` and per-call `user_confirmed=true`.

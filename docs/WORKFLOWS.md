@@ -238,8 +238,8 @@ Window capture defaults to `wait_for_nonblank=true`. If the first frame is clear
 Use `render_guard` when the capture should not quietly save a likely unrendered frame:
 
 - `render_guard="save"` keeps the old behavior and saves even if the final frame still looks blank.
-- `render_guard="warn"` returns a suspected-unrendered warning before saving; set `render_guard_confirmed=true` when the blank frame is expected.
-- `render_guard="wait"` forces render-aware retry and only saves when the final frame no longer looks blank; if the retry window expires, it returns the warning instead of saving.
+- `render_guard="warn"` defers saving and returns decision actions: force capture now, capture later, or auto-detect render completion before capture. Set `render_guard_confirmed=true` when the blank frame is expected.
+- `render_guard="wait"` forces render-aware retry and only saves when the final frame no longer looks blank; if the retry window expires, it returns the same decision actions instead of saving.
 - `render_guard="fail"` blocks suspected-unrendered saves for stricter automation.
 
 The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
