@@ -1729,11 +1729,24 @@ function uniquePathCandidates(candidates) {
     .filter(Boolean);
 }
 
+function runningFromPluginCache() {
+  const normalized = ROOT.toLowerCase();
+  const cacheMarker = `${path.sep}.codex${path.sep}plugins${path.sep}cache${path.sep}`.toLowerCase();
+  return normalized.includes(cacheMarker);
+}
+
+function implicitSourceFallbackAllowed() {
+  const value = String(process.env.SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || !runningFromPluginCache();
+}
+
 function sourcePluginRoots() {
   const roots = [];
   addPathCandidate(roots, process.env.SCREEN_GUARDIAN_PLUGIN_ROOT, "SCREEN_GUARDIAN_PLUGIN_ROOT");
-  addPathCandidate(roots, path.join(os.homedir(), "plugins", "screen-guardian"), "home-source");
-  addPathCandidate(roots, path.join(process.env.USERPROFILE || "", "plugins", "screen-guardian"), "userprofile-source");
+  if (implicitSourceFallbackAllowed()) {
+    addPathCandidate(roots, path.join(os.homedir(), "plugins", "screen-guardian"), "home-source");
+    addPathCandidate(roots, path.join(process.env.USERPROFILE || "", "plugins", "screen-guardian"), "userprofile-source");
+  }
   return uniquePathCandidates(roots).filter((candidate) => candidate.available);
 }
 
@@ -1855,9 +1868,42 @@ function safeTextTail(value, maxLength = 2000) {
   return text.slice(text.length - maxLength);
 }
 
+function boundedNumber(value, fallback, minValue, maxValue) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(minValue, Math.min(maxValue, parsed));
+}
+
+function childTimeoutMs(action, args) {
+  const envTimeout = process.env.SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS;
+  if (envTimeout) {
+    return boundedNumber(envTimeout, 45000, 1000, 600000);
+  }
+  const data = args || {};
+  if (action === "watch_screen") {
+    return boundedNumber((Number(data.duration_seconds || 3) * 1000) + 10000, 20000, 5000, 90000);
+  }
+  if (action === "record_audio") {
+    return boundedNumber((Number(data.duration_seconds || 1) * 1000) + 15000, 30000, 5000, 180000);
+  }
+  if (action === "capture_webpage" || action === "prepare_webpage_capture") {
+    return boundedNumber(Number(data.timeout_ms || 15000) + 15000, 45000, 5000, 120000);
+  }
+  if (action === "guardian_run_exec" || action === "guardian_prepare_exec") {
+    return boundedNumber((Number(data.timeout_seconds || 30) * 1000) + 10000, 45000, 5000, 180000);
+  }
+  if (action === "extract_audio_track") {
+    return 180000;
+  }
+  return 45000;
+}
+
 function runPython(action, args) {
   const request = JSON.stringify({ action, args: args || {} });
   const candidates = runtimeCandidates();
+  const timeoutMs = childTimeoutMs(action, args || {});
 
   return new Promise((resolve) => {
     let index = 0;
@@ -1873,9 +1919,18 @@ function runPython(action, args) {
           preferred_helper_env: "SCREEN_GUARDIAN_HELPER_EXE",
           preferred_env: "SCREEN_GUARDIAN_PYTHON",
           preferred_script_env: "SCREEN_GUARDIAN_CAPTURE_SCRIPT",
+          plugin_root_env: "SCREEN_GUARDIAN_PLUGIN_ROOT",
+          source_fallback_env: "SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK",
+          mcp_child_timeout_env: "SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS",
+          server_root: ROOT,
+          running_from_plugin_cache: runningFromPluginCache(),
           fallback_order: [
             "helper executable",
-            "capture script env/current/source/latest cache",
+            "capture script env",
+            "current plugin root",
+            "explicit plugin root env",
+            "newer sibling cache roots",
+            "source folder only outside cache or when explicitly allowed",
             "PYTHON",
             "common install paths",
             "py launcher",
@@ -1883,6 +1938,30 @@ function runPython(action, args) {
             "python3",
           ],
         },
+      });
+    };
+
+    const failTimeout = (candidate, stdout, stderr, sawOutput) => {
+      resolve({
+        ok: false,
+        error: "Screen Guardian runtime timed out.",
+        detail: `Runtime child exceeded ${timeoutMs} ms for action '${action}'.`,
+        action,
+        timeout_ms: timeoutMs,
+        python_runtime: {
+          kind: candidate.kind || "python",
+          command: candidate.command,
+          prefix_args: candidate.prefixArgs,
+          source: candidate.source,
+          script_path: candidate.scriptPath || "",
+          script_source: candidate.scriptSource || "",
+          server_root: ROOT,
+          running_from_plugin_cache: runningFromPluginCache(),
+          skipped_or_failed_candidates: attempts,
+        },
+        stdout_tail: safeTextTail(stdout),
+        stderr_tail: safeTextTail(stderr),
+        saw_output: sawOutput,
       });
     };
 
@@ -1910,6 +1989,30 @@ function runPython(action, args) {
       let stderr = "";
       let sawOutput = false;
       let finished = false;
+      const timer = setTimeout(() => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        attempts.push(
+          summarizeAttempt(candidate, "timeout", {
+            timeout_ms: timeoutMs,
+            stdout: safeTextTail(stdout),
+            stderr: safeTextTail(stderr),
+            saw_output: sawOutput,
+          })
+        );
+        try {
+          child.kill("SIGKILL");
+        } catch (_err) {
+          try {
+            child.kill();
+          } catch (_err2) {
+            // Best effort only.
+          }
+        }
+        failTimeout(candidate, stdout, stderr, sawOutput);
+      }, timeoutMs);
 
       child.stdout.on("data", (chunk) => {
         sawOutput = true;
@@ -1924,6 +2027,7 @@ function runPython(action, args) {
           return;
         }
         finished = true;
+        clearTimeout(timer);
         attempts.push(summarizeAttempt(candidate, "error", { detail: err.message, saw_output: sawOutput }));
         tryNext();
       });
@@ -1932,6 +2036,7 @@ function runPython(action, args) {
           return;
         }
         finished = true;
+        clearTimeout(timer);
         if (!stdout && code !== 0) {
           attempts.push(
             summarizeAttempt(candidate, "failed", {
@@ -1955,6 +2060,8 @@ function runPython(action, args) {
             source: candidate.source,
             script_path: candidate.scriptPath || "",
             script_source: candidate.scriptSource || "",
+            server_root: ROOT,
+            running_from_plugin_cache: runningFromPluginCache(),
             skipped_or_failed_candidates: attempts,
           };
           resolve(parsed);

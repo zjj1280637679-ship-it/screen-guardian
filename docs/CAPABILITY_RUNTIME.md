@@ -60,6 +60,8 @@ Initial command ids include:
 
 This is intentionally an escape hatch. It is useful for emergency repair, local diagnostics, or one-off user-directed automation. It is not the normal AI workflow path.
 
+Because confirmed raw execution is still arbitrary local execution, it stays off the default MCP surface. It appears only on the `full` tool surface, remains disabled until `raw_local_exec=true`, requires `user_confirmed=true` on every call, writes an audit record, and should not be exposed as a routine hidden automation path.
+
 ## Boundary
 
 The runtime does not pretend that code execution is impossible. It makes execution explicit, visible, bounded, and auditable.

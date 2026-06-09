@@ -247,7 +247,7 @@ npm run build:helper
 $env:SCREEN_GUARDIAN_HELPER_EXE = "$PWD\bin\screen-guardian-helper.exe"
 ```
 
-When `SCREEN_GUARDIAN_HELPER_EXE` or `bin/screen-guardian-helper.exe` is available, the MCP server uses that helper before looking for Python. The server can also recover from stale plugin cache paths by checking `SCREEN_GUARDIAN_CAPTURE_SCRIPT`, the source plugin folder, and newer sibling cache folders for `screen_guardian_capture.py`.
+When `SCREEN_GUARDIAN_HELPER_EXE` or `bin/screen-guardian-helper.exe` is available, the MCP server uses that helper before looking for Python. The server can recover from stale cache paths by checking `SCREEN_GUARDIAN_CAPTURE_SCRIPT`, the current plugin root, explicit `SCREEN_GUARDIAN_PLUGIN_ROOT`, and newer sibling cache folders for `screen_guardian_capture.py`. When running from a Codex plugin cache, implicit source-folder fallback is disabled unless `SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK=1` is set. MCP child processes also have an outer timeout; set `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` only when debugging runtime hangs.
 
 Optional audio recording uses:
 

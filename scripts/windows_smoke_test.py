@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -88,6 +89,40 @@ def call_tool(name, arguments=None, env_updates=None):
 def require_ok(label, payload):
     if not payload.get("ok"):
         raise SmokeFailure(f"{label} returned not ok: {json.dumps(payload, ensure_ascii=False)[:2000]}")
+
+
+def launch_changing_window():
+    code = r"""
+import tkinter as tk
+
+root = tk.Tk()
+root.title("Screen Guardian Watch Smoke")
+root.geometry("260x160+60+60")
+root.attributes("-topmost", True)
+frame = tk.Frame(root, bg="#c40000")
+frame.pack(fill="both", expand=True)
+label = tk.Label(frame, text="watch-start", bg="#c40000", fg="#ffffff", font=("Arial", 22))
+label.pack(fill="both", expand=True)
+
+def change():
+    frame.configure(bg="#00c800")
+    label.configure(text="watch-changed", bg="#00c800", fg="#000000")
+
+root.after(900, change)
+root.after(6000, root.destroy)
+root.mainloop()
+"""
+    return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def wait_for_window(title_fragment, env_updates, timeout_seconds=5):
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        payload = call_tool("list_windows", {"title_contains": title_fragment, "limit": 5}, env_updates=env_updates)
+        if payload.get("ok") and payload.get("windows"):
+            return payload["windows"][0]
+        time.sleep(0.2)
+    return None
 
 
 def main():
@@ -274,6 +309,23 @@ def main():
     screen_adapter = next((item for item in adapters if item.get("role") == "screen_capture"), {})
     if screen_adapter.get("available"):
         with tempfile.TemporaryDirectory(prefix="screen-guardian-smoke-") as tmp:
+            timeout_payload = call_tool(
+                "capture_region",
+                {
+                    "left": 0,
+                    "top": 0,
+                    "width": 1,
+                    "height": 1,
+                    "relative_to_display": True,
+                    "delay_seconds": 2,
+                    "output_dir": tmp,
+                },
+                env_updates={**explicit_env, "SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS": "1000"},
+            )
+            if timeout_payload.get("ok") or "timed out" not in str(timeout_payload.get("error", "")).lower():
+                raise SmokeFailure(f"MCP child timeout did not stop delayed capture: {timeout_payload}")
+            checks.append({"name": "mcp_child_timeout_stops_delayed_capture", "ok": True})
+
             capture_payload = call_tool(
                 "capture_region",
                 {
@@ -322,6 +374,48 @@ def main():
             if guardian_payload.get("context_delivery") != "file_marked_only":
                 raise SmokeFailure(f"guardian_perceive did not mark hold_file delivery: {guardian_payload}")
             checks.append({"name": "guardian_perceive_read_text_hold_file", "ok": True, "path": guardian_payload.get("path")})
+
+            watch_process = None
+            try:
+                watch_process = launch_changing_window()
+                window = wait_for_window("Screen Guardian Watch Smoke", explicit_env)
+                if not window:
+                    raise SmokeFailure("changing watch smoke window did not appear")
+                watch_change_payload = call_tool(
+                    "guardian_perceive",
+                    {
+                        "task": "watch_change",
+                        "target": {"hwnd": int(window["hwnd"])},
+                        "duration_seconds": 2.8,
+                        "interval_seconds": 0.2,
+                        "change_threshold": 10,
+                        "max_captures": 3,
+                        "source_label": "watch-change-smoke",
+                        "output_dir": tmp,
+                    },
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_perceive watch_change real event", watch_change_payload)
+                if int(watch_change_payload.get("events") or 0) < 1 or not watch_change_payload.get("captures"):
+                    raise SmokeFailure(f"watch_change did not produce a real change event: {watch_change_payload}")
+                missing = [item.get("path") for item in watch_change_payload.get("captures") or [] if not Path(str(item.get("path") or "")).exists()]
+                if missing:
+                    raise SmokeFailure(f"watch_change reported missing capture files: {missing}")
+                checks.append(
+                    {
+                        "name": "guardian_perceive_watch_change_real_event",
+                        "ok": True,
+                        "events": watch_change_payload.get("events"),
+                        "captures": len(watch_change_payload.get("captures") or []),
+                    }
+                )
+            finally:
+                if watch_process and watch_process.poll() is None:
+                    watch_process.terminate()
+                    try:
+                        watch_process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        watch_process.kill()
     else:
         checks.append({"name": "tiny_region_capture", "ok": True, "skipped": True, "reason": screen_adapter.get("import_error")})
 

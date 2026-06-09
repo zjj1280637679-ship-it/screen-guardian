@@ -121,15 +121,20 @@ The MCP server uses this runtime order:
 1. `SCREEN_GUARDIAN_HELPER_EXE`
 2. `bin/screen-guardian-helper.exe`
 3. `SCREEN_GUARDIAN_CAPTURE_SCRIPT` plus Python
-4. current cache, source folder, or newest sibling cache `scripts/screen_guardian_capture.py` plus Python
-5. `SCREEN_GUARDIAN_PYTHON`
-6. `PYTHON`
-7. common local Python install paths
-8. Windows `py` launcher
-9. `python`
-10. `python3`
+4. current plugin root `scripts/screen_guardian_capture.py` plus Python
+5. explicit `SCREEN_GUARDIAN_PLUGIN_ROOT` plus Python
+6. newer sibling cache roots plus Python
+7. source folder plus Python only when not running from a Codex plugin cache, or when `SCREEN_GUARDIAN_ALLOW_SOURCE_FALLBACK=1`
+8. `SCREEN_GUARDIAN_PYTHON`
+9. `PYTHON`
+10. common local Python install paths
+11. Windows `py` launcher
+12. `python`
+13. `python3`
 
 Prefer `SCREEN_GUARDIAN_HELPER_EXE` when you want a self-contained runtime, and `SCREEN_GUARDIAN_PYTHON` when you want to pin a local Python interpreter. The server does not rely on `npm_config_python`; recent npm versions can warn about an unknown `python` config before running package scripts, and that warning is separate from Screen Guardian's runtime discovery.
+
+The MCP server also has an outer child-process timeout. The default is action-aware, and `SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS` can override it for debugging. This is separate from Python-side runtime limits; it prevents a hung helper or Python script from holding the MCP call indefinitely.
 
 ## Self-Contained Helper
 

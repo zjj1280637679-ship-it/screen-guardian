@@ -3448,6 +3448,7 @@ def guardian_base_context(args, default_source_label):
         "delay_seconds",
         "settle_delay_ms",
         "wait_for_nonblank",
+        "quiet_preferred",
         "render_guard",
         "render_guard_confirmed",
         "allow_unverified_bbox_fallback",

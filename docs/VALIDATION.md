@@ -102,10 +102,12 @@ The smoke test uses the MCP server, so it exercises Python runtime discovery ins
 - explicit `SCREEN_GUARDIAN_PYTHON`
 - fallback from a broken Python candidate to a working candidate
 - explicit `SCREEN_GUARDIAN_CAPTURE_SCRIPT`
+- MCP child-process timeout for a delayed capture
 - `check_dependencies`
 - `list_displays`
 - `list_windows`
 - a tiny `capture_region` when the screen adapter is available
+- `guardian_perceive` `watch_change` against a real temporary window whose pixels change
 - break-glass raw execution stays disabled by default, requires per-call confirmation after enablement, and can run a harmless Python snippet in an isolated config
 
 This is a behavior smoke test for a local Windows machine. It may skip the tiny capture when optional screenshot dependencies are missing, but Python discovery and the MCP tool path must still work.
