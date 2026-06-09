@@ -2,12 +2,13 @@
 
 Screen Guardian exposes many low-level tools because compatibility work needs escape hatches. That is useful for experts, but it can make an AI agent spend too much context deciding between similar capture, preprocessing, storage, and envelope paths.
 
-The AI-first interface adds three intent tools that should be tried before the expert tool surface:
+The AI-first interface adds a small set of intent tools that should be tried before the expert tool surface:
 
 | Intent | Start with |
 | --- | --- |
 | Check whether the plugin can run | `guardian_check` |
 | Look at the screen, text, UI, a window, or a short change | `guardian_perceive` |
+| Survey many program windows without flooding context | `guardian_survey_windows` |
 | Prepare a model, decision, or monitor envelope | `guardian_prepare_workflow` |
 | Choose desktop/application/webpage capture routes | `list_capture_routes` |
 | Prepare conditional capture chains | `prepare_capture_chain` |
@@ -22,6 +23,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Read text screenshot | `guardian_perceive` with `task="read_text"` | Capture plus `preprocess="text"` and local image analysis; this is text-friendly image handling, not bundled OCR |
 | Debug UI | `guardian_perceive` with `task="debug_ui"` | Capture plus UI sharpening and local image analysis |
 | Capture a program window | `guardian_perceive` with `task="capture_window"` | Existing `capture_window` behavior and ambiguity rules |
+| Report all program windows | `guardian_survey_windows` with `capture_mode="status_only"` | Window title/process/bounds/status report with optional visibility sampling, no screenshot write |
+| Save selected window evidence | `guardian_survey_windows` with `capture_mode="hold_file"` | Bounded quiet window captures saved as marked local files for later selective review |
 | Short change watch | `guardian_perceive` with `task="watch_change"` | Existing bounded `watch_screen` behavior and runtime limits |
 | Hold file out of context | `guardian_perceive` with `task="hold_file"` or `context_budget="hold_file"` | Local save with `context_policy="hold_file"` and `marked_file_only=true` |
 | Delayed capture | Any capture intent with `delay_seconds` | Wait before capture, bounded by runtime limits |
@@ -31,6 +34,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
+
+`guardian_survey_windows` is the batch version of that strategy. It does not start a monitor, upload images, or call a model. It first returns a window-status report. If captures are requested, `window_survey_window_count_max` and `window_survey_capture_count_max` limit how many windows can be reported or saved in one call, and per-call limits can only tighten those bounds.
 
 `read_text` keeps its name for compatibility with existing callers. In the current ultra-light core it returns a sharpened text-oriented image and `text_handling.ocr_available=false`; actual OCR remains a future route or external model handoff.
 
@@ -42,6 +47,8 @@ Window capture is quiet-preferred by default. The plugin does not activate or ra
 | `normal` | Save at up to 1440 px wide |
 | `high` | Do not add an extra facade downscale |
 | `hold_file` | Save and mark the file without asking the AI to ingest it immediately |
+
+For `guardian_survey_windows`, `low` defaults to smaller 640 px-wide saved captures and `normal` defaults to 960 px-wide saved captures, because batch evidence is meant for selective review rather than immediate full-resolution reading.
 
 ## Workflow Preparation
 

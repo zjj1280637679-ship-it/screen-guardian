@@ -187,11 +187,23 @@ def main():
     require_ok("list_windows", windows_payload)
     checks.append({"name": "list_windows", "ok": True, "window_count": windows_payload.get("count")})
 
+    survey_status_payload = call_tool("guardian_survey_windows", {"capture_mode": "status_only", "limit": 5}, env_updates=explicit_env)
+    require_ok("guardian_survey_windows status_only", survey_status_payload)
+    if int(survey_status_payload.get("windows_reported") or 0) > 5:
+        raise SmokeFailure(f"guardian_survey_windows ignored limit: {survey_status_payload}")
+    checks.append(
+        {
+            "name": "guardian_survey_windows_status_only",
+            "ok": True,
+            "windows_reported": survey_status_payload.get("windows_reported"),
+        }
+    )
+
     with tempfile.TemporaryDirectory(prefix="screen-guardian-smoke-appdata-") as appdata:
         isolated_env = {"SCREEN_GUARDIAN_PYTHON": sys.executable, "APPDATA": appdata, "SCREEN_GUARDIAN_TOOL_SURFACE": "full"}
         limits_payload = call_tool(
             "set_runtime_limits",
-            {"limits": {"watch_duration_seconds_max": 1, "capture_settle_delay_ms_max": 1}},
+            {"limits": {"watch_duration_seconds_max": 1, "capture_settle_delay_ms_max": 1, "window_survey_capture_count_max": 0}},
             env_updates=isolated_env,
         )
         require_ok("set_runtime_limits isolated", limits_payload)
@@ -229,6 +241,19 @@ def main():
         if guardian_delay_payload.get("ok") or "no more than 1" not in str(guardian_delay_payload.get("error", "")):
             raise SmokeFailure(f"guardian_perceive loosened a persistent render delay max: {guardian_delay_payload}")
         checks.append({"name": "guardian_perceive_delay_cannot_loosen_limits", "ok": True})
+
+        survey_limit_payload = call_tool(
+            "guardian_survey_windows",
+            {
+                "capture_mode": "hold_file",
+                "capture_limit": 1,
+                "runtime_limits": {"window_survey_capture_count_max": 5},
+            },
+            env_updates=isolated_env,
+        )
+        if survey_limit_payload.get("ok") or "no more than 0" not in str(survey_limit_payload.get("error", "")):
+            raise SmokeFailure(f"guardian_survey_windows loosened a persistent capture max: {survey_limit_payload}")
+        checks.append({"name": "guardian_survey_windows_capture_limit_cannot_loosen", "ok": True})
 
         raw_disabled_payload = call_tool(
             "guardian_run_exec",
@@ -381,6 +406,32 @@ def main():
                 window = wait_for_window("Screen Guardian Watch Smoke", explicit_env)
                 if not window:
                     raise SmokeFailure("changing watch smoke window did not appear")
+                survey_capture_payload = call_tool(
+                    "guardian_survey_windows",
+                    {
+                        "capture_mode": "hold_file",
+                        "hwnd": int(window["hwnd"]),
+                        "limit": 1,
+                        "capture_limit": 1,
+                        "context_budget": "hold_file",
+                        "render_guard": "save",
+                        "output_dir": tmp,
+                    },
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_survey_windows hold_file capture", survey_capture_payload)
+                if int(survey_capture_payload.get("saved_count") or 0) < 1:
+                    raise SmokeFailure(f"guardian_survey_windows did not save a hold-file capture: {survey_capture_payload}")
+                survey_capture_path = Path(str((survey_capture_payload.get("captures") or [{}])[0].get("result", {}).get("path") or ""))
+                if not survey_capture_path.exists():
+                    raise SmokeFailure(f"guardian_survey_windows reported a missing file: {survey_capture_path}")
+                checks.append(
+                    {
+                        "name": "guardian_survey_windows_hold_file_capture",
+                        "ok": True,
+                        "saved_count": survey_capture_payload.get("saved_count"),
+                    }
+                )
                 watch_change_payload = call_tool(
                     "guardian_perceive",
                     {

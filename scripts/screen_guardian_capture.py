@@ -36,6 +36,8 @@ DEFAULT_LIMITS = {
     "capture_settle_delay_ms_max": 5000,
     "capture_render_retry_count_max": 8,
     "capture_render_retry_interval_ms_max": 2000,
+    "window_survey_window_count_max": 100,
+    "window_survey_capture_count_max": 12,
     "jpeg_quality_min": 1,
     "jpeg_quality_max": 95,
     "audio_duration_seconds_max": 120,
@@ -73,9 +75,9 @@ CAPTURE_ROUTE_CATALOG = {
     },
     "application": {
         "title": "Application/window capture",
-        "tools": ["list_windows", "capture_window"],
+        "tools": ["list_windows", "capture_window", "guardian_survey_windows"],
         "quiet": "default_best_effort",
-        "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "render-aware window capture"],
+        "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "render-aware window capture", "bounded multi-window surveys"],
         "limits": ["minimized, GPU-rendered, protected, or occluded windows may be blank, stale, or require a visible-screen fallback decision"],
     },
     "webpage": {
@@ -303,6 +305,19 @@ CAPABILITY_COMMANDS = [
         "side_effects": ["local_file_write"],
         "context_strategy": "return_path",
         "safety_note": "Retries clearly blank frames within runtime limits and warns before saving suspected unrendered output.",
+    },
+    {
+        "id": "perceive.windows.survey",
+        "category": "perceive",
+        "title": "Survey visible program windows",
+        "intent_tags": ["windows", "survey", "batch", "hold_file"],
+        "execution_mode": "direct",
+        "maps_to": "guardian_survey_windows",
+        "required_features": ["window_capture"],
+        "default_args": {"capture_mode": "status_only", "include_visibility_probe": True, "context_budget": "hold_file"},
+        "side_effects": ["optional_local_file_write"],
+        "context_strategy": "hold_file",
+        "safety_note": "Lists window status by default. Batch captures are bounded, local-only, and use hold-file delivery unless explicitly changed.",
     },
     {
         "id": "perceive.webpage.full_page",
@@ -2382,6 +2397,14 @@ def grab_window_image(args):
     if not status["available"]:
         raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
     window = find_window(args)
+    return grab_known_window_image(args, window, status, libs)
+
+
+def grab_known_window_image(args, window, status=None, libs=None):
+    if status is None or libs is None:
+        status, libs = window_adapter_status()
+        if not status["available"]:
+            raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
     settle_delay = capture_settle_delay_seconds(args)
     if settle_delay:
         time.sleep(settle_delay)
@@ -2631,6 +2654,8 @@ def action_get_runtime_settings(args):
                 "capture_settle_delay_ms_max": "milliseconds",
                 "capture_render_retry_count_max": "attempts",
                 "capture_render_retry_interval_ms_max": "milliseconds",
+                "window_survey_window_count_max": "windows",
+                "window_survey_capture_count_max": "captures",
                 "jpeg_quality_min": "encoder quality",
                 "jpeg_quality_max": "encoder quality",
                 "audio_duration_seconds_max": "seconds",
@@ -3416,7 +3441,7 @@ def action_guardian_check(args):
         "extra_output_dirs": serialize_paths(mirrors),
         "key_capabilities": key_capability_summary(flags),
         "recommended_next": recommended_next,
-        "ai_first_tools": ["guardian_check", "guardian_perceive", "guardian_prepare_workflow"],
+        "ai_first_tools": ["guardian_check", "guardian_perceive", "guardian_survey_windows", "guardian_prepare_workflow"],
         "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
     }
     if detail == "full":
@@ -3535,6 +3560,251 @@ def action_guardian_perceive(args):
                 return error("target.box is required for a region target")
             return action_capture_region(forwarded)
         return action_capture_screen(forwarded)
+    except Exception as exc:
+        return error(str(exc))
+
+
+def normalize_window_survey_capture_mode(args):
+    mode = str(args.get("capture_mode") or "status_only").strip().lower()
+    aliases = {
+        "none": "status_only",
+        "off": "status_only",
+        "list": "status_only",
+        "status": "status_only",
+        "capture": "hold_file",
+        "captures": "hold_file",
+        "save": "hold_file",
+        "paths": "return_paths",
+        "return_path": "return_paths",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ("status_only", "hold_file", "return_paths"):
+        raise ValueError("capture_mode must be status_only, hold_file, or return_paths")
+    return mode
+
+
+def filtered_survey_windows(args):
+    enum_args = {}
+    for key in ("title_contains", "title_contains_any", "process_name", "process_names"):
+        if key in args:
+            enum_args[key] = args[key]
+    windows = enum_windows(enum_args)
+    exact_title = str(args.get("exact_title") or "").strip().lower()
+    if exact_title:
+        windows = [window for window in windows if str(window.get("title") or "").lower() == exact_title]
+    hwnds = []
+    if args.get("hwnd"):
+        hwnds.append(int(args.get("hwnd")))
+    for item in args.get("hwnds") or []:
+        hwnds.append(int(item))
+    if hwnds:
+        wanted = set(hwnds)
+        by_hwnd = {int(window.get("hwnd")): window for window in windows}
+        for hwnd in hwnds:
+            if hwnd not in by_hwnd:
+                info = window_info_for_hwnd(hwnd)
+                if info and info.get("is_visible") and info.get("title"):
+                    by_hwnd[hwnd] = info
+        windows = [by_hwnd[hwnd] for hwnd in hwnds if hwnd in by_hwnd]
+    return windows
+
+
+def compact_visibility_probe(probe):
+    if not isinstance(probe, dict) or not probe.get("available"):
+        return probe
+    samples = []
+    for sample in probe.get("samples") or []:
+        top_window = sample.get("top_window") if isinstance(sample.get("top_window"), dict) else {}
+        samples.append(
+            {
+                "point": sample.get("point"),
+                "target_match": bool(sample.get("target_match", False)),
+                "top_hwnd": sample.get("top_hwnd"),
+                "top_title": top_window.get("title"),
+                "top_process_name": top_window.get("process_name"),
+                "top_pid": top_window.get("pid"),
+            }
+        )
+    return {
+        "available": True,
+        "identity_verified": bool(probe.get("identity_verified", False)),
+        "target_match_ratio": probe.get("target_match_ratio"),
+        "target_match_count": probe.get("target_match_count"),
+        "sample_count": probe.get("sample_count"),
+        "samples": samples,
+        "note": probe.get("note"),
+    }
+
+
+def window_survey_status(window, include_visibility_probe):
+    rect = window.get("rect") if isinstance(window.get("rect"), dict) else {}
+    virtual = virtual_screen_rect()
+    visible_ratio = rect_intersection_ratio(rect, virtual)
+    states = []
+    if bool(window.get("is_minimized", False)):
+        states.append("minimized")
+    if visible_ratio <= 0:
+        states.append("offscreen")
+    elif visible_ratio < 0.95:
+        states.append("partly_offscreen")
+    probe = {}
+    if include_visibility_probe and not bool(window.get("is_minimized", False)) and visible_ratio > 0:
+        probe = compact_visibility_probe(bbox_identity_probe(window))
+        if probe.get("available"):
+            if probe.get("identity_verified"):
+                states.append("visible_at_sample_points")
+            else:
+                states.append("possibly_occluded")
+    if not states:
+        states.append("ready")
+    return {
+        "hwnd": window.get("hwnd"),
+        "title": window.get("title"),
+        "process_name": window.get("process_name"),
+        "pid": window.get("pid"),
+        "rect": rect,
+        "is_visible": bool(window.get("is_visible", False)),
+        "is_minimized": bool(window.get("is_minimized", False)),
+        "visible_ratio": round(float(visible_ratio), 3),
+        "states": states,
+        "visibility_probe": probe,
+    }
+
+
+def apply_window_survey_budget(forwarded, context_budget, capture_mode):
+    budget = str(context_budget or ("hold_file" if capture_mode == "hold_file" else "low")).strip().lower()
+    if budget not in ("low", "normal", "high", "hold_file"):
+        raise ValueError("context_budget must be low, normal, high, or hold_file")
+    if budget == "low":
+        forwarded.setdefault("max_width", 640)
+    elif budget in ("normal", "hold_file"):
+        forwarded.setdefault("max_width", 960)
+    if budget == "hold_file" or capture_mode == "hold_file":
+        forwarded["context_policy"] = "hold_file"
+        forwarded["marked_file_only"] = True
+    return budget
+
+
+def window_survey_capture_args(args, window, index, capture_mode):
+    forwarded = guardian_base_context(args, "window-survey")
+    for key in (
+        "format",
+        "scale",
+        "max_width",
+        "max_height",
+        "quality",
+        "preprocess",
+        "analyze",
+        "context_policy",
+        "marked_file_only",
+        "write_metadata",
+        "output_dirs",
+        "mirror_dirs",
+    ):
+        if key in args:
+            forwarded[key] = args[key]
+    budget = apply_window_survey_budget(forwarded, args.get("context_budget"), capture_mode)
+    forwarded["hwnd"] = int(window.get("hwnd"))
+    process = str(window.get("process_name") or "window").replace(".exe", "")
+    forwarded["source_label"] = safe_filename_part(f"window-survey-{index + 1}-{process}", "window-survey")
+    return forwarded, budget
+
+
+def select_window_survey_capture_records(records, selection):
+    selection = str(selection or "first_n").strip().lower()
+    if selection not in ("first_n", "ready_only", "suspected_problem"):
+        raise ValueError("capture_selection must be first_n, ready_only, or suspected_problem")
+    if selection == "ready_only":
+        return [record for record in records if "minimized" not in record["states"] and "offscreen" not in record["states"]]
+    if selection == "suspected_problem":
+        return [record for record in records if any(state in record["states"] for state in ("minimized", "offscreen", "partly_offscreen", "possibly_occluded"))]
+    return records
+
+
+def action_guardian_survey_windows(args):
+    try:
+        require_feature("window_capture", args)
+        capture_mode = normalize_window_survey_capture_mode(args)
+        limits = runtime_limits(args)
+        window_limit = int(args.get("limit", 50))
+        if window_limit < 1:
+            raise ValueError("limit must be at least 1")
+        check_min_max(window_limit, 1, limits.get("window_survey_window_count_max"), "limit")
+        default_capture_limit = 0 if capture_mode == "status_only" else min(6, window_limit)
+        capture_limit = int(args.get("capture_limit", default_capture_limit))
+        if capture_limit < 0:
+            raise ValueError("capture_limit must be zero or greater")
+        check_min_max(capture_limit, 0, limits.get("window_survey_capture_count_max"), "capture_limit")
+        include_visibility_probe = bool(args.get("include_visibility_probe", True))
+        all_windows = filtered_survey_windows(args)
+        windows = all_windows[:window_limit]
+        records = [window_survey_status(window, include_visibility_probe) for window in windows]
+        captures = []
+        capture_errors = []
+        if capture_mode != "status_only" and capture_limit > 0 and records:
+            status, libs = window_adapter_status()
+            if not status.get("available"):
+                raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
+            by_hwnd = {int(window.get("hwnd")): window for window in windows}
+            selected_records = select_window_survey_capture_records(records, args.get("capture_selection"))[: min(capture_limit, len(records))]
+            for record in selected_records:
+                hwnd = int(record.get("hwnd"))
+                window = by_hwnd.get(hwnd)
+                if not window:
+                    continue
+                capture_args, budget = window_survey_capture_args(args, window, len(captures), capture_mode)
+                try:
+                    image, source, libs = grab_known_window_image(capture_args, window, status, libs)
+                    result = save_or_warn_capture(image, source, libs, capture_args)
+                    item = {
+                        "hwnd": hwnd,
+                        "title": record.get("title"),
+                        "process_name": record.get("process_name"),
+                        "states": record.get("states"),
+                        "context_budget": budget,
+                        "result": result,
+                    }
+                    captures.append(item)
+                    record["capture"] = {
+                        "ok": bool(result.get("ok", False)),
+                        "path": result.get("path", ""),
+                        "metadata_path": result.get("metadata_path", ""),
+                        "capture_deferred": bool(result.get("capture_deferred", False)),
+                        "reason": result.get("reason", ""),
+                    }
+                except Exception as exc:
+                    failure = {
+                        "hwnd": hwnd,
+                        "title": record.get("title"),
+                        "process_name": record.get("process_name"),
+                        "error": str(exc),
+                    }
+                    capture_errors.append(failure)
+                    record["capture"] = {"ok": False, "error": str(exc)}
+        saved_count = sum(1 for item in captures if item.get("result", {}).get("path"))
+        deferred_count = sum(1 for item in captures if item.get("result", {}).get("capture_deferred"))
+        return write_json(
+            {
+                "ok": True,
+                "capture_mode": capture_mode,
+                "windows_total": len(all_windows),
+                "windows_reported": len(records),
+                "window_limit": window_limit,
+                "capture_limit": capture_limit,
+                "saved_count": saved_count,
+                "deferred_count": deferred_count,
+                "error_count": len(capture_errors),
+                "windows": records,
+                "captures": captures,
+                "capture_errors": capture_errors,
+                "runtime_limits": {
+                    "window_survey_window_count_max": limits.get("window_survey_window_count_max"),
+                    "window_survey_capture_count_max": limits.get("window_survey_capture_count_max"),
+                },
+                "recommended_next": "Review windows first, then open only the relevant saved paths or retry individual capture_window calls with hwnd-specific settings.",
+                "privacy": "Local window enumeration and optional local captures only; no upload, model call, subagent call, or background monitor.",
+            }
+        )
     except Exception as exc:
         return error(str(exc))
 
@@ -4415,6 +4685,7 @@ def action_clear_cache(args):
 ACTIONS = {
     "guardian_check": action_guardian_check,
     "guardian_perceive": action_guardian_perceive,
+    "guardian_survey_windows": action_guardian_survey_windows,
     "guardian_prepare_workflow": action_guardian_prepare_workflow,
     "guardian_list_commands": action_guardian_list_commands,
     "guardian_run_command": action_guardian_run_command,

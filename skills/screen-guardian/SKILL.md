@@ -20,6 +20,7 @@ Use this skill when the user asks to:
 - read or set the local display-name profile
 - configure the local cache path
 - list or capture a specific program window
+- survey many program windows and optionally save bounded hold-file captures for selective review
 - run a short bounded change-triggered watch
 - tag captures with project/workflow metadata
 - analyze or preprocess a local image before deciding how much context to spend
@@ -52,6 +53,7 @@ Prefer the AI-first facade tools before the expert tool surface:
 
 - Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
 - Use `guardian_perceive` for ordinary visual tasks: quick look, text-heavy screenshot, UI debugging, window capture, short bounded change watch, or hold-file context control.
+- Use `guardian_survey_windows` when the user asks for all program-window status or wants a bounded batch of quiet window captures. Start with `capture_mode="status_only"`; use `capture_mode="hold_file"` when screenshots should be saved for later selective review.
 - Use `delay_seconds` for delayed screenshots, `render_guard="wait"` for slow-rendering windows, `render_guard="warn"` when suspected-unrendered frames should return decision actions before saving, and `task="watch_change"` for screen transitions or popups.
 - Prefer quiet window capture by default. Do not activate, focus, raise, or make a target window topmost unless the user asks for that visible fallback path. If `capture_window` returns an occlusion, bbox identity, or bbox-fallback decision warning, ask the user or choose a documented action instead of silently saving. Use `allow_unverified_bbox_fallback=true` only as a last resort when the user accepts that visible pixels may belong to another window.
 - Use `guardian_prepare_workflow` when preparing a local model, decision, or monitor envelope without executing that route.
@@ -71,6 +73,7 @@ AI-first tools:
 
 - `guardian_check`
 - `guardian_perceive`
+- `guardian_survey_windows`
 - `guardian_prepare_workflow`
 - `guardian_list_commands`
 - `guardian_run_command`
@@ -84,6 +87,7 @@ Core tools:
 - `list_adapters`
 - `list_displays`
 - `list_windows`
+- `guardian_survey_windows`
 - `list_capture_routes`
 - `capture_screen`
 - `capture_region`
@@ -121,4 +125,4 @@ Experimental envelope tools:
 - `prepare_monitor_tick`
 - `prepare_capture_chain`
 
-Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Treat `task="read_text"` as text-oriented image preprocessing, not OCR text extraction. Use desktop capture for visible pixels, application capture for HWND/process/title targets, webpage capture for browser-rendered full-page/viewport/element capture only when `webpage_capture=true`, and `mode="scroll_container"` for inner tables, panels, or iframes. Application/window capture is quiet-preferred by default and should not raise the target; set `quiet_preferred=false` only when visible-screen fallback is accepted, and still prefer HWND/exact title when bbox identity cannot be verified. Use `set_decision_policy` when the user wants best-action logic that can become more complex than weights or increments. Use `set_monitor_profile` and `prepare_monitor_tick` for project monitoring contracts such as webpage changes, program/window changes, model-detected features, error triggers, and audio/video events. Use `prepare_capture_chain` for guided plans; it does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers. Use `watch_screen` only as a short foreground task, not as a background monitor.
+Use `list_adapters` when diagnosing compatibility. Use `get_display_profile` before renaming. Use `apply_display_profile` only when the user wants the active name written into the local plugin manifest and understands the plugin must be reloaded. Use `capture_screen` with `max_width` or `scale` for fast visual capture; add `analyze: true` only when image classification is useful. Treat `task="read_text"` as text-oriented image preprocessing, not OCR text extraction. Use desktop capture for visible pixels, application capture for HWND/process/title targets, webpage capture for browser-rendered full-page/viewport/element capture only when `webpage_capture=true`, and `mode="scroll_container"` for inner tables, panels, or iframes. Application/window capture is quiet-preferred by default and should not raise the target; set `quiet_preferred=false` only when visible-screen fallback is accepted, and still prefer HWND/exact title when bbox identity cannot be verified. Use `guardian_survey_windows` for multi-window status reports and bounded batch evidence; keep `capture_mode="status_only"` unless the user asks for screenshots. Use `set_decision_policy` when the user wants best-action logic that can become more complex than weights or increments. Use `set_monitor_profile` and `prepare_monitor_tick` for project monitoring contracts such as webpage changes, program/window changes, model-detected features, error triggers, and audio/video events. Use `prepare_capture_chain` for guided plans; it does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers. Use `watch_screen` only as a short foreground task, not as a background monitor.

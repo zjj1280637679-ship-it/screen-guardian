@@ -486,6 +486,87 @@ const tools = [
     },
   },
   {
+    name: "guardian_survey_windows",
+    description: "AI-first multi-window survey. Lists visible program-window status and can save a bounded set of quiet local window captures for selective review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        capture_mode: {
+          type: "string",
+          enum: ["status_only", "hold_file", "return_paths"],
+          default: "status_only",
+          description: "status_only only reports windows. hold_file saves bounded captures as marked local files. return_paths saves bounded captures and returns paths for optional immediate review.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          default: 50,
+          description: "Maximum windows to report. Bounded by runtime limits.",
+        },
+        capture_limit: {
+          type: "integer",
+          minimum: 0,
+          default: 0,
+          description: "Maximum windows to capture when capture_mode is not status_only. Bounded by runtime limits.",
+        },
+        capture_selection: {
+          type: "string",
+          enum: ["first_n", "ready_only", "suspected_problem"],
+          default: "first_n",
+          description: "Which reported windows should be captured first.",
+        },
+        include_visibility_probe: {
+          type: "boolean",
+          default: true,
+          description: "Sample topmost windows at target-window points to flag likely occlusion without taking a screenshot.",
+        },
+        hwnd: windowTargetProperties.hwnd,
+        hwnds: {
+          type: "array",
+          items: { type: "integer" },
+          description: "Optional explicit HWND list to survey or capture.",
+        },
+        title_contains: windowTargetProperties.title_contains,
+        title_contains_any: windowTargetProperties.title_contains_any,
+        exact_title: windowTargetProperties.exact_title,
+        process_name: windowTargetProperties.process_name,
+        process_names: windowTargetProperties.process_names,
+        context_budget: {
+          type: "string",
+          enum: ["low", "normal", "high", "hold_file"],
+          default: "low",
+          description: "Batch image budget. low defaults to smaller images; hold_file marks saved captures for later review.",
+        },
+        output_dir: imageOutputProperties.output_dir,
+        source_label: imageOutputProperties.source_label,
+        format: imageOutputProperties.format,
+        scale: imageOutputProperties.scale,
+        max_width: imageOutputProperties.max_width,
+        max_height: imageOutputProperties.max_height,
+        quality: imageOutputProperties.quality,
+        preprocess: imageOutputProperties.preprocess,
+        analyze: imageOutputProperties.analyze,
+        delay_seconds: imageOutputProperties.delay_seconds,
+        settle_delay_ms: imageOutputProperties.settle_delay_ms,
+        wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
+        quiet_preferred: imageOutputProperties.quiet_preferred,
+        render_guard: imageOutputProperties.render_guard,
+        render_guard_confirmed: imageOutputProperties.render_guard_confirmed,
+        allow_unverified_bbox_fallback: imageOutputProperties.allow_unverified_bbox_fallback,
+        guard_checks: imageOutputProperties.guard_checks,
+        render_retry_count: imageOutputProperties.render_retry_count,
+        render_retry_interval_ms: imageOutputProperties.render_retry_interval_ms,
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        tags: imageOutputProperties.tags,
+        note: imageOutputProperties.note,
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "guardian_prepare_workflow",
     description: "AI-first workflow facade that prepares local model, decision, or monitor envelopes without executing external routes.",
     inputSchema: {
@@ -1548,6 +1629,7 @@ const tools = [
 const CORE_TOOL_NAMES = new Set([
   "guardian_check",
   "guardian_perceive",
+  "guardian_survey_windows",
   "check_dependencies",
   "list_adapters",
   "list_displays",
@@ -2089,6 +2171,9 @@ async function callTool(name, args) {
   }
   if (name === "guardian_perceive") {
     return runPython("guardian_perceive", args);
+  }
+  if (name === "guardian_survey_windows") {
+    return runPython("guardian_survey_windows", args);
   }
   if (name === "guardian_prepare_workflow") {
     return runPython("guardian_prepare_workflow", args);

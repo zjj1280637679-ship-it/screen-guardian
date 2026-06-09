@@ -8,7 +8,7 @@ Screen Guardian can be understood as a personal perception operations layer for 
 
 | Company-like role | Screen Guardian capability |
 | --- | --- |
-| Intake desk | AI-first tools such as `guardian_check`, `guardian_perceive`, `guardian_prepare_workflow`, and registered commands |
+| Intake desk | AI-first tools such as `guardian_check`, `guardian_perceive`, `guardian_survey_windows`, `guardian_prepare_workflow`, and registered commands |
 | Field capture team | Screen, region, window, audio, video/audio extraction, delayed capture, render-aware retry, and bounded watch |
 | Lab team | Preprocess, OCR routes, image narration routes, video narration routes, audio transcription, and UI/screen parsing adapters |
 | Dispatch manager | Decision policies, monitor profiles, extension routes, external API handoff, Codex subagent handoff, and local command bridges |

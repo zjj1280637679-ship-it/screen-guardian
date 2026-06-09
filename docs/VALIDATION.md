@@ -106,6 +106,7 @@ The smoke test uses the MCP server, so it exercises Python runtime discovery ins
 - `check_dependencies`
 - `list_displays`
 - `list_windows`
+- `guardian_survey_windows` status-only reporting, runtime-limit enforcement, and bounded hold-file capture
 - a tiny `capture_region` when the screen adapter is available
 - `guardian_perceive` `watch_change` against a real temporary window whose pixels change
 - break-glass raw execution stays disabled by default, requires per-call confirmation after enablement, and can run a harmless Python snippet in an isolated config

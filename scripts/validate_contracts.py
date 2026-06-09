@@ -34,6 +34,7 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 REQUIRED_TOOLS = [
     "guardian_check",
     "guardian_perceive",
+    "guardian_survey_windows",
     "guardian_prepare_workflow",
     "guardian_list_commands",
     "guardian_run_command",
@@ -135,6 +136,7 @@ SCENARIO_COVERAGE = {
     "break-glass execution": ["guardian_prepare_exec", "guardian_run_exec", "raw_local_exec"],
     "older system capture": ["older windows", "native screen capture", "computer use"],
     "window/program capture": ["program window", "window", "process name"],
+    "multi-window survey": ["guardian_survey_windows", "capture_mode", "hold_file"],
     "region/display capture": ["region", "display"],
     "text screenshot handling": ["text-heavy", "sharpen", "ocr"],
     "storage/cache routing": ["cache", "storage", "mirror"],
@@ -296,6 +298,7 @@ def check_static_contracts() -> CheckSet:
         "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
         "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
         "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],
+        "guardian_survey_windows has bounded status and capture modes": ["action_guardian_survey_windows", "window_survey_window_count_max", "window_survey_capture_count_max", "capture_mode"],
         "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick", "action_prepare_capture_chain"],
         "capture routes distinguish desktop application webpage": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"'],
         "quiet window capture is default strategy": ["quiet_capture_preferred", "no_foreground_activation", "quiet_preferred_default", "visible-screen bbox fallback"],

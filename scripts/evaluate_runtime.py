@@ -27,11 +27,13 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 EXPECTED_AI_FIRST_TOOLS = {
     "guardian_check",
     "guardian_perceive",
+    "guardian_survey_windows",
     "guardian_prepare_workflow",
 }
 EXPECTED_CORE_TOOLS = {
     "guardian_check",
     "guardian_perceive",
+    "guardian_survey_windows",
     "check_dependencies",
     "list_adapters",
     "list_displays",

@@ -6,18 +6,19 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-For Codex, start with `guardian_check` and `guardian_perceive`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
+For Codex, start with `guardian_check`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
 
 For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
 
 ## AI-first tools
 
-Screen Guardian exposes a broad expert tool surface, but the default MCP surface is intentionally small. AI agents should usually start with the two core intent tools, then enable the advanced surface only when workflow envelopes or reusable commands are needed:
+Screen Guardian exposes a broad expert tool surface, but the default MCP surface is intentionally small. AI agents should usually start with the core intent tools, then enable the advanced surface only when workflow envelopes or reusable commands are needed:
 
 | Need | Tool | What it does |
 | --- | --- | --- |
 | Check readiness | `guardian_check` | Summarizes runtime, adapters, cache path, capability flags, and the next recommended tool without capturing anything. |
 | See or hold local visual context | `guardian_perceive` | Maps quick look, text screenshot, UI debugging, window capture, short change watch, and hold-file requests onto the existing safe capture tools. |
+| Survey all program windows | `guardian_survey_windows` | Lists visible program-window status and can save a bounded set of quiet local window captures for selective review. |
 | Prepare workflow envelopes | `guardian_prepare_workflow` | Advanced surface. Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
 | Discover reusable commands | `guardian_list_commands` | Advanced surface. Lists registered capability commands so the main AI does not need to guess low-level tool combinations. |
 | Run a registered command | `guardian_run_command` | Advanced surface. Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
@@ -30,6 +31,8 @@ The normal tools are safe wrappers. They do not bypass feature flags, runtime li
 For slow or older systems, capture tools also support timing controls: `delay_seconds` for delayed screenshots, `wait_for_nonblank` for render-complete retries, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
+
+`guardian_survey_windows` is for extreme "report all windows" tasks. It defaults to `capture_mode="status_only"` and reports window title, process, bounds, minimized/offscreen state, and optional topmost-window visibility samples. When `capture_mode="hold_file"` or `capture_mode="return_paths"` is requested, it saves only up to the configured batch-capture limit and returns local paths so the AI can inspect selected screenshots instead of ingesting every image.
 
 `guardian_perceive` task `read_text` means "make a text-heavy screenshot easier to inspect." It applies text preprocessing and local image analysis, but the ultra-light core does not bundle OCR; results expose `text_handling.ocr_available=false` unless a future OCR route is added.
 
@@ -141,7 +144,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Tool layers
 
-New users and AI agents should start with `guardian_check` and `guardian_perceive`. By default, the MCP server exposes only the core tool surface so first use stays small. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full` before starting the MCP server to expose advanced workflow, media, and lab tools. The MCP `tools/list` result includes `toolSurface` with the active value: `core`, `advanced`, or `full`.
+New users and AI agents should start with `guardian_check`, `guardian_perceive`, and `guardian_survey_windows`. By default, the MCP server exposes only the core tool surface so first use stays small. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full` before starting the MCP server to expose advanced workflow, media, and lab tools. The MCP `tools/list` result includes `toolSurface` with the active value: `core`, `advanced`, or `full`.
 
 ### Core tools
 
@@ -149,9 +152,10 @@ These are the first-use tools. They perform explicit local checks or captures an
 
 | Need | Tools |
 | --- | --- |
-| Use the default AI facade | `guardian_check`, `guardian_perceive` |
+| Use the default AI facade | `guardian_check`, `guardian_perceive`, `guardian_survey_windows` |
 | Check whether Screen Guardian can run | `check_dependencies`, `list_adapters` |
 | See available screens and windows | `list_displays`, `list_windows` |
+| Report program-window status | `guardian_survey_windows` |
 | Save a screenshot | `capture_screen`, `capture_region`, `capture_window` |
 | Choose a capture route | `list_capture_routes` |
 | Catch a short visible change | `watch_screen` |
@@ -267,6 +271,7 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_dependencies","arguments":{}}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_displays","arguments":{}}}
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_windows","arguments":{"limit":5}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"guardian_survey_windows","arguments":{"capture_mode":"status_only","limit":5}}}
 '@ | node .\mcp\server.cjs
 ```
 

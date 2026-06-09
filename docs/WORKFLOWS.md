@@ -2,7 +2,7 @@
 
 Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
 
-For AI agents, start with the default AI-first facade tools: `guardian_check` and `guardian_perceive`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
+For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
 
 After the advanced surface is enabled, use `guardian_prepare_workflow` for local model, decision, monitor, or capture-chain envelopes. For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
 
@@ -83,6 +83,8 @@ Current default limits:
 - `capture_settle_delay_ms_max`: `5000`
 - `capture_render_retry_count_max`: `8`
 - `capture_render_retry_interval_ms_max`: `2000`
+- `window_survey_window_count_max`: `100`
+- `window_survey_capture_count_max`: `12`
 - `audio_duration_seconds_max`: `120`
 - `audio_sample_rate_max`: `48000`
 - `audio_channels_max`: `2`
@@ -252,6 +254,8 @@ Use `render_guard` when the capture should not quietly save a likely unrendered 
 The registered command `perceive.window.after_render` uses `render_guard="wait"` by default. This is the preferred route when a slow program, installer, browser tab, or popup may exist before the contents finish drawing.
 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If the HWND route needs a visible-screen bbox fallback, `occlusion_risk` and `bbox_identity_mismatch` checks are attached automatically. If the visible bbox appears to belong to another topmost window, `render_guard_confirmed=true` is not enough to save; use HWND/exact title, bring the target forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
+
+Use `guardian_survey_windows` when the user asks for a report on all program windows. It defaults to `capture_mode="status_only"` so the AI first receives titles, processes, bounds, minimized/offscreen states, and optional topmost-window visibility samples. If the user wants screenshot evidence, pass `capture_mode="hold_file"` to save a bounded set of marked local files, or `capture_mode="return_paths"` when the AI should return paths for selective viewing. It does not upload images, call a model, start a subagent, or run a background monitor.
 
 `guard_checks` controls which quality checks run. The ordinary default is `["unrendered"]`, with fallback-specific checks added automatically for window bbox fallback. Optional checks such as `minimized_window`, `offscreen_window`, `tiny_capture`, and `stale_frame` must be enabled explicitly, or by passing `["all"]`. See `docs/CAPTURE_GUARDS.md` for the decision payload and examples.
 
