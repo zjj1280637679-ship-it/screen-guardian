@@ -31,6 +31,8 @@ The normal tools are safe wrappers. They do not bypass feature flags, runtime li
 
 For slow or older systems, the lower-level timing controls are still available: `delay_seconds`, `wait_for_nonblank`, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
+Capture results now distinguish tool handling from file creation. A guard decision can return `ok=true` while `saved=false`, `path=null`, and `result_state="decision_required"`; callers should only open or send a file when `saved=true` and `path` is present.
+
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
 
 Browser and GPU-heavy app windows may return a rendered frame with a blank content/client area through direct HWND capture. Screen Guardian now analyzes the client area separately; if it looks blank or very low-information, it records `window_client_low_information` and attempts the existing visible bbox fallback so `occlusion_risk` and `bbox_identity_mismatch` still apply.

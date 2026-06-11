@@ -32,6 +32,9 @@ When a guard triggers and `render_guard` is `warn` or `wait`, Screen Guardian de
 ```json
 {
   "ok": true,
+  "saved": false,
+  "path": null,
+  "result_state": "decision_required",
   "reason": "capture_guard_decision",
   "capture_deferred": true,
   "requires_decision": true,
@@ -48,6 +51,8 @@ When a guard triggers and `render_guard` is `warn` or `wait`, Screen Guardian de
 ```
 
 This is deliberately not a refusal. The caller can force the capture, wait a fixed delay, auto-wait until the frame appears rendered, or adjust the target.
+
+`ok=true` in this payload means the tool handled the request and returned a decision menu. It does not mean a screenshot was saved. Callers should check `saved=true` and a non-empty `path` before opening or sending a file.
 
 ## Modes
 

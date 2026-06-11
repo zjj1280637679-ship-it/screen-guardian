@@ -40,6 +40,7 @@ Use this skill when the user asks to:
 - Only start bounded watch capture when the user asks for it; keep duration and capture-count limits small.
 - Do not upload screenshots automatically.
 - Mention the saved file path when a capture succeeds.
+- Treat `ok=true` with `saved=false` as a handled decision state, not a saved screenshot. Only open or send a capture when `saved=true` and `path` is present.
 - Use `marked_file_only` or `context_policy="hold_file"` when the user wants files tagged for later analysis instead of immediately read into context.
 - Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
 - Treat decision policies as configuration/envelope preparation only. Do not execute function routes, APIs, local commands, or subagents unless a future adapter or caller explicitly handles execution.

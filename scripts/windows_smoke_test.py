@@ -394,6 +394,31 @@ def main():
                 raise SmokeFailure(f"capture_region reported a missing file: {path}")
             checks.append({"name": "tiny_region_capture", "ok": True, "path": str(path)})
 
+            guard_decision_payload = call_tool(
+                "capture_region",
+                {
+                    "left": 0,
+                    "top": 0,
+                    "width": 1,
+                    "height": 1,
+                    "relative_to_display": True,
+                    "source_label": "windows-smoke-guard-decision",
+                    "output_dir": tmp,
+                    "render_guard": "warn",
+                    "guard_checks": ["tiny_capture"],
+                    "guard_tiny_min_pixels": 16,
+                },
+                env_updates=explicit_env,
+            )
+            require_ok("capture_region guard decision", guard_decision_payload)
+            if guard_decision_payload.get("saved") is not False:
+                raise SmokeFailure(f"guard decision did not report saved=false: {guard_decision_payload}")
+            if guard_decision_payload.get("path") is not None:
+                raise SmokeFailure(f"guard decision unexpectedly reported a saved path: {guard_decision_payload}")
+            if guard_decision_payload.get("result_state") != "decision_required" or not guard_decision_payload.get("capture_deferred"):
+                raise SmokeFailure(f"guard decision did not report deferred decision state: {guard_decision_payload}")
+            checks.append({"name": "capture_guard_decision_not_saved", "ok": True})
+
             fast_payload = call_tool(
                 "guardian_perceive",
                 {

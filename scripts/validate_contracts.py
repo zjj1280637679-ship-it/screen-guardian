@@ -312,6 +312,7 @@ def check_static_contracts() -> CheckSet:
         "nested scroll container capture is optional": ["scroll_container", "frame_selector", "capture_scroll_container"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
         "render guard returns decision actions before saving suspected blank output": ["render_guard_warning_payload", "suspected_unrendered", "available_actions", "force_capture_now", "capture_later", "auto_detect_render_then_capture"],
+        "guard decision is not mistaken for saved file": ['"saved": False', '"result_state": "decision_required"', "ok=true", "saved=false"],
         "capture guard checks document fallback exceptions": ["DEFAULT_GUARD_CHECKS = [\"unrendered\"]", "CAPTURE_GUARD_CHECKS", "bbox_identity_mismatch"],
         "direct hwnd client guard detects browser blank content": ["window_client_low_information", "window_client_content_status", "pillow-imagegrab-bbox-after-low-info-window-client"],
         "bbox fallback identity guard": ["bbox_identity_probe", "bbox_identity_mismatch", "allow_unverified_bbox_fallback"],

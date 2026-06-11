@@ -1250,6 +1250,10 @@ def save_capture_image(image, source, libs, args):
 
     result = {
         "ok": True,
+        "saved": True,
+        "capture_deferred": False,
+        "requires_decision": False,
+        "result_state": "saved",
         "adapter": source.get("adapter"),
         "path": str(output_path),
         "metadata_path": metadata_path,
@@ -2092,6 +2096,10 @@ def render_guard_warning_payload(source, args):
     issue_ids = [issue.get("id") for issue in guard["issues"]]
     payload = {
         "ok": not is_strict_failure,
+        "saved": False,
+        "path": None,
+        "metadata_path": None,
+        "result_state": "blocked" if is_strict_failure else "decision_required",
         "warning": "Capture guard detected possible incomplete output. Capture was deferred for a user/agent decision.",
         "message": "Choose whether to force a capture now, capture later, auto-wait until the frame appears rendered, or adjust the target before capture.",
         "reason": "capture_guard_decision",
@@ -2536,6 +2544,10 @@ def action_capture_webpage(args):
     metadata_path = write_metadata_sidecar(output_path, metadata, args)
     result = {
         "ok": True,
+        "saved": True,
+        "capture_deferred": False,
+        "requires_decision": False,
+        "result_state": "saved",
         "adapter": status["id"],
         "path": str(output_path),
         "metadata_path": metadata_path,
