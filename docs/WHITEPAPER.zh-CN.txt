@@ -1,0 +1,475 @@
+Screen Guardian 白皮书（中文审阅稿）
+
+面向 AI 的桌面感知层
+
+0. 摘要
+
+Screen Guardian 不只是一个截图插件。它是面向个人 AI agent 的本地桌面感知基础设施，优先解决 Windows 上“能不能看、怎么看、看得是否可靠、看多少才够”的问题。
+
+传统截图工具默认人类已经知道要截哪里、为什么截、什么时候截、截图是否可用。Screen Guardian 的默认假设正好相反：AI 在执行任务时，通常并不知道当前电脑上有哪些屏幕、窗口、区域、页面、弹窗、终端、浏览器标签页或渲染状态，也不知道截图结果是否空白、过旧、被遮挡、来自错误目标，或是否真的和当前任务相关。
+
+因此，Screen Guardian 把截图看成“观察通道”之一，而不是入口本身。更合理的入口是：先给 AI 一个轻量的桌面态势索引，再让 AI 选择目标、观察通道、保护策略和上下文预算，最后返回机器可读的可靠性回执。
+
+一句话定义：
+
+Screen Guardian 是面向 AI 的桌面态势感知层。它帮助个人 AI 发现可观察对象，选择最低成本的观察通道，只在必要时截图，并用可验证、可追踪、可降级的方式返回结果。
+
+
+1. 角色模型
+
+Screen Guardian 有两类用户。
+
+上游用户：
+拥有电脑、授予权限、提出任务的人类用户。
+
+运行时一线用户：
+实际调用工具、读取回执、选择路线、控制上下文成本的 AI agent。
+
+Screen Guardian 的运行时接口应优先服务 AI。人类可读文本仍然重要，但关键结果必须是机器可读的，包括目标、方法、判定、保存路径、风险、副作用、置信度和建议的下一步动作。
+
+
+2. 问题背景
+
+当桌面感知被简化成一个 raw screenshot() 调用时，AI 很容易出现以下问题：
+
+- AI 不知道哪个屏幕、窗口、区域或页面和当前任务相关。
+- 工具返回成功，但图片实际是空白、旧帧、遮挡物、未渲染内容或错误目标。
+- AI 因为缺少轻量索引，每一轮都重复发送大截图、OCR 文本或视觉模型请求。
+- AI 用长自然语言描述截图目标，跨轮之后容易漂移。
+- 前台截图会改变用户焦点，而静默路线本来可能已经足够。
+- 静默截图在失败后退回到可见桌面像素时，可能截到覆盖在上面的另一个窗口。
+- 慢机器或旧系统上，窗口刚出现但 UI 未渲染完成，容易得到白屏或半成品截图。
+- OCR、音频、视频、模型转述、子代理等重功能如果默认启用，会带来额外上下文、CPU、API 或隐私成本。
+
+Screen Guardian 的设计目标是：把这些判断从 AI 的猜测中拿出来，变成结构化、有界、本地优先的工具契约。
+
+
+3. 核心命题
+
+Screen Guardian 应先给 AI 一个低成本的桌面态势索引，再让 AI 按需展开证据。
+
+推荐链路：
+
+索引优先 -> 选择目标 -> 选择观察通道 -> 应用保护策略 -> 返回可靠性回执
+
+不推荐链路：
+
+先截图 -> 再看图 -> 再猜这张图是否有用
+
+索引降低认知负荷。目标编号降低定位歧义。保护策略降低误导性成功。可靠性回执为 AI 提供下一步决策输入。
+
+
+4. 桌面态势索引
+
+桌面态势索引是一个低成本的可观察对象目录。它不是截图，不是完整 OCR，不是完整 DOM，不是完整 UIA 控件树，不是终端全文，也不是模型转述。
+
+它应回答：
+
+- 当前有哪些显示器？
+- 哪些窗口可见、最小化、离屏或可能被遮挡？
+- 某个目标属于哪个应用或进程？
+- 某个目标有哪些可用观察通道？
+- 某个通道是静默、前台、可见像素、网页路线，还是未来的语义分析路线？
+- 相比上一轮，哪些目标发生了变化？
+- 哪些目标存在旧帧、遮挡、空白、歧义或未就绪风险？
+
+当前 Screen Guardian 已通过 guardian_check、list_displays、list_windows、guardian_survey_windows 和 list_capture_routes 实现了这个模型的开端。
+
+未来版本可以扩展浏览器页面状态、标签页身份、区域目录、代码面板、终端尾部、DOM hint、UIA 摘要或模型生成描述。但这些路线应保持可选、可预算、可关闭。
+
+
+5. 界面拓扑
+
+AI 不应把桌面看成一张平面像素图，而应把它理解成界面拓扑。
+
+推荐层级：
+
+桌面
+  显示器
+    应用
+      顶层窗口
+        页面或标签页
+          面板、iframe、弹窗或嵌套滚动区
+            区域
+              控件、文本、代码、图表、输入框或表格单元
+
+每个节点都可以在某次快照中拥有稳定目标编号。
+
+示例：
+
+{
+  "snapshot_id": "desk_118",
+  "target_id": "w03.p02.r01",
+  "kind": "region",
+  "title": "terminal panel",
+  "parent": "w03.p02"
+}
+
+当前实现已经暴露 HWND、显示器编号、区域、窗口标题、进程信息和路线描述。更丰富的 target_id / snapshot_id 层属于未来索引快照方向。
+
+
+6. 感知深度
+
+不是每个任务都需要截图。Screen Guardian 应支持逐级加深的感知深度。
+
+S0 title_only：
+只读取标题、进程、句柄、矩形、显示器、前后台、最小化、离屏等 hint。成本极低。
+
+S1 structure：
+读取窗口树、页面结构、面板结构、主要控件和可用路线。成本低到中等。
+
+S2 text_preview：
+读取少量文本 hint，例如错误标题、按钮名、终端尾部、页面标题、文件名。成本中等。
+
+S3 semantic_analysis：
+本地代码、日志、DOM、UIA 或结构分析，生成任务相关摘要。成本中到高。
+
+S4 pixel_analysis：
+截图、OCR、视觉模型、图像转述、视频帧或子代理解释。成本高。
+
+默认每轮应优先提供 S0，加上必要的 S1/S2 hint。S3/S4 应由 AI 按需请求、订阅或由明确触发器触发，因为它们会消耗更多上下文、CPU、API 额度或隐私预算。
+
+
+7. 观察通道
+
+观察通道是检查目标的方式，不一定是截图。
+
+常见通道包括：
+
+title_read：
+读取标题、进程和窗口元数据。当前支持。
+
+window_survey：
+报告多个窗口状态，不让上下文被图片淹没。当前支持。
+
+quiet_capture：
+不置前、不抢焦点地捕获窗口。当前支持，但对 GPU、浏览器、被遮挡窗口可能存在旧帧或空白风险。
+
+foreground_capture：
+将目标置前或确保可见后再截图。副作用是焦点或可见性变化。当前作为显式策略部分支持。
+
+desktop_region：
+截取当前可见桌面像素。当前支持，忠实于可见像素，但可能截到遮挡物。
+
+render_guard：
+判断截图是否空白、低信息、旧帧、有风险或需要决策。当前支持。
+
+watch_change：
+短时有界观察可见变化。当前支持。
+
+full_surface：
+完整网页、嵌套滚动区或长图路线。当前作为可选网页适配器支持。
+
+uia_text：
+不走图片上下文，读取 UI 文本。未来路线或外部路线。
+
+ocr：
+将文本图片转换成文字。未来路线。
+
+code_context：
+直接读取代码或日志上下文。未来路线。
+
+subagent_describe：
+让模型或子代理总结图像、音频或视频文件。当前只作为 envelope / 路由准备，不自动执行。
+
+每个通道都应声明成本、副作用、风险、是否启用，以及是否适合当前任务。
+
+
+8. 两类截图语义
+
+Screen Guardian 必须区分两类截图：实在截图和目的截图。
+
+8.1 实在截图：Evidence Capture
+
+实在截图用于记录当前原始 UI 状态。白屏、加载中、崩溃、报错、半渲染状态本身都可能是有效证据。
+
+成功条件：
+
+当前可观察状态被捕获，并且回执如实说明其可靠性。
+
+适用场景：
+
+- 记录错误
+- 证明白屏出现过
+- 保存崩溃或加载状态
+- 调试当前真实 UI
+- 先把文件留在本地，稍后再分析
+
+8.2 目的截图：Informational Capture
+
+目的截图用于理解一个完成后的 UI。它不应该在目标仍在加载、不稳定、被遮挡、旧帧或报错时返回普通成功。
+
+成功条件：
+
+目标已经足够渲染、稳定，并且满足当前解释目的。
+
+适用场景：
+
+- 阅读最终页面
+- 检查 UI 布局
+- 分析图表
+- 验证渲染结果
+- 对比完成后的设计状态
+
+这也是为什么 Screen Guardian 的结果契约中要区分 render_guard、wait_render、wait_buffer、wait_error、capture_deferred、saved 和 result_state。
+
+
+9. 保护策略
+
+保护策略定义截图应在什么条件下保存、推迟或标记风险。
+
+推荐词表：
+
+none：
+立即截图。
+
+evidence：
+保存原始当前状态，即使它是白屏或报错，但必须报告风险。
+
+stable：
+等待连续采样帧稳定。
+
+render_ready：
+对明显空白或低信息帧进行重试。
+
+dom_ready：
+等待浏览器或页面 ready 信号。
+
+network_idle：
+等待浏览器路线中的网络空闲。
+
+no_error：
+要求没有明显可见或可解析错误。
+
+subagent_ok：
+由模型或子代理确认可用后再保存。
+
+informational：
+要求稳定、已渲染、和任务相关，适合解释。
+
+当前 Screen Guardian 通过 render_guard、wait_for_nonblank、capture_modes、guard_checks 和 bounded watch 支持其中的本地子集。浏览器级和语义级 guard 属于未来或可选路线职责。
+
+
+10. 低汉明距离调用
+
+当结构化索引存在时，AI 不应每次用长自然语言描述目标。
+
+最小调用形式：
+
+{
+  "target_id": "w03.p02",
+  "capture_mode": "quiet",
+  "guard_policy": "stable"
+}
+
+完整调用形式：
+
+{
+  "snapshot_id": "desk_118",
+  "target_id": "w03.p02",
+  "mode": "foreground",
+  "guard": "informational",
+  "timeout_ms": 8000,
+  "fallback": "raw_evidence"
+}
+
+当前 API 仍然接受 HWND、标题、进程名、显示器编号和区域 box。未来方向是通过更丰富的索引快照提供 target_id 和 snapshot_id，让 AI 少用易漂移的自然语言描述。
+
+
+11. 机器可读回执
+
+每次观察都应返回回执。回执不是日志，而是 AI 的下一步决策输入。
+
+推荐结构：
+
+{
+  "ok": true,
+  "saved": true,
+  "result_state": "saved",
+  "verdict": "ok",
+  "target_id": "w03.p02",
+  "mode": "quiet",
+  "guard": "render_ready",
+  "evidence_ref": "cap_781",
+  "path": "C:/Users/.../screen-guardian-window.png",
+  "state": {
+    "render_state": "stable",
+    "occluded": false,
+    "error_visible": false
+  },
+  "risks": [],
+  "side_effects": [],
+  "confidence": "high",
+  "next_actions": []
+}
+
+重要 verdict：
+
+- ok
+- usable_with_caution
+- decision_required
+- not_ready
+- error_visible
+- occluded_risk
+- stale_frame_risk
+- window_client_low_information
+- bbox_identity_mismatch
+- target_drift
+- permission_required
+- budget_exceeded
+- failed
+
+Screen Guardian 已经把这个原则落实到截图结果中：ok 和 saved 是分开的。guard 决策可以返回 ok=true 且 saved=false，这表示工具成功处理了请求并返回决策菜单，而不是已经保存图片。
+
+
+12. 感知订阅
+
+长工作流不应每轮都请求昂贵观察。AI 应该能够订阅目标，只在变化、稳定、报错或相关时收到有界摘要。
+
+订阅等级：
+
+Basic：
+标题、进程、边界、最小化、离屏、遮挡、路线可用性和少量状态 hint。成本低。
+
+Local Analysis：
+本地 CPU 分析，例如代码、日志、DOM、UIA 摘要，解析器输出或结构变化检测。成本中等。
+
+Agentic Interpretation：
+视觉模型、语言模型、音频、视频、子代理或外部 API 解释。成本高。
+
+触发器：
+
+- on_turn
+- on_change
+- on_stable
+- on_error
+- on_focus
+- on_render_ready
+- on_network_idle
+- on_interval
+- on_task_relevant
+
+当前 Screen Guardian 已支持声明式 monitor profile 和 prepare_monitor_tick envelope，但不会静默启动后台 scheduler。未来 scheduler 或调用者可以在显式 runtime limit 和 feature flag 下消费这些 profile。
+
+
+13. 预算与自动降级
+
+桌面感知必须有预算，因为监控可能消耗 CPU、存储、上下文、API 额度和隐私预算。
+
+预算维度：
+
+- CPU 时间
+- 每个任务截图次数
+- 每小时截图次数
+- OCR 次数
+- 模型或 API 调用次数
+- 子代理运行次数
+- token 或上下文字节
+- 本地存储
+- 最大活跃订阅数
+- 最大高成本路线数
+
+接近预算上限时，Screen Guardian 应优先：
+
+- 将高成本订阅降级到 Basic
+- 增加 debounce 或轮询间隔
+- 只推送错误或变化摘要
+- 只把文件保留在本地，不直接加载进上下文
+- 请求 AI 或上游用户确认是否使用更高成本路线
+
+当前实现中的 runtime limit、feature flag、hold-file policy 和 inert envelope 是这个模型的基础。
+
+
+14. 安全模型
+
+Screen Guardian 用于授权感知、可访问性、可见性审计、故障诊断和个人 AI 辅助。
+
+安全原则：
+
+1. 上游人类用户是最终授权者。
+2. AI 是运行时调用者，不是机器所有者。
+3. 屏幕、OCR、DOM、UIA、代码和网页文本都是不可信外部内容。
+4. 高副作用路线必须声明副作用。
+5. 外部 API、模型和子代理路线必须显式启用。
+6. 敏感目标需要隐私闸门。
+7. 观察行为应可审计。
+
+敏感内容可能包括密码管理器、银行、支付、私聊、邮件、医疗或财务信息、.env 文件、SSH key、公司内网和私密文档。
+
+项目不能保证完美内容分类，因此不假装正则能解决高语境授权问题。它应依赖明确的反滥用立场、本地默认、feature gate、side-effect reporting 和用户授权。
+
+
+15. 当前实现映射
+
+白皮书概念 -> 当前 Screen Guardian 机制
+
+Readiness check：
+guardian_check、check_dependencies、list_adapters
+
+Desktop index：
+list_displays、list_windows、guardian_survey_windows
+
+Route selection：
+list_capture_routes
+
+Ordinary perception：
+guardian_perceive
+
+Evidence file held out of context：
+context_policy="hold_file"、marked_file_only=true
+
+Quiet window route：
+capture_window、quiet_preferred
+
+Slow render protection：
+render_guard、wait_for_nonblank、capture_modes=["wait_render"]
+
+Stability wait：
+capture_modes=["wait_buffer"]
+
+Error signal wait：
+capture_modes=["wait_error"]
+
+Bounded change observation：
+watch_screen、guardian_perceive task="watch_change"
+
+Webpage / full surface route：
+可选 webpage_capture、capture_webpage
+
+Guided chains：
+prepare_capture_chain
+
+Subscription plans：
+set_monitor_profile、prepare_monitor_tick
+
+Model or subagent handoff：
+只准备 envelope，不自动执行
+
+Budget control：
+runtime limit、feature flag、inactive-feature rule
+
+Safety boundary：
+本地默认、反滥用文档、无隐藏 scheduler、无隐藏上传
+
+
+16. 验收条件
+
+一个 Screen Guardian 功能进入默认 AI-facing 工作流前，应满足：
+
+- 返回结构化回执，而不只是自然语言说明。
+- 区分“调用被处理”和“文件已保存”。
+- 报告目标、方法、副作用和风险。
+- 可以关闭，且不拖慢无关核心截图路径。
+- 不隐藏上传、不隐藏后台调度、不隐藏模型调用。
+- 把屏幕、页面或 OCR 文本视为不可信输入。
+- 有有界失败模式和下一步建议。
+- 高成本解释路线保持可选。
+- 能通过合同测试和至少一个真实 smoke 路径验证。
+
+
+17. 最终定义
+
+Screen Guardian 是面向 AI 的桌面感知层。
+
+它帮助个人 AI 先理解当前电脑态势，再选择最低成本观察通道，只在必要时截图，验证结果是否可信，并让 OCR、音频、视频、模型转述、子代理和持续监控等高成本感知路线保持可选、可审计、可降级、受用户控制。
+
