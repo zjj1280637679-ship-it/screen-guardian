@@ -123,6 +123,9 @@ DESIGN_COVERAGE = {
     "no hidden scheduler": ["does not silently start", "does not start a background", "no-background-service"],
     "arbitrary decisions": ["arbitrary-complexity", "decision policies", "function_route"],
     "tool layering": ["core tools", "local control tools", "experimental envelope tools"],
+    "whitepaper thesis": ["whitepaper", "desktop situation index", "machine-readable receipts"],
+    "low-hamming invocation": ["low-hamming-distance", "target_id", "snapshot_id"],
+    "perception subscription": ["perception subscriptions", "basic", "agentic interpretation"],
 }
 
 
@@ -190,6 +193,7 @@ def all_project_text() -> str:
         ROOT / "docs" / "MODELS.md",
         ROOT / "docs" / "RELATED_PROJECTS.md",
         ROOT / "docs" / "WEBPAGE_CAPTURE.md",
+        ROOT / "docs" / "WHITEPAPER.md",
         ROOT / "docs" / "WORKFLOWS.md",
         ROOT / "docs" / "NAMING.md",
         ROOT / "skills" / "screen-guardian" / "SKILL.md",

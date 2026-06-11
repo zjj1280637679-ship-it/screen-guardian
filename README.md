@@ -42,6 +42,7 @@ Browser and GPU-heavy app windows may return a rendered frame with a blank conte
 `guardian_perceive` task `read_text` means "make a text-heavy screenshot easier to inspect." It applies text preprocessing and local image analysis, but the ultra-light core does not bundle OCR; results expose `text_handling.ocr_available=false` unless a future OCR route is added.
 
 See [docs/AI_FIRST_INTERFACE.md](docs/AI_FIRST_INTERFACE.md) for the intuitive task mapping.
+See [docs/WHITEPAPER.md](docs/WHITEPAPER.md) for the AI-first desktop perception whitepaper.
 See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered command catalog and break-glass execution model.
 See [docs/CAPTURE_GUARDS.md](docs/CAPTURE_GUARDS.md) for optional capture-quality checks and decision menus.
 See [docs/WEBPAGE_CAPTURE.md](docs/WEBPAGE_CAPTURE.md) for optional full-page webpage long screenshots through Playwright/CDP-style browser capture.
