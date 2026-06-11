@@ -10,6 +10,20 @@ For Codex, start with `guardian_check`, `guardian_perceive`, and `guardian_surve
 
 For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
 
+## Project knowledge layout
+
+Screen Guardian keeps a conventional GitHub engineering layout for install, test, review, and release, while adding an AI-first knowledge layout for reasoning, scenario coverage, reference implementation, and traceability.
+
+| Knowledge area | Path | Purpose |
+| --- | --- | --- |
+| Whitepaper source | [docs/whitepaper/00-index.md](docs/whitepaper/00-index.md) | Chapter map for philosophy, usage, design, verification, and safety notes. |
+| Scenario-card forest | [scenario-cards/README.md](scenario-cards/README.md) | Real task cards that connect user situations to routes, guards, risks, and acceptance checks. |
+| Reference source scaffold | [reference-source/README.md](reference-source/README.md) | Human- and AI-readable implementation notes for future flat, highly annotated source. |
+| Optimized runtime mapping | [optimized-runtime/README.md](optimized-runtime/README.md) | The current production runtime remains in `mcp/` and `scripts/`; this area documents how optimized code maps back to reference intent. |
+| Traceability relation | [traceability/README.md](traceability/README.md) | Connects the four knowledge areas to tests, runtime mechanisms, receipt fields, and evidence. |
+
+See [docs/PROJECT_STRUCTURE.zh-CN.txt](docs/PROJECT_STRUCTURE.zh-CN.txt) for the Chinese review draft of this dual structure.
+
 ## AI-first tools
 
 Screen Guardian exposes a broad expert tool surface, but the default MCP surface is intentionally small. AI agents should usually start with the core intent tools, then enable the advanced surface only when workflow envelopes or reusable commands are needed:

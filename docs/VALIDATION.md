@@ -20,6 +20,8 @@ This verifies:
 - capability-runtime tools are wired, registered commands map through the command catalog, and break-glass execution is feature-flagged plus confirmation-gated
 - every feature flag has a feature-catalog entry
 - design principles are represented in docs and skill guidance
+- the dual project layout is represented through whitepaper chapters, scenario-card forest, reference source, optimized runtime mapping, and traceability files
+- traceability claims have unique ids plus required acceptance, side-effect, feature-flag, receipt-field, and failure-state fields
 - tool layers are represented as core tools, local control tools, and experimental envelope tools
 - concrete scenarios such as older Windows fallback, context control, text screenshots, web/program/error/model triggers, audio, video, storage, bounded watch, and decision routing are covered
 - optional full-page webpage capture tools are documented and wired without becoming default screen-capture dependencies

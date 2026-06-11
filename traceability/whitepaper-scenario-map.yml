@@ -1,0 +1,216 @@
+version: 1
+purpose: "Map Screen Guardian whitepaper claims to scenario cards and runtime evidence."
+claims:
+  - id: desktop_situation_index
+    whitepaper:
+      - docs/WHITEPAPER.md
+      - docs/whitepaper/01-philosophy.md
+      - docs/whitepaper/02-usage.md
+    scenarios:
+      - scenario-cards/advanced/batch-window-survey.md
+      - scenario-cards/core/quick-look.md
+    runtime:
+      - mcp/server.cjs
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+      - docs/VALIDATION.md
+    acceptance_conditions:
+      - "The AI can inspect target metadata before choosing an expensive capture route."
+      - "Large surveys expose counts and truncation instead of implying complete coverage."
+    side_effects:
+      - "none for status-only index"
+    feature_flags:
+      - screen_capture
+      - window_capture
+    receipt_fields:
+      - ok
+      - saved
+      - result_state
+      - risks
+      - next_actions
+      - total_count
+      - returned_count
+    failure_states:
+      - ambiguous_target
+      - budget_exceeded
+      - permission_required
+  - id: quiet_window_capture
+    whitepaper:
+      - docs/whitepaper/03-design.md
+    scenarios:
+      - scenario-cards/core/window-quiet-capture.md
+    runtime:
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/windows_smoke_test.py
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "Quiet capture does not activate or raise the target unless an explicit fallback path is accepted."
+      - "Fallback identity or occlusion uncertainty is returned as risk or decision state."
+    side_effects:
+      - "none for verified quiet capture"
+      - "possible focus or visibility change only for explicit foreground fallback"
+    feature_flags:
+      - window_capture
+    receipt_fields:
+      - adapter
+      - window
+      - occlusion_risk
+      - bbox_identity_mismatch
+      - window_client_low_information
+    failure_states:
+      - occluded_risk
+      - bbox_identity_mismatch
+      - window_client_low_information
+  - id: render_guard_decision
+    whitepaper:
+      - docs/whitepaper/03-design.md
+      - docs/whitepaper/04-verification.md
+    scenarios:
+      - scenario-cards/failure-modes/unrendered-white-screen.md
+    runtime:
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+      - scripts/windows_smoke_test.py
+    acceptance_conditions:
+      - "Evidence capture may save a blank state when risk metadata says it is evidence."
+      - "Informational capture waits, warns, fails, or returns a decision state for suspected unrendered content."
+    side_effects:
+      - "bounded local retry"
+    feature_flags:
+      - screen_capture
+      - window_capture
+    receipt_fields:
+      - saved
+      - result_state
+      - available_actions
+      - render_guard
+      - risks
+    failure_states:
+      - suspected_unrendered
+      - not_ready
+      - decision_required
+  - id: reference_runtime_split
+    whitepaper:
+      - docs/PROJECT_STRUCTURE.zh-CN.txt
+      - docs/whitepaper/00-index.md
+    scenarios:
+      - scenario-cards/README.md
+    reference_source:
+      - reference-source/README.md
+    optimized_runtime:
+      - optimized-runtime/README.md
+    validation:
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "The repository keeps normal GitHub engineering paths for runtime and release."
+      - "Knowledge-layout files are included in encoding and contract coverage checks."
+    side_effects:
+      - "none; documentation and traceability only"
+    feature_flags: []
+    receipt_fields: []
+    failure_states:
+      - documentation_drift
+  - id: hold_file_context
+    whitepaper:
+      - docs/whitepaper/02-usage.md
+      - docs/whitepaper/03-design.md
+    scenarios:
+      - scenario-cards/core/hold-file-context.md
+    runtime:
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "A held image is saved locally without forcing immediate image ingestion into AI context."
+      - "The AI can later distinguish held from inspected evidence."
+    side_effects:
+      - "local file write"
+    feature_flags:
+      - screen_capture
+      - workflow_metadata
+    receipt_fields:
+      - path
+      - context_policy
+      - marked_file_only
+      - project_id
+      - workflow_id
+    failure_states:
+      - storage_unavailable
+      - cache_route_denied
+  - id: webpage_nested_scroll
+    whitepaper:
+      - docs/whitepaper/03-design.md
+      - docs/whitepaper/05-safety.md
+    scenarios:
+      - scenario-cards/advanced/webpage-nested-scroll.md
+    runtime:
+      - mcp/server.cjs
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "Webpage capture is reported as inactive until the feature flag and optional dependencies are available."
+      - "Nested scroll capture requires an explicit selector, frame selector, or prepared route plan."
+    side_effects:
+      - "browser automation may change scroll state"
+    feature_flags:
+      - webpage_capture
+    receipt_fields:
+      - route
+      - mode
+      - activation_hint
+      - path
+    failure_states:
+      - inactive_optional_adapter
+      - selector_not_found
+      - authorization_required
+  - id: screen_content_untrusted
+    whitepaper:
+      - docs/whitepaper/04-verification.md
+      - docs/whitepaper/05-safety.md
+    scenarios:
+      - scenario-cards/failure-modes/screen-content-is-untrusted.md
+    runtime:
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "Observed screen text never becomes user, developer, or system instruction."
+      - "Prompt-like visible content cannot trigger hidden execution, upload, scheduling, or feature activation."
+    side_effects:
+      - "none unless a later explicit tool call acts"
+    feature_flags:
+      - image_analysis
+      - image_preprocess
+      - ocr_routes
+    receipt_fields:
+      - source
+      - method
+      - confidence
+      - risks
+    failure_states:
+      - prompt_injection_risk
+      - low_confidence_text
+  - id: review_decomposition
+    whitepaper:
+      - docs/whitepaper/06-review-method.md
+      - docs/PROJECT_STRUCTURE.zh-CN.txt
+    scenarios:
+      - scenario-cards/failure-modes/goal-misalignment.md
+    runtime: []
+    validation:
+      - scripts/validate_contracts.py
+    acceptance_conditions:
+      - "Each delegated review task has one topic, one goal, one non-goal, and a bounded output."
+      - "Timed-out subagent work is treated as unavailable evidence and re-split instead of blocking the main task."
+    side_effects:
+      - "none; review process only"
+    feature_flags: []
+    receipt_fields: []
+    failure_states:
+      - goal_misalignment
+      - overbroad_review
+      - unavailable_evidence

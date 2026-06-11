@@ -27,6 +27,7 @@ MANIFEST_PATH = ROOT / ".codex-plugin" / "plugin.json"
 PACKAGE_PATH = ROOT / "package.json"
 MCP_PATH = ROOT / ".mcp.json"
 TEXT_ENCODING_PATH = ROOT / "scripts" / "check_text_encoding.py"
+TRACEABILITY_MAP_PATH = ROOT / "traceability" / "whitepaper-scenario-map.yml"
 MAX_STRESS_LOOPS = 200
 CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 
@@ -105,6 +106,17 @@ REQUIRED_FEATURE_FLAGS = [
     "raw_local_exec",
 ]
 
+REQUIRED_TRACEABILITY_FIELDS = [
+    "whitepaper",
+    "scenarios",
+    "validation",
+    "acceptance_conditions",
+    "side_effects",
+    "feature_flags",
+    "receipt_fields",
+    "failure_states",
+]
+
 
 DESIGN_COVERAGE = {
     "ai-first interface": ["ai-first", "guardian_check", "guardian_perceive"],
@@ -126,6 +138,11 @@ DESIGN_COVERAGE = {
     "whitepaper thesis": ["whitepaper", "desktop situation index", "machine-readable receipts"],
     "low-hamming invocation": ["low-hamming-distance", "target_id", "snapshot_id"],
     "perception subscription": ["perception subscriptions", "basic", "agentic interpretation"],
+    "dual project layout": ["standard github engineering layout", "ai-first knowledge layout", "traceability"],
+    "whitepaper chapter tree": ["chapter tree", "philosophy", "usage", "design", "verification"],
+    "scenario-card forest": ["scenario-card forest", "scenario cards", "acceptance checks"],
+    "reference runtime split": ["reference source", "optimized runtime", "runtime mapping"],
+    "review decomposition": ["topic separation", "goal-misalignment", "minimum validation action"],
 }
 
 
@@ -180,25 +197,48 @@ def read_json(path: Path) -> dict:
     return json.loads(read_text(path))
 
 
+def traceability_claim_blocks(source: str) -> list[tuple[str, str]]:
+    matches = list(re.finditer(r"(?m)^  - id: ([A-Za-z0-9_-]+)\s*$", source))
+    blocks: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        blocks.append((match.group(1), source[match.start() : end]))
+    return blocks
+
+
+def yaml_field_exists(block: str, field: str) -> bool:
+    return re.search(rf"(?m)^    {re.escape(field)}:", block) is not None
+
+
+def yaml_field_has_list_item(block: str, field: str) -> bool:
+    field_match = re.search(rf"(?m)^    {re.escape(field)}:(.*)$", block)
+    if not field_match:
+        return False
+    if field_match.group(1).strip():
+        return True
+    tail = block[field_match.end() :]
+    next_field = re.search(r"(?m)^    [A-Za-z0-9_]+:", tail)
+    field_body = tail[: next_field.start()] if next_field else tail
+    return bool(re.search(r"(?m)^      - ", field_body))
+
+
 def all_project_text() -> str:
-    parts = [
-        ROOT / "README.md",
-        ROOT / "SECURITY.md",
-        ROOT / "docs" / "AI_FIRST_INTERFACE.md",
-        ROOT / "docs" / "ANTI_ABUSE.md",
-        ROOT / "docs" / "CAPABILITY_RUNTIME.md",
-        ROOT / "docs" / "CAPTURE_GUARDS.md",
-        ROOT / "docs" / "COMPATIBILITY.md",
-        ROOT / "docs" / "EVALUATION.md",
-        ROOT / "docs" / "MODELS.md",
-        ROOT / "docs" / "RELATED_PROJECTS.md",
-        ROOT / "docs" / "WEBPAGE_CAPTURE.md",
-        ROOT / "docs" / "WHITEPAPER.md",
-        ROOT / "docs" / "WORKFLOWS.md",
-        ROOT / "docs" / "NAMING.md",
-        ROOT / "skills" / "screen-guardian" / "SKILL.md",
+    patterns = [
+        "README.md",
+        "SECURITY.md",
+        "docs/**/*.md",
+        "docs/**/*.txt",
+        "scenario-cards/**/*.md",
+        "reference-source/**/*.md",
+        "optimized-runtime/**/*.md",
+        "traceability/**/*.md",
+        "traceability/**/*.yml",
+        "skills/**/*.md",
     ]
-    return "\n".join(read_text(path) for path in parts if path.exists()).lower()
+    paths: set[Path] = set()
+    for pattern in patterns:
+        paths.update(path for path in ROOT.glob(pattern) if path.is_file())
+    return "\n".join(read_text(path) for path in sorted(paths)).lower()
 
 
 def python_dict_keys(name: str, source: str) -> set[str]:
@@ -239,6 +279,37 @@ def python_actions(source: str) -> set[str]:
     if not actions_block:
         return set()
     return set(re.findall(r'"([^"]+)"\s*:', actions_block.group(1)))
+
+
+def check_traceability_contracts() -> CheckSet:
+    checks = CheckSet()
+    checks.check(TRACEABILITY_MAP_PATH.exists(), "traceability map exists", str(TRACEABILITY_MAP_PATH))
+    if not TRACEABILITY_MAP_PATH.exists():
+        return checks
+
+    source = read_text(TRACEABILITY_MAP_PATH)
+    blocks = traceability_claim_blocks(source)
+    claim_ids = [claim_id for claim_id, _ in blocks]
+    checks.check(bool(blocks), "traceability map has claim entries")
+    checks.check(len(claim_ids) == len(set(claim_ids)), "traceability claim ids are unique")
+
+    for claim_id, block in blocks:
+        missing = [field for field in REQUIRED_TRACEABILITY_FIELDS if not yaml_field_exists(block, field)]
+        checks.check(
+            not missing,
+            f"traceability claim has required fields: {claim_id}",
+            ", ".join(missing),
+        )
+
+        nonempty_fields = ["whitepaper", "scenarios", "validation", "acceptance_conditions", "side_effects", "failure_states"]
+        empty = [field for field in nonempty_fields if not yaml_field_has_list_item(block, field)]
+        checks.check(
+            not empty,
+            f"traceability claim has nonempty evidence fields: {claim_id}",
+            ", ".join(empty),
+        )
+
+    return checks
 
 
 def check_static_contracts() -> CheckSet:
@@ -356,6 +427,8 @@ def check_static_contracts() -> CheckSet:
         checks.check(completed.returncode == 0, "text encoding guard passes", detail[-1000:])
     else:
         checks.check(False, "text encoding guard passes", str(TEXT_ENCODING_PATH))
+
+    checks.extend(check_traceability_contracts())
 
     return checks
 
