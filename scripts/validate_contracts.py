@@ -54,6 +54,7 @@ REQUIRED_TOOLS = [
     "list_extension_routes",
     "set_extension_route",
     "prepare_model_request",
+    "prepare_data_layer_request",
     "list_decision_policies",
     "set_decision_policy",
     "prepare_decision_request",
@@ -93,6 +94,7 @@ REQUIRED_FEATURE_FLAGS = [
     "image_preprocess",
     "extension_routes",
     "model_request_envelopes",
+    "data_layer_envelopes",
     "ocr_routes",
     "image_narration_routes",
     "video_narration_routes",
@@ -379,6 +381,7 @@ def check_static_contracts() -> CheckSet:
         "guardian_check reports status without capture": ["action_guardian_check", "no screenshot", "recommended_next"],
         "guardian_capture_targets indexes targets before capture": ["action_guardian_capture_targets", "target_index_ready", "capture_performed", "background_mode"],
         "guardian_sniff_context is authorization scoped route sniffing": ["action_guardian_sniff_context", "AUTHORIZATION_LEVELS", "secret_storage_read", "markitdown_style_optional", "database_or_registry_touched", "allow_network_file_metadata_probe", "blocked_by_authorization_level"],
+        "consented data layer requests are prepare-only": ["action_prepare_data_layer_request", "data_layer_envelopes", "user_consented=true", "data_layer_touched", "mutation_confirmed=true", "Inline secrets are not accepted"],
         "strict background capture avoids bbox fallback": ["normalize_background_mode", "strict", "background_capture_unavailable", "visible_screen_fallback_allowed"],
         "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
         "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
@@ -554,9 +557,24 @@ def run_mcp_stress(loops: int) -> CheckSet:
                         "source_label": "capture-chain-facade",
                     },
                 ),
+                tool_request(
+                    request_id + 3,
+                    "prepare_data_layer_request",
+                    {
+                        "source_type": "database",
+                        "operation": "query",
+                        "objective": "Prepare a readonly scoped data-layer request for contract validation.",
+                        "user_consented": True,
+                        "consent_text": "Contract validation consent for a readonly prepared envelope only.",
+                        "scope": {"connection_ref": "example.analytics", "tables": ["events"], "fields": ["event_name"], "row_limit": 10},
+                        "query": "select event_name from events limit 10",
+                        "output_dir": str(output_dir),
+                        "source_label": "data-layer-readonly",
+                    },
+                ),
             ]
         )
-        request_id += 3
+        request_id += 4
 
         for i, base_id in enumerate(stress_ids):
             policy_id = f"{base_id}-policy"
@@ -764,6 +782,15 @@ def run_mcp_stress(loops: int) -> CheckSet:
             "guardian_sniff_context preserves L4 browser-storage boundary and target URL indexing",
             payload_text(sniff_l4)[:500],
         )
+        data_layer_payload = parse_tool_payload(responses_by_id.get(11) or {})
+        checks.check(
+            data_layer_payload.get("ok") is True
+            and data_layer_payload.get("data_layer_touched") is False
+            and ((data_layer_payload.get("request") or {}).get("execution") or {}).get("data_layer_touched") is False
+            and Path(str(data_layer_payload.get("request_path") or "")).exists(),
+            "prepare_data_layer_request writes a consented envelope without touching data",
+            payload_text(data_layer_payload)[:500],
+        )
 
         failed_payloads: list[str] = []
         for response in responses:
@@ -776,7 +803,7 @@ def run_mcp_stress(loops: int) -> CheckSet:
         checks.check(not failed_payloads, "stress tool calls all return ok", failed_payloads[:3][0] if failed_payloads else "")
 
         generated_files = list(output_dir.glob("*.json"))
-        expected_files = loops * 4 + 2
+        expected_files = loops * 4 + 3
         checks.check(len(generated_files) == expected_files, "stress generated expected envelope count", str(len(generated_files)))
 
         last_decisions = parse_tool_payload(responses[-2])

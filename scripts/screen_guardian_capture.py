@@ -122,6 +122,7 @@ DEFAULT_FEATURE_FLAGS = {
     "image_preprocess": True,
     "extension_routes": True,
     "model_request_envelopes": True,
+    "data_layer_envelopes": True,
     "ocr_routes": False,
     "image_narration_routes": False,
     "video_narration_routes": False,
@@ -177,6 +178,10 @@ FEATURE_CATALOG = {
     "model_request_envelopes": {
         "status": "implemented",
         "cost_when_inactive": "No request envelope is written.",
+    },
+    "data_layer_envelopes": {
+        "status": "interface",
+        "cost_when_inactive": "No data-layer consent envelope is written, and no database, registry, API, export, or app-storage route is prepared.",
     },
     "ocr_routes": {
         "status": "interface",
@@ -397,6 +402,19 @@ CAPABILITY_COMMANDS = [
         "side_effects": ["local_envelope_write"],
         "context_strategy": "return_path",
         "safety_note": "Writes decision inputs only; arbitrary complexity belongs to an explicit caller.",
+    },
+    {
+        "id": "workflow.data_layer.prepare",
+        "category": "workflow",
+        "title": "Prepare a consented data-layer request envelope",
+        "intent_tags": ["data_layer", "consent", "database", "registry", "api", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "prepare_data_layer_request",
+        "required_features": ["data_layer_envelopes"],
+        "default_args": {"operation": "read", "dry_run_first": True},
+        "side_effects": ["local_envelope_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Requires user_consented=true, consent_text, and explicit scope. Writes a local envelope only; no query, export, mutation, upload, or registry/database read.",
     },
     {
         "id": "workflow.capture_chain.prepare",
@@ -3591,6 +3609,170 @@ def action_prepare_model_request(args):
     return write_json({"ok": True, "request_path": str(request_path), "request": request})
 
 
+DATA_LAYER_SOURCE_TYPES = ("database", "registry", "api", "page_export", "file", "app_storage")
+DATA_LAYER_OPERATIONS = ("inspect_schema", "read", "query", "export", "write", "update", "delete", "migrate", "permission_change")
+DATA_LAYER_MUTATION_OPERATIONS = {"write", "update", "delete", "migrate", "permission_change"}
+DATA_LAYER_SECRET_KEYS = {"password", "passwd", "pwd", "token", "secret", "api_key", "apikey", "cookie", "localstorage", "sessionstorage", "credential"}
+DATA_LAYER_SECRET_ENV_KEYS = {"api_key_env", "secret_env", "token_env", "connection_secret_env", "credential_env"}
+DATA_LAYER_SCOPE_TARGET_KEYS = {
+    "database": {"connection_ref", "database", "schema", "tables", "table", "query_id"},
+    "registry": {"registry_key", "key", "hive", "path"},
+    "api": {"api_endpoint", "endpoint", "base_url", "route", "url"},
+    "page_export": {"export_name", "selector", "url", "button_label", "download_name"},
+    "file": {"file_path", "file_paths", "path"},
+    "app_storage": {"app_id", "storage_path", "profile", "database_path", "cache_path"},
+}
+
+
+def contains_inline_secret_key(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key or "").strip().lower().replace("-", "_")
+            compact = key_text.replace("_", "")
+            if key_text in DATA_LAYER_SECRET_KEYS or compact in DATA_LAYER_SECRET_KEYS:
+                if key_text not in DATA_LAYER_SECRET_ENV_KEYS:
+                    return True, key_text
+            found, found_key = contains_inline_secret_key(item)
+            if found:
+                return True, found_key
+    elif isinstance(value, list):
+        for item in value:
+            found, found_key = contains_inline_secret_key(item)
+            if found:
+                return True, found_key
+    return False, ""
+
+
+def normalized_data_layer_scope(args):
+    scope = args.get("scope") if isinstance(args.get("scope"), dict) else {}
+    scope = copy.deepcopy(scope)
+    for key in ("connection_ref", "registry_key", "api_endpoint", "file_path", "export_name", "app_id"):
+        if args.get(key) and key not in scope:
+            scope[key] = str(args.get(key))
+    if args.get("tables") and "tables" not in scope:
+        scope["tables"] = normalized_tags(args.get("tables"))
+    if args.get("fields") and "fields" not in scope:
+        scope["fields"] = normalized_tags(args.get("fields"))
+    if args.get("where") and "where" not in scope:
+        scope["where"] = str(args.get("where"))
+    if args.get("row_limit") is not None and "row_limit" not in scope:
+        scope["row_limit"] = int(args.get("row_limit"))
+    return scope
+
+
+def scope_has_explicit_target(scope, source_type=""):
+    if not isinstance(scope, dict):
+        return False
+    source_key = str(source_type or "").strip().lower()
+    target_keys = DATA_LAYER_SCOPE_TARGET_KEYS.get(source_key)
+    if not target_keys:
+        target_keys = set()
+        for keys in DATA_LAYER_SCOPE_TARGET_KEYS.values():
+            target_keys.update(keys)
+    for key, value in scope.items():
+        if value in (None, "", [], {}):
+            continue
+        if str(key).strip().lower() in target_keys:
+            return True
+    return False
+
+
+def action_prepare_data_layer_request(args):
+    try:
+        require_feature("data_layer_envelopes", args)
+        source_type = str(args.get("source_type") or args.get("data_source_type") or "").strip().lower()
+        if source_type not in DATA_LAYER_SOURCE_TYPES:
+            raise ValueError("source_type must be database, registry, api, page_export, file, or app_storage")
+        operation = str(args.get("operation") or "read").strip().lower()
+        if operation not in DATA_LAYER_OPERATIONS:
+            raise ValueError("operation must be inspect_schema, read, query, export, write, update, delete, migrate, or permission_change")
+        if not bool(args.get("user_consented", False)):
+            raise ValueError("user_consented=true is required before preparing a data-layer request")
+        consent_text = str(args.get("consent_text") or args.get("reason") or "").strip()
+        if not consent_text:
+            raise ValueError("consent_text is required so the data-layer request has an audit trail")
+        scope = normalized_data_layer_scope(args)
+        if not scope_has_explicit_target(scope, source_type):
+            raise ValueError("explicit scope must include a concrete target such as connection_ref, registry_key, api_endpoint, file_path, export_name, app_id, or tables")
+        secret_found, secret_key = contains_inline_secret_key({"args": args, "scope": scope})
+        if secret_found:
+            raise ValueError(f"Inline secrets are not accepted in data-layer envelopes; use an *_env reference instead of '{secret_key}'")
+        query = str(args.get("query") or "").strip()
+        action_plan = args.get("action_plan") if isinstance(args.get("action_plan"), list) else []
+        mutation_requested = operation in DATA_LAYER_MUTATION_OPERATIONS
+        backup_plan = str(args.get("backup_plan") or "").strip()
+        rollback_plan = str(args.get("rollback_plan") or "").strip()
+        if mutation_requested:
+            if not bool(args.get("mutation_confirmed", False)):
+                raise ValueError("mutation_confirmed=true is required for write/update/delete/migrate/permission_change data-layer requests")
+            if not backup_plan and not rollback_plan:
+                raise ValueError("backup_plan or rollback_plan is required for mutating data-layer requests")
+        dry_run_first = bool(args.get("dry_run_first", True))
+        request = {
+            "plugin": PLUGIN_NAME,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "type": "data_layer_request",
+            "objective": str(args.get("objective") or "").strip(),
+            "source_type": source_type,
+            "operation": operation,
+            "scope": scope,
+            "query": query,
+            "action_plan": action_plan,
+            "settings": args.get("settings") if isinstance(args.get("settings"), dict) else {},
+            "consent": {
+                "user_consented": True,
+                "consent_text": consent_text,
+                "mutation_confirmed": bool(args.get("mutation_confirmed", False)),
+                "actor": str(args.get("actor") or "user").strip(),
+                "expires_at": str(args.get("expires_at") or "").strip(),
+            },
+            "safety": {
+                "access_mode": "mutation_proposed" if mutation_requested else "readonly_or_export",
+                "mutation_requested": mutation_requested,
+                "dry_run_first": dry_run_first,
+                "backup_plan": backup_plan,
+                "rollback_plan": rollback_plan,
+                "inline_secrets_allowed": False,
+                "browser_secret_storage_allowed": False,
+                "scope_required": True,
+                "second_confirmation_required_before_execution": True,
+            },
+            "execution": {
+                "status": "prepared",
+                "data_layer_touched": False,
+                "database_or_registry_touched": False,
+                "network_request_performed": False,
+                "file_content_read": False,
+                "note": "This is a local consent envelope only. Screen Guardian did not query, export, mutate, download, upload, or read the data layer.",
+            },
+            "adapter_contract": {
+                "must_verify_scope": True,
+                "must_log_audit": True,
+                "must_dry_run_first": dry_run_first,
+                "must_not_read_browser_secret_storage": True,
+                "must_not_expand_scope_from_page_visibility": True,
+                "must_report_rows_or_objects_touched": True,
+            },
+            "context": capture_context(args),
+        }
+        output_dir = ensure_cache_dir(get_cache_dir(args))
+        filename = output_filename({"source_label": f"data-layer-{source_type}-{operation}", **args}, "json")
+        request_path = output_dir / filename
+        write_json_file(request_path, request)
+        return write_json(
+            {
+                "ok": True,
+                "request_path": str(request_path),
+                "request": request,
+                "data_layer_touched": False,
+                "requires_executor": True,
+                "recommended_next": "Review the envelope, then pass it to a scoped adapter/executor only after confirming the same scope again.",
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
+
+
 def normalized_decision_policy(args):
     policy_id = safe_filename_part(args.get("id") or args.get("policy_id") or "", "")
     if not policy_id:
@@ -3752,7 +3934,7 @@ def action_list_monitor_profiles(args):
             "contract": {
                 "target_examples": ["webpage", "window", "program", "display", "region", "audio_device", "video_file", "custom"],
                 "trigger_examples": ["periodic", "visual_change", "web_change", "window_change", "error_text", "model_feature", "audio_energy", "audio_silence", "audio_clipping", "custom"],
-                "action_examples": ["capture_screen", "capture_window", "record_audio", "extract_audio_track", "prepare_model_request", "prepare_decision_request"],
+                "action_examples": ["capture_screen", "capture_window", "record_audio", "extract_audio_track", "prepare_model_request", "prepare_decision_request", "prepare_data_layer_request"],
                 "execution": "Profiles describe periodic or feature-triggered work. A scheduler, caller, or future adapter performs ticks.",
             },
         }
@@ -4281,6 +4463,12 @@ def sniff_route_candidates(args, level, permissions):
     target_kind = str(target.get("kind") or "unknown").strip().lower()
     has_url = bool(args.get("url") or args.get("urls") or target.get("url"))
     has_selector = bool(target.get("selector"))
+    data_layer_consented = bool(args.get("data_layer_user_consented", False))
+    data_layer_scope = args.get("data_layer_scope") if isinstance(args.get("data_layer_scope"), dict) else {}
+    data_layer_scope_ready = {
+        source_type: data_layer_consented and scope_has_explicit_target(data_layer_scope, source_type)
+        for source_type in ("page_export", "api", "database", "registry")
+    }
     wants_export = "export_download" in permissions
     wants_api = "api_readonly" in permissions or target_kind == "api"
     wants_database = "database_readonly" in permissions or target_kind == "database"
@@ -4378,7 +4566,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "authorized_export_download",
                     "priority": 12,
                     "authorization_required": "L3_sensitive_action_confirmed",
-                    "status": "requires_action_confirmation" if rank >= 3 else "blocked_by_authorization_level",
+                    "status": "eligible_for_prepare_data_layer_request" if rank >= 3 and data_layer_scope_ready["page_export"] else "requires_action_confirmation" if rank >= 3 else "blocked_by_authorization_level",
                     "side_effects": ["download", "possible_sensitive_data_file"],
                     "note": "Efficient when the page provides an export button, but requires action-time confirmation.",
                 },
@@ -4387,7 +4575,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "api_readonly",
                     "priority": 14,
                     "authorization_required": "L3_sensitive_action_confirmed",
-                    "status": "requires_explicit_endpoint_and_scope" if rank >= 3 else "blocked_by_authorization_level",
+                    "status": "eligible_for_prepare_data_layer_request" if rank >= 3 and data_layer_scope_ready["api"] else "requires_explicit_endpoint_and_scope" if rank >= 3 else "blocked_by_authorization_level",
                     "side_effects": ["network_request_when_executed"],
                     "note": "Only use with explicit API endpoint, scope, and user confirmation.",
                 },
@@ -4401,7 +4589,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "database_readonly",
                     "priority": 16,
                     "authorization_required": "L4_sensitive_storage_or_data_access",
-                    "status": "blocked_until_explicit_connection_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "status": "eligible_for_prepare_data_layer_request" if rank >= 4 and data_layer_scope_ready["database"] else "blocked_until_explicit_connection_scope" if rank >= 4 else "blocked_by_authorization_level",
                     "side_effects": ["database_query_when_executed"],
                     "note": "Must be explicit readonly scope. Never infer database access from page visibility alone.",
                 },
@@ -4410,7 +4598,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "registry_readonly",
                     "priority": 60,
                     "authorization_required": "L4_sensitive_storage_or_data_access",
-                    "status": "blocked_until_explicit_key_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "status": "eligible_for_prepare_data_layer_request" if rank >= 4 and data_layer_scope_ready["registry"] else "blocked_until_explicit_key_scope" if rank >= 4 else "blocked_by_authorization_level",
                     "side_effects": ["registry_read_when_executed"],
                     "note": "Registry reads are not a normal webpage/file perception route.",
                 },
@@ -4471,6 +4659,7 @@ def action_guardian_sniff_context(args):
                     "requires_explicit_scope": ["api_readonly", "database_readonly", "registry_readonly", "export_download"],
                     "markitdown_style_route": "Allowed only for user-authorized local files or downloads; it is a converter route, not a credential or browser-session route.",
                     "file_metadata_probe": "Local path metadata may be checked for supplied file_paths. Potential network paths are skipped unless allow_network_file_metadata_probe=true.",
+                    "data_layer_consent": "With data_layer_user_consented=true and explicit data_layer_scope, the sniffer may recommend prepare_data_layer_request. It still does not query, export, mutate, or read the data layer.",
                 },
                 "metadata_contract": {
                     "authorization_level": level,
@@ -4937,8 +5126,10 @@ def action_guardian_survey_windows(args):
 
 def action_guardian_prepare_workflow(args):
     workflow_type = str(args.get("workflow_type") or "").strip().lower()
-    if workflow_type not in ("model_request", "decision_request", "monitor_tick", "capture_chain"):
-        return error("workflow_type must be model_request, decision_request, monitor_tick, or capture_chain")
+    workflow_aliases = {"data": "data_layer_request", "data_layer": "data_layer_request"}
+    workflow_type = workflow_aliases.get(workflow_type, workflow_type)
+    if workflow_type not in ("model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request"):
+        return error("workflow_type must be model_request, decision_request, monitor_tick, capture_chain, or data_layer_request")
     settings = args.get("settings") if isinstance(args.get("settings"), dict) else {}
     objective = str(args.get("objective") or "").strip()
     source_path = str(args.get("source_path") or "").strip()
@@ -4980,6 +5171,42 @@ def action_guardian_prepare_workflow(args):
         if args.get("decision_policy_id"):
             forwarded["decision_policy_id"] = str(args.get("decision_policy_id"))
         return action_prepare_capture_chain(forwarded)
+    if workflow_type == "data_layer_request":
+        forwarded = {
+            **common,
+            "objective": objective,
+            "settings": settings,
+        }
+        for key in (
+            "source_type",
+            "data_source_type",
+            "operation",
+            "scope",
+            "query",
+            "action_plan",
+            "user_consented",
+            "consent_text",
+            "reason",
+            "actor",
+            "expires_at",
+            "mutation_confirmed",
+            "backup_plan",
+            "rollback_plan",
+            "dry_run_first",
+            "connection_ref",
+            "registry_key",
+            "api_endpoint",
+            "file_path",
+            "export_name",
+            "app_id",
+            "tables",
+            "fields",
+            "where",
+            "row_limit",
+        ):
+            if key in args:
+                forwarded[key] = args[key]
+        return action_prepare_data_layer_request(forwarded)
     observations = {"objective": objective}
     if source_path:
         observations["source_path"] = source_path
@@ -5841,6 +6068,7 @@ ACTIONS = {
     "list_extension_routes": action_list_extension_routes,
     "set_extension_route": action_set_extension_route,
     "prepare_model_request": action_prepare_model_request,
+    "prepare_data_layer_request": action_prepare_data_layer_request,
     "list_decision_policies": action_list_decision_policies,
     "set_decision_policy": action_set_decision_policy,
     "prepare_decision_request": action_prepare_decision_request,

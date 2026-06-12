@@ -51,6 +51,8 @@ Minimal sniff example:
 
 For this tool, `authorization_level` ranks possible routes, `declared_permissions` records the user's scoped permission words, `include_sensitive_routes` shows blocked-or-confirmation-required data routes, and `include_capture_targets` embeds the normal no-screenshot target index.
 
+After consent, use `prepare_data_layer_request` to write a scoped local envelope for database, registry, API, export, file, or app-storage work. It requires `user_consented=true`, `consent_text`, and explicit `scope`; mutating operations also require `mutation_confirmed=true` plus `backup_plan` or `rollback_plan`. The tool does not execute the data-layer action.
+
 `guardian_perceive` defaults to fast direct capture. When the user or AI wants a non-default strategy, pass stackable `capture_modes`: `delay` for delayed screenshots, `wait_render` for render-complete retry, `wait_buffer` for visual-stability/buffer settling before the final screenshot, and `wait_error` for capturing after an explicit error-window signal. These modes can be combined, for example `["delay","wait_render","wait_buffer"]`.
 
 For slow or older systems, the lower-level timing controls are still available: `delay_seconds`, `wait_for_nonblank`, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
@@ -214,6 +216,7 @@ Audio and video-audio extraction stay optional. They require explicit feature ac
 These tools are advanced workflow interfaces. They store configuration or write local request envelopes for another caller, bridge, scheduler, future adapter, or subagent. They are hidden from the default core surface:
 
 - `list_extension_routes`, `set_extension_route`, `prepare_model_request`
+- `prepare_data_layer_request`
 - `list_decision_policies`, `set_decision_policy`, `prepare_decision_request`
 - `list_monitor_profiles`, `set_monitor_profile`, `prepare_monitor_tick`
 - `prepare_capture_chain`

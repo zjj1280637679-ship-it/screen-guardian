@@ -9,6 +9,7 @@
 - 在截图前先判断是否有更高效的授权路线。
 - 区分可见像素、窗口图形、浏览器会话、网页 URL、嵌套滚动容器、文档转换、导出/API、数据库、注册表等不同语义。
 - 把“用户给了更高授权”降级理解为“可以推荐更多候选路线”，而不是“自动执行敏感读取”。
+- 把“用户同意动数据层”降级理解为“可以准备带审计记录的数据层请求信封”，而不是“直接查库、改注册表、下载导出或读取应用存储”。
 - 对图里提到的 MarkItDown 类工具，归类为“授权文件转 Markdown/结构化文本”路线，不把它混同为 cookie、localStorage、浏览器会话或账号密钥路线。
 
 ## 授权等级
@@ -35,6 +36,7 @@
 | `api_readonly` | 用户提供明确只读 API 端点和范围 | `L3_sensitive_action_confirmed` |
 | `database_readonly` | 用户明确给出只读连接和查询范围 | `L4_sensitive_storage_or_data_access` |
 | `registry_readonly` | 用户明确给出只读注册表 key 范围 | `L4_sensitive_storage_or_data_access` |
+| `prepare_data_layer_request` | 用户明确同意并给出数据库、注册表、API、导出、文件或应用存储范围 | 只写本地请求信封，不执行读取、导出、写入或网络请求 |
 
 ## 返回契约
 
@@ -49,6 +51,7 @@
 - `recommended_order` 只代表排序，不代表授权已经充分
 - `authorization.allowed_actions` / `recommendable_actions` 只代表后续工具可考虑的动作
 - `authorization.performed_actions=[]` 表示本次嗅探没有执行截图、滚动、导出、API、数据库或注册表动作
+- 当 `data_layer_user_consented=true` 且 `data_layer_scope` 明确时，匹配该范围的数据源路线可以标记为 `eligible_for_prepare_data_layer_request`，但仍不代表已经执行数据访问。
 
 ## 示例
 
@@ -72,11 +75,14 @@
 
 如果传入 `file_paths`，嗅探层只做路径字符串、扩展名和本地元数据分类，不读取文件内容。潜在网络路径，例如 UNC 或 `file://` 路径，默认跳过元数据探测；只有显式设置 `allow_network_file_metadata_probe=true` 才允许后续实现考虑探测。
 
+如果用户明确同意数据层访问，下一步仍应优先调用 `prepare_data_layer_request` 生成本地 JSON 信封。该信封必须包含 `user_consented=true`、`consent_text` 和明确 `scope`；写入、更新、删除、迁移或权限变更还必须包含 `mutation_confirmed=true` 与 `backup_plan` 或 `rollback_plan`。内联密钥、cookie、localStorage、sessionStorage、密码或 token 不允许写入信封，应改用后续执行器可解析的环境变量引用。
+
 ## 因果降级
 
 - “用户授权当前页面只读”只说明浏览器会话只读路线可能可用，不说明可以读取浏览器密钥存储。
 - “文档可以被 MarkItDown 类工具转换”只说明文件转换路线可能更高效，不说明可以读取未授权文件。
 - “数据库只读路线存在”只说明在 `L4` 且范围明确时可以作为候选，不说明网页任务需要或应该碰数据库。
+- “用户同意数据层访问”只说明可以准备受限请求或让后续执行器在同一范围内执行，不说明可以扩大连接、读取凭据、绕过备份或直接修改数据。
 - “路线排序靠前”只说明执行成本可能更低，不说明证据质量一定更高。
 
 ## 最小验收
@@ -87,3 +93,4 @@
 4. 调用后不连接数据库、不读取注册表。
 5. 对文件路径只做元数据/扩展名分类，除非后续工具在用户授权下执行转换。
 6. 对潜在网络路径默认返回 `metadata_probe_skipped="potential_network_path"`。
+7. 数据层同意存在时，嗅探层最多推荐 `prepare_data_layer_request`；实际读取、导出、写入、迁移或权限变更必须由后续明确执行器完成。

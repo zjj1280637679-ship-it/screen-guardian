@@ -39,10 +39,13 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Suspected-unrendered protection | Window capture with `render_guard="wait"` or `render_guard="warn"` | Auto-wait for a nonblank frame or return decision actions: force now, capture later, or auto-wait |
 | Choose a quiet webpage route | `list_capture_routes` | Compare desktop, application, webpage, `nested_scroll`, and mixed routes before capturing |
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
+| Prepare consented data-layer access | `prepare_data_layer_request` | Write a scoped local consent envelope for a future database, registry, API, export, file, or app-storage executor; no data is touched |
 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
 
 Use `guardian_sniff_context` when the user grants a broader authorization envelope and the AI needs to decide whether screenshots, browser-session DOM reads, nested-scroll capture, document conversion, page export, readonly API access, or storage reads would be the right path. The sniffer is route-only: it reports `capture_performed=false`, does not read browser secret storage, does not touch databases or registries, and does not make network requests. Document-to-markdown recommendations, including MarkItDown-style adapters, are treated as explicit file-conversion routes rather than browser-session or credential routes.
+
+When the user explicitly consents to data-layer work, the next safe step is `prepare_data_layer_request`, not an implicit query. It requires a concrete scope and writes an audit envelope. Mutating operations require a separate mutation confirmation plus backup or rollback plan.
 
 When occlusion-resistant background acquisition matters, call `guardian_capture_targets` first and then use the returned `capture_target.primary` arguments. They default to `background_mode="strict"`, which attempts direct HWND graphics without visible-screen bbox fallback. If direct HWND pixels are blank, protected, or GPU-only, the capture returns `background_capture_unavailable` as a decision state rather than saving visible desktop pixels. Switch to a `capture_webpage` URL route for browser pages when possible, or explicitly choose `background_mode="visible_fallback"` when visible-screen behavior is acceptable.
 
@@ -73,6 +76,7 @@ For `guardian_survey_windows`, `low` defaults to smaller 640 px-wide saved captu
 | `decision_request` | `prepare_decision_request` |
 | `monitor_tick` | `prepare_monitor_tick` |
 | `capture_chain` | `prepare_capture_chain` |
+| `data_layer_request` | `prepare_data_layer_request` |
 
 It writes local request files only. It does not call an API, invoke a Codex subagent, run a local command, record media, or start a scheduler.
 

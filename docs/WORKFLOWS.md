@@ -4,7 +4,7 @@ Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the p
 
 For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
 
-Use `guardian_sniff_context` when the next step might be faster as browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry access. It only ranks routes from declared authorization; it does not capture, navigate, read browser secret storage, query databases, read the registry, upload files, or call models.
+Use `guardian_sniff_context` when the next step might be faster as browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry access. It only ranks routes from declared authorization; it does not capture, navigate, read browser secret storage, query databases, read the registry, upload files, or call models. When the user explicitly consents to a scoped data-layer route, use `prepare_data_layer_request` to write a local audit envelope before any executor touches that layer.
 
 After the advanced surface is enabled, use `guardian_prepare_workflow` for local model, decision, monitor, or capture-chain envelopes. For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
 
@@ -21,6 +21,7 @@ The workflow surface is split so first-time users do not need to understand ever
 | Experimental envelope tools | Model request envelopes, extension routes, decision policies, monitor profiles, and capture-chain plans | No arbitrary code execution, API call, subagent invocation, recording, or monitoring unless another explicit caller consumes the envelope |
 | Capability runtime tools | Registered command catalog, command runner, and break-glass execution envelopes | No arbitrary code through `guardian_run_command`; raw execution requires `raw_local_exec` and per-call confirmation |
 | Optional browser tools | Full-page, viewport, element, or nested scroll-container webpage capture through Playwright when enabled | No browser launch, page navigation, or long screenshot unless `webpage_capture` is enabled and `capture_webpage` is called |
+| Consented data-layer envelopes | Scoped database, registry, API, export, file, or app-storage requests after user consent | No query, mutation, export, upload, browser secret read, or registry/database access by itself |
 
 When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
 
@@ -33,6 +34,8 @@ The important performance rule is simple: inactive features should not drag acti
 Persistent feature flags are also the safety boundary. Per-call `feature_flags` can temporarily disable a feature for one request, but they cannot enable a feature that persistent settings have disabled. High-risk paths such as audio capture, video audio extraction, OCR routes, external API handoff, and subagent handoff must be enabled persistently through `set_feature_flags`.
 
 `raw_local_exec` is the break-glass local execution flag. It defaults to disabled and must be enabled persistently before `guardian_run_exec` can run Python, PowerShell, or Node code. The execution call must still include `user_confirmed=true`.
+
+`data_layer_envelopes` controls consented data-layer request preparation. It writes a local JSON envelope only. The request must include `user_consented=true`, `consent_text`, and an explicit `scope`; mutating operations such as `write`, `update`, `delete`, `migrate`, or `permission_change` also require `mutation_confirmed=true` and either a `backup_plan` or `rollback_plan`. Inline secrets are rejected; use environment-variable references for later executors.
 
 ## Local Cache
 

@@ -58,6 +58,7 @@ EXPECTED_RUNTIME_TOOLS = {
 EXPECTED_ROUTE_TOOLS = {
     "list_capture_routes",
     "prepare_capture_chain",
+    "prepare_data_layer_request",
 }
 EXPECTED_COMMAND_IDS = {
     "diagnostic.readiness",
@@ -69,6 +70,7 @@ EXPECTED_COMMAND_IDS = {
     "artifact.hold_file",
     "workflow.model_request.prepare",
     "workflow.decision.prepare",
+    "workflow.data_layer.prepare",
     "workflow.capture_chain.prepare",
     "emergency.exec.prepare",
     "emergency.exec.run",
@@ -303,6 +305,33 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "capture-chain tool prepares a local envelope", ok_transport(chain_result) and chain_payload.get("ok") is True and chain_path.exists(), payload_text(chain_payload)[:500])
             add_check(checks, "capture-chain tool remains prepare-only", "does not execute screenshots" in payload_text(chain_payload).lower(), payload_text(chain_payload)[:500])
 
+            data_layer_result = timed_tool(
+                "prepare_data_layer_request",
+                {
+                    "source_type": "database",
+                    "operation": "query",
+                    "objective": "Evaluate consented data-layer envelope preparation without touching data.",
+                    "user_consented": True,
+                    "consent_text": "Evaluation consent for a readonly prepared envelope only.",
+                    "scope": {"connection_ref": "example.analytics", "tables": ["events"], "fields": ["event_name"], "row_limit": 10},
+                    "query": "select event_name from events limit 10",
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["prepare_data_layer_request"] = data_layer_result
+            data_layer_payload = data_layer_result["payload"]
+            data_layer_path = Path(str(data_layer_payload.get("request_path") or ""))
+            add_check(
+                checks,
+                "data-layer tool prepares a consented envelope without touching data",
+                ok_transport(data_layer_result)
+                and data_layer_payload.get("ok") is True
+                and data_layer_payload.get("data_layer_touched") is False
+                and data_layer_path.exists(),
+                payload_text(data_layer_payload)[:500],
+            )
+
             readiness_result = timed_tool("guardian_run_command", {"command_id": "diagnostic.readiness"}, env)
             timings["guardian_run_command.diagnostic.readiness"] = readiness_result
             readiness_payload = readiness_result["payload"]
@@ -326,6 +355,34 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             request_path = Path(str(workflow_payload.get("request_path") or ""))
             add_check(checks, "workflow facade prepares a local envelope", ok_transport(workflow_result) and workflow_payload.get("ok") is True and request_path.exists(), payload_text(workflow_payload)[:500])
             add_check(checks, "workflow facade does not report execution", "prepared" in payload_text(workflow_payload).lower(), payload_text(workflow_payload)[:500])
+
+            data_workflow_result = timed_tool(
+                "guardian_prepare_workflow",
+                {
+                    "workflow_type": "data_layer_request",
+                    "source_type": "database",
+                    "operation": "query",
+                    "objective": "Evaluate workflow facade data-layer envelope preparation.",
+                    "user_consented": True,
+                    "consent_text": "Evaluation consent for workflow-facade data-layer preparation only.",
+                    "scope": {"connection_ref": "example.analytics", "tables": ["events"], "fields": ["event_name"], "row_limit": 10},
+                    "query": "select event_name from events limit 10",
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["guardian_prepare_workflow.data_layer_request"] = data_workflow_result
+            data_workflow_payload = data_workflow_result["payload"]
+            data_workflow_path = Path(str(data_workflow_payload.get("request_path") or ""))
+            add_check(
+                checks,
+                "workflow facade prepares data-layer envelopes",
+                ok_transport(data_workflow_result)
+                and data_workflow_payload.get("ok") is True
+                and data_workflow_payload.get("data_layer_touched") is False
+                and data_workflow_path.exists(),
+                payload_text(data_workflow_payload)[:500],
+            )
 
             chain_facade_result = timed_tool(
                 "guardian_prepare_workflow",

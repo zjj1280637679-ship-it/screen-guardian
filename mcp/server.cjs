@@ -660,6 +660,16 @@ const tools = [
           default: false,
           description: "Include high-risk API/database/registry route candidates as blocked-or-confirmation-required options.",
         },
+        data_layer_user_consented: {
+          type: "boolean",
+          default: false,
+          description: "When true, the sniffer may mark scoped data-layer routes as eligible for prepare_data_layer_request. It still does not touch data.",
+        },
+        data_layer_scope: {
+          type: "object",
+          additionalProperties: true,
+          description: "Explicit proposed data-layer scope used only for route status. Examples: endpoint, connection_ref, registry_key, tables, fields, row_limit.",
+        },
         runtime_limits: imageOutputProperties.runtime_limits,
         feature_flags: imageOutputProperties.feature_flags,
       },
@@ -821,7 +831,7 @@ const tools = [
       properties: {
         workflow_type: {
           type: "string",
-          enum: ["model_request", "decision_request", "monitor_tick", "capture_chain"],
+          enum: ["model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request"],
         },
         source_path: {
           type: "string",
@@ -856,6 +866,58 @@ const tools = [
         steps: captureChainProperties.steps,
         quiet: captureChainProperties.quiet,
         decision_policy_id: captureChainProperties.decision_policy_id,
+        source_type: {
+          type: "string",
+          enum: ["database", "registry", "api", "page_export", "file", "app_storage"],
+          description: "Data source type for workflow_type=data_layer_request.",
+        },
+        data_source_type: {
+          type: "string",
+          enum: ["database", "registry", "api", "page_export", "file", "app_storage"],
+          description: "Alias for source_type when workflow_type=data_layer_request.",
+        },
+        operation: {
+          type: "string",
+          enum: ["inspect_schema", "read", "query", "export", "write", "update", "delete", "migrate", "permission_change"],
+          description: "Data-layer operation for workflow_type=data_layer_request.",
+        },
+        scope: {
+          type: "object",
+          additionalProperties: true,
+          description: "Explicit data-layer scope such as connection_ref, tables, registry_key, endpoint, fields, where, or row_limit.",
+        },
+        query: { type: "string" },
+        action_plan: { type: "array", items: { type: "object", additionalProperties: true } },
+        user_consented: {
+          type: "boolean",
+          default: false,
+          description: "Must be true before a data-layer request envelope can be prepared.",
+        },
+        consent_text: {
+          type: "string",
+          description: "User-facing consent text stored in the audit envelope.",
+        },
+        reason: { type: "string" },
+        actor: { type: "string" },
+        expires_at: { type: "string" },
+        mutation_confirmed: {
+          type: "boolean",
+          default: false,
+          description: "Required for mutating data-layer operations.",
+        },
+        backup_plan: { type: "string" },
+        rollback_plan: { type: "string" },
+        dry_run_first: { type: "boolean", default: true },
+        connection_ref: { type: "string" },
+        registry_key: { type: "string" },
+        api_endpoint: { type: "string" },
+        file_path: { type: "string" },
+        export_name: { type: "string" },
+        app_id: { type: "string" },
+        tables: { type: "array", items: { type: "string" } },
+        fields: { type: "array", items: { type: "string" } },
+        where: { type: "string" },
+        row_limit: { type: "integer", minimum: 1 },
       },
       required: ["workflow_type"],
       additionalProperties: false,
@@ -1251,6 +1313,91 @@ const tools = [
         },
         ...imageOutputProperties,
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_data_layer_request",
+    description: "Write a local consent envelope for a scoped data-layer request. Requires user_consented=true and explicit scope; it does not query, mutate, export, upload, or read the data layer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_type: {
+          type: "string",
+          enum: ["database", "registry", "api", "page_export", "file", "app_storage"],
+          description: "The data-layer family being requested.",
+        },
+        data_source_type: {
+          type: "string",
+          enum: ["database", "registry", "api", "page_export", "file", "app_storage"],
+          description: "Alias for source_type.",
+        },
+        operation: {
+          type: "string",
+          enum: ["inspect_schema", "read", "query", "export", "write", "update", "delete", "migrate", "permission_change"],
+          default: "read",
+        },
+        objective: { type: "string" },
+        scope: {
+          type: "object",
+          additionalProperties: true,
+          description: "Explicit scope. Examples: connection_ref/tables/fields/where/row_limit, registry_key, api_endpoint, file_path, export_name, or app_id.",
+        },
+        query: {
+          type: "string",
+          description: "Optional readonly query or proposed query text. Inline secrets are rejected.",
+        },
+        action_plan: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Optional proposed data-layer steps for later executor review.",
+        },
+        user_consented: {
+          type: "boolean",
+          default: false,
+          description: "Required true. This prepares an audit envelope but still does not execute the data-layer action.",
+        },
+        consent_text: {
+          type: "string",
+          description: "Required user-facing consent statement for the audit envelope.",
+        },
+        reason: {
+          type: "string",
+          description: "Alias/fallback for consent_text.",
+        },
+        actor: { type: "string", default: "user" },
+        expires_at: { type: "string" },
+        mutation_confirmed: {
+          type: "boolean",
+          default: false,
+          description: "Required for write/update/delete/migrate/permission_change requests.",
+        },
+        backup_plan: { type: "string" },
+        rollback_plan: { type: "string" },
+        dry_run_first: {
+          type: "boolean",
+          default: true,
+        },
+        connection_ref: { type: "string" },
+        registry_key: { type: "string" },
+        api_endpoint: { type: "string" },
+        file_path: { type: "string" },
+        export_name: { type: "string" },
+        app_id: { type: "string" },
+        tables: { type: "array", items: { type: "string" } },
+        fields: { type: "array", items: { type: "string" } },
+        where: { type: "string" },
+        row_limit: { type: "integer", minimum: 1 },
+        settings: { type: "object", additionalProperties: true },
+        output_dir: imageOutputProperties.output_dir,
+        project_id: imageOutputProperties.project_id,
+        workflow_id: imageOutputProperties.workflow_id,
+        tags: imageOutputProperties.tags,
+        note: imageOutputProperties.note,
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      required: ["user_consented", "consent_text"],
       additionalProperties: false,
     },
   },
@@ -1914,6 +2061,7 @@ const ADVANCED_TOOL_NAMES = new Set([
   "list_extension_routes",
   "set_extension_route",
   "prepare_model_request",
+  "prepare_data_layer_request",
   "list_decision_policies",
   "set_decision_policy",
   "prepare_decision_request",
@@ -2675,6 +2823,9 @@ async function callTool(name, args) {
   }
   if (name === "prepare_model_request") {
     return runPython("prepare_model_request", args);
+  }
+  if (name === "prepare_data_layer_request") {
+    return runPython("prepare_data_layer_request", args);
   }
   if (name === "list_decision_policies") {
     return runPython("list_decision_policies", args);

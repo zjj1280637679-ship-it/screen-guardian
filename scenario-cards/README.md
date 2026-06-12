@@ -41,5 +41,6 @@ Use [TEMPLATE.md](TEMPLATE.md) for new cards.
 - [advanced/browser-session-nested-scroll-longshot.md](advanced/browser-session-nested-scroll-longshot.md)
 - [advanced/authorized-sniffing-layer.md](advanced/authorized-sniffing-layer.md)
 - [advanced/unopened-app-page.md](advanced/unopened-app-page.md)
+- [advanced/consented-data-layer-request.md](advanced/consented-data-layer-request.md)
 - [user-types/beginner-user.md](user-types/beginner-user.md)
 - [user-types/high-intensity-user.md](user-types/high-intensity-user.md)
