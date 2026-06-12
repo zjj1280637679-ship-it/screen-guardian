@@ -51,6 +51,7 @@
 | E18 | 前台不被抢 | 捕获前记录前台窗口，strict 捕获后再检查。 | 前台 HWND 不应因插件捕获而改变。 |
 | E19 | 低信息但用户确认 | blank/white 画面用 `render_guard_confirmed=true`。 | 可以保存，但 metadata 必须保留 guard 证据和确认状态。 |
 | E20 | 当前浏览器标签不可枚举 | 只调用本地 helper，不接 Chrome connector。 | `guardian_capture_targets` 应说明无法枚举用户浏览器会话，要求显式 URL 或外部 connector。 |
+| E21 | 已登录浏览器会话里的嵌套滚动长图 | 认领当前 Chrome 中的授权页面，例如火山引擎费用中心；只读检测滚动容器，使用浏览器交互层滚动容器并分段截图拼接。 | 不读取 cookie/localStorage；不提交表单；分段截图后恢复滚动位置；metadata 标明 connector/session route、selector、segments、restored scroll；长图不能误称为 headless URL capture。 |
 
 ## 推荐执行顺序
 
@@ -68,7 +69,7 @@ npm run validate
 npm run smoke:windows
 ```
 
-3. 最后人工/半自动执行 E01-E20。E02、E05、E18 最能暴露“偷偷截可见屏幕”的问题。
+3. 最后人工/半自动执行 E01-E21。E02、E05、E18 最能暴露“偷偷截可见屏幕”的问题；E21 最能暴露“登录态浏览器页面和普通 URL capture 混淆”的问题。
 
 ## 关键命令模板
 
@@ -96,6 +97,18 @@ npm run smoke:windows
 '@ | python scripts\screen_guardian_capture.py --stdin
 ```
 
+已登录浏览器会话里的嵌套滚动长图：
+
+```text
+1. 通过 Chrome connector 认领用户已打开的授权标签页。
+2. 只读检测 scrollHeight/clientHeight 或 scrollWidth/clientWidth。
+3. 选择具体 selector，例如 .arco-table-content-inner。
+4. 用浏览器交互层滚动该容器，而不是读取 cookie 或 localStorage。
+5. 对容器 clip 分段截图，写入本地 cache。
+6. 恢复原 scrollTop/scrollLeft。
+7. 本地拼接长图，并把 selector、segments、restored 状态写入 metadata。
+```
+
 ## 证据矩阵
 
 | 路径 | 要看的证据 | 收敛条件 |
@@ -104,6 +117,7 @@ npm run smoke:windows
 | 代码 | `source.background_capture`、`capture_method`、guard issue IDs。 | 元数据和实际行为一致。 |
 | 视觉 | 保存图像内容是否属于目标窗口。 | 图像不是覆盖窗口，也不是空白误导。 |
 | 运行 | MCP 不崩、限制不被放宽、文件只写 cache。 | 失败可解释且可恢复。 |
+| 浏览器会话 | 已登录页面只通过授权标签页和浏览器交互层读取。 | 不检查 token/cookie/localStorage，不把登录态 capture 伪装成无登录 URL capture。 |
 
 ## 逻辑漏洞清单
 
@@ -112,7 +126,9 @@ npm run smoke:windows
 - 把“Chrome 窗口图像捕获”误写成“网页全量内容捕获”。
 - 把 `ok=true` 误当成 `saved=true`。
 - 把 `background_mode=visible_fallback` 的结果当成 strict 后台图形获取。
+- 把“当前 Chrome 已登录标签页长图”误写成“无状态 headless URL 长图”。
+- 为了拼接长图读取 cookie/localStorage；正确路线应该用用户已打开的授权标签页和浏览器交互层。
 
 ## 最小通过线
 
-插件至少要通过 E01、E02、E05、E06、E12、E14、E16、E18，才算适合进入真实 AI 桌面工作流。E11 属于高级网页/DOM 路线，可以在网页捕获依赖启用后验收。
+插件至少要通过 E01、E02、E05、E06、E12、E14、E16、E18，才算适合进入真实 AI 桌面工作流。E11 属于高级网页/DOM 路线，可以在网页捕获依赖启用后验收。E21 属于浏览器会话 connector/CDP 路线，适合在用户明确授权当前标签页时验收。
