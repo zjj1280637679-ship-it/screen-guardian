@@ -53,11 +53,12 @@ Use this skill when the user asks to:
 Prefer the AI-first facade tools before the expert tool surface:
 
 - Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
+- Use `guardian_capture_targets` before capture when the AI should see all available display/window/page targets and choose a route without taking a screenshot.
 - Use `guardian_perceive` for ordinary visual tasks: quick look, text-heavy screenshot, UI debugging, window capture, short bounded change watch, or hold-file context control.
 - Use `guardian_survey_windows` when the user asks for all program-window status or wants a bounded batch of quiet window captures. Start with `capture_mode="status_only"`; use `capture_mode="hold_file"` when screenshots should be saved for later selective review.
 - `guardian_perceive` defaults to fast direct capture. Use stackable `capture_modes` only when a non-default strategy is needed: `delay`, `wait_render`, `wait_buffer`, and `wait_error`.
 - Use `delay_seconds` for delayed screenshots, `capture_modes=["wait_render"]` for slow-rendering windows, `capture_modes=["wait_buffer"]` for buffering or visual stability, `capture_modes=["wait_error"]` for explicit error-window signals, `render_guard="warn"` when suspected-unrendered frames should return decision actions before saving, and `task="watch_change"` for screen transitions or popups.
-- Prefer quiet window capture by default. Do not activate, focus, raise, or make a target window topmost unless the user asks for that visible fallback path. If `capture_window` returns an occlusion, bbox identity, or bbox-fallback decision warning, ask the user or choose a documented action instead of silently saving. Use `allow_unverified_bbox_fallback=true` only as a last resort when the user accepts that visible pixels may belong to another window.
+- Prefer quiet window capture by default. Do not activate, focus, raise, or make a target window topmost unless the user asks for that visible fallback path. Use `background_mode="strict"` when the user wants background graphics/window acquisition that is not affected by overlapping windows; if strict capture returns `background_capture_unavailable`, retry with render wait, switch to a webpage route for browser content, or explicitly choose visible fallback. If `capture_window` returns an occlusion, bbox identity, or bbox-fallback decision warning, ask the user or choose a documented action instead of silently saving. Use `allow_unverified_bbox_fallback=true` only as a last resort when the user accepts that visible pixels may belong to another window.
 - Use `guardian_prepare_workflow` when preparing a local model, decision, or monitor envelope without executing that route.
 - Use `guardian_list_commands` and `guardian_run_command` when the main AI should choose from reusable capability commands instead of composing low-level tools.
 - Use `list_capture_routes` when the task could be desktop visible pixels, an application window, a browser-rendered webpage, an inner scrollable table, or a mixed capture plan.
@@ -74,6 +75,7 @@ The default MCP surface is core-sized. Advanced workflow, media, policy, monitor
 AI-first tools:
 
 - `guardian_check`
+- `guardian_capture_targets`
 - `guardian_perceive`
 - `guardian_survey_windows`
 - `guardian_prepare_workflow`
@@ -87,6 +89,7 @@ Core tools:
 - `list_adapters`
 - `list_displays`
 - `list_windows`
+- `guardian_capture_targets`
 - `guardian_survey_windows`
 - `list_capture_routes`
 - `capture_screen`

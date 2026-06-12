@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-For Codex, start with `guardian_check`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
+For Codex, start with `guardian_check`, `guardian_capture_targets`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
 
 For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
 
@@ -31,6 +31,7 @@ Screen Guardian exposes a broad expert tool surface, but the default MCP surface
 | Need | Tool | What it does |
 | --- | --- | --- |
 | Check readiness | `guardian_check` | Summarizes runtime, adapters, cache path, capability flags, and the next recommended tool without capturing anything. |
+| See capture choices first | `guardian_capture_targets` | Lists displays, windows, and explicit webpage targets before capture, with recommended quiet/background arguments. |
 | See or hold local visual context | `guardian_perceive` | Maps quick look, text screenshot, UI debugging, window capture, short change watch, and hold-file requests onto the existing safe capture tools. |
 | Survey all program windows | `guardian_survey_windows` | Lists visible program-window status and can save a bounded set of quiet local window captures for selective review. |
 | Prepare workflow envelopes | `guardian_prepare_workflow` | Advanced surface. Writes local model, decision, or monitor request envelopes without calling APIs, subagents, commands, or background schedulers. |
@@ -49,7 +50,9 @@ Capture results now distinguish tool handling from file creation. A guard decisi
 
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
 
-Browser and GPU-heavy app windows may return a rendered frame with a blank content/client area through direct HWND capture. Screen Guardian now analyzes the client area separately; if it looks blank or very low-information, it records `window_client_low_information` and attempts the existing visible bbox fallback so `occlusion_risk` and `bbox_identity_mismatch` still apply.
+Use `background_mode="strict"` when the user wants graphics/window acquisition instead of visible desktop pixels. Strict mode attempts direct HWND capture, does not activate the UI, and disables visible-screen bbox fallback, so it is not affected by another window covering the target. If the app does not expose reliable direct HWND pixels, Screen Guardian returns `background_capture_unavailable` as a decision state instead of saving a misleading image. `background_mode="visible_fallback"` is the explicit opt-in path for visible-screen bbox fallback.
+
+Browser and GPU-heavy app windows may return a rendered frame with a blank content/client area through direct HWND capture. Screen Guardian now analyzes the client area separately; if it looks blank or very low-information, it records `window_client_low_information`; in strict background mode it also reports `background_capture_unavailable`, while best-effort mode can still attempt the existing visible bbox fallback so `occlusion_risk` and `bbox_identity_mismatch` apply.
 
 `guardian_survey_windows` is for extreme "report all windows" tasks. It defaults to `capture_mode="status_only"` and reports window title, process, bounds, minimized/offscreen state, and optional topmost-window visibility samples. When `capture_mode="hold_file"` or `capture_mode="return_paths"` is requested, it saves only up to the configured batch-capture limit and returns local paths so the AI can inspect selected screenshots instead of ingesting every image.
 

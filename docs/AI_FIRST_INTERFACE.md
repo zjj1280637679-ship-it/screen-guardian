@@ -7,6 +7,7 @@ The AI-first interface adds a small set of intent tools that should be tried bef
 | Intent | Start with |
 | --- | --- |
 | Check whether the plugin can run | `guardian_check` |
+| See what can be captured before taking a screenshot | `guardian_capture_targets` |
 | Look at the screen, text, UI, a window, or a short change | `guardian_perceive` |
 | Survey many program windows without flooding context | `guardian_survey_windows` |
 | Prepare a model, decision, or monitor envelope | `guardian_prepare_workflow` |
@@ -19,6 +20,7 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 
 | Scenario | AI-first call | What it maps to |
 | --- | --- | --- |
+| Choose a capture target before screenshot | `guardian_capture_targets` | A local target index for displays, application windows, and explicit webpage URLs; no capture is performed |
 | Quick look | `guardian_perceive` with `task="quick_look"` | A normal local screen or region capture |
 | Read text screenshot | `guardian_perceive` with `task="read_text"` | Capture plus `preprocess="text"` and local image analysis; this is text-friendly image handling, not bundled OCR |
 | Debug UI | `guardian_perceive` with `task="debug_ui"` | Capture plus UI sharpening and local image analysis |
@@ -37,6 +39,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Prepare a guided screenshot sequence | `prepare_capture_chain` | Write a local capture-chain envelope for delay, selector-visible, error-text, change, model-feature, or custom triggers |
 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
+
+When occlusion-resistant background acquisition matters, call `guardian_capture_targets` first and then use the returned `capture_target.primary` arguments. They default to `background_mode="strict"`, which attempts direct HWND graphics without visible-screen bbox fallback. If direct HWND pixels are blank, protected, or GPU-only, the capture returns `background_capture_unavailable` as a decision state rather than saving visible desktop pixels. Switch to a `capture_webpage` URL route for browser pages when possible, or explicitly choose `background_mode="visible_fallback"` when visible-screen behavior is acceptable.
 
 `guardian_survey_windows` is the batch version of that strategy. It does not start a monitor, upload images, or call a model. It first returns a window-status report. If captures are requested, `window_survey_window_count_max` and `window_survey_capture_count_max` limit how many windows can be reported or saved in one call, and per-call limits can only tighten those bounds.
 

@@ -78,6 +78,12 @@ const imageOutputProperties = {
     type: "boolean",
     description: "Prefer non-foreground, non-topmost capture when the route supports it. Window capture defaults to quiet-preferred and returns a decision warning before saving visible-screen fallback output.",
   },
+  background_mode: {
+    type: "string",
+    enum: ["best_effort", "strict", "visible_fallback"],
+    default: "best_effort",
+    description: "Window-only capture strategy. best_effort tries quiet HWND capture and guarded visible fallback, strict requires direct background HWND capture without visible-screen bbox fallback, and visible_fallback explicitly accepts visible-screen fallback behavior.",
+  },
   render_guard: {
     type: "string",
     enum: ["save", "warn", "wait", "fail"],
@@ -92,7 +98,7 @@ const imageOutputProperties = {
     type: "array",
     items: {
       type: "string",
-      enum: ["unrendered", "window_client_low_information", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "bbox_identity_mismatch", "all", "none", "off"],
+      enum: ["unrendered", "window_client_low_information", "background_capture_unavailable", "minimized_window", "offscreen_window", "tiny_capture", "stale_frame", "occlusion_risk", "bbox_identity_mismatch", "all", "none", "off"],
     },
     description: "Optional capture-quality checks. Defaults to ['unrendered']; other checks are opt-in and return decision actions rather than blocking ordinary capture.",
   },
@@ -517,6 +523,76 @@ const tools = [
     },
   },
   {
+    name: "guardian_capture_targets",
+    description: "AI-first pre-capture target index. Lists displays, capturable application windows, and optional webpage capture targets with recommended quiet/background capture arguments before any screenshot is taken.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        include_displays: {
+          type: "boolean",
+          default: true,
+          description: "Include display/desktop capture targets.",
+        },
+        include_windows: {
+          type: "boolean",
+          default: true,
+          description: "Include visible application windows with HWND-backed capture arguments.",
+        },
+        include_pages: {
+          type: "boolean",
+          default: true,
+          description: "Include explicit webpage URL targets supplied by url, urls, or pages. Browser tab enumeration is not performed by this local helper.",
+        },
+        url: {
+          type: "string",
+          description: "Optional single webpage URL to include as a page target.",
+        },
+        urls: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional webpage URLs to include as page targets.",
+        },
+        pages: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              url: { type: "string" },
+              label: { type: "string" },
+              mode: { type: "string", enum: ["full_page", "viewport", "element", "scroll_container"] },
+              selector: { type: "string" },
+              frame_selector: { type: "string" },
+            },
+            required: ["url"],
+            additionalProperties: false,
+          },
+          description: "Optional structured page targets for webpage capture.",
+        },
+        title_contains: windowTargetProperties.title_contains,
+        title_contains_any: windowTargetProperties.title_contains_any,
+        exact_title: windowTargetProperties.exact_title,
+        process_name: windowTargetProperties.process_name,
+        process_names: windowTargetProperties.process_names,
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+          description: "Maximum windows to include in the target index.",
+        },
+        include_visibility_probe: {
+          type: "boolean",
+          default: true,
+          description: "Sample topmost windows at target-window points to report possible occlusion risk without capturing an image.",
+        },
+        background_mode: imageOutputProperties.background_mode,
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "guardian_perceive",
     description: "AI-first perception facade for quick screen looks, text/UI captures, window capture, bounded watch, or hold-file context control.",
     inputSchema: {
@@ -545,6 +621,7 @@ const tools = [
         settle_delay_ms: imageOutputProperties.settle_delay_ms,
         wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
         quiet_preferred: imageOutputProperties.quiet_preferred,
+        background_mode: imageOutputProperties.background_mode,
         render_guard: imageOutputProperties.render_guard,
         render_guard_confirmed: imageOutputProperties.render_guard_confirmed,
         allow_unverified_bbox_fallback: imageOutputProperties.allow_unverified_bbox_fallback,
@@ -645,6 +722,7 @@ const tools = [
         settle_delay_ms: imageOutputProperties.settle_delay_ms,
         wait_for_nonblank: imageOutputProperties.wait_for_nonblank,
         quiet_preferred: imageOutputProperties.quiet_preferred,
+        background_mode: imageOutputProperties.background_mode,
         render_guard: imageOutputProperties.render_guard,
         render_guard_confirmed: imageOutputProperties.render_guard_confirmed,
         allow_unverified_bbox_fallback: imageOutputProperties.allow_unverified_bbox_fallback,
@@ -1723,6 +1801,7 @@ const tools = [
 
 const CORE_TOOL_NAMES = new Set([
   "guardian_check",
+  "guardian_capture_targets",
   "guardian_perceive",
   "guardian_survey_windows",
   "check_dependencies",
@@ -2461,6 +2540,9 @@ function runPython(action, args) {
 async function callTool(name, args) {
   if (name === "guardian_check") {
     return runPython("guardian_check", args);
+  }
+  if (name === "guardian_capture_targets") {
+    return runPython("guardian_capture_targets", args);
   }
   if (name === "guardian_perceive") {
     return runPython("guardian_perceive", args);

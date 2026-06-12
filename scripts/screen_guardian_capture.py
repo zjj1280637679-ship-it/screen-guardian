@@ -63,6 +63,7 @@ DEFAULT_LIMITS = {
 CAPTURE_GUARD_CHECKS = {
     "unrendered": "Detect blank, uniform, or very low-information frames that often mean rendering has not completed.",
     "window_client_low_information": "Detect direct HWND captures where the client/content area is blank or very low-information while the window frame is present.",
+    "background_capture_unavailable": "Detect strict background window captures where direct HWND graphics are unavailable or too low-information and visible-screen bbox fallback is disabled.",
     "minimized_window": "Detect target windows that are minimized before capture.",
     "offscreen_window": "Detect target windows that are outside or partly outside the virtual desktop.",
     "tiny_capture": "Detect capture boxes that are probably too small to be intentional.",
@@ -82,10 +83,10 @@ CAPTURE_ROUTE_CATALOG = {
     },
     "application": {
         "title": "Application/window capture",
-        "tools": ["list_windows", "capture_window", "guardian_survey_windows"],
+        "tools": ["guardian_capture_targets", "list_windows", "capture_window", "guardian_survey_windows"],
         "quiet": "default_best_effort",
-        "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "render-aware window capture", "bounded multi-window surveys"],
-        "limits": ["minimized, GPU-rendered, protected, or occluded windows may be blank, stale, or require a visible-screen fallback decision"],
+        "best_for": ["specific Windows HWND/process/title", "non-topmost best-effort capture", "strict background HWND capture", "render-aware window capture", "bounded multi-window surveys"],
+        "limits": ["strict background capture avoids visible-screen bbox fallback but may return a decision when the app does not expose drawable HWND pixels", "minimized, GPU-rendered, protected, or occluded windows may be blank, stale, or require a visible-screen fallback decision"],
     },
     "webpage": {
         "title": "Browser-rendered webpage capture",
@@ -816,8 +817,8 @@ def window_adapter_status():
         "priority": 20,
         "available": available,
         "dependencies": ["Pillow", "Windows user32"],
-        "capabilities": ["list_windows", "capture_window", "non_topmost_best_effort", "no_foreground_activation", "quiet_preferred_default"],
-        "compatibility_note": "Best-effort HWND capture. The adapter does not activate or raise the target window. Some GPU, minimized, protected, or occluded windows may return blank, stale, or fallback-visible frames.",
+        "capabilities": ["guardian_capture_targets", "list_windows", "capture_window", "strict_background_mode", "non_topmost_best_effort", "no_foreground_activation", "quiet_preferred_default"],
+        "compatibility_note": "Best-effort HWND capture. The adapter does not activate or raise the target window. Strict background mode disables visible-screen bbox fallback; some GPU, minimized, protected, or occluded windows may return blank, stale, or decision-only frames.",
     }
     if os.name != "nt":
         status["import_error"] = "Window capture is currently Windows-only."
@@ -1757,6 +1758,37 @@ def quiet_capture_preferred(args, source_type="screen"):
     return source_type in ("window", "webpage")
 
 
+def normalize_background_mode(args):
+    mode = str(args.get("background_mode") or args.get("window_background_mode") or "best_effort").strip().lower()
+    aliases = {
+        "auto": "best_effort",
+        "default": "best_effort",
+        "quiet": "best_effort",
+        "direct": "strict",
+        "direct_only": "strict",
+        "hwnd": "strict",
+        "occlusion_safe": "strict",
+        "occlusion_resistant": "strict",
+        "no_bbox": "strict",
+        "no_visible_fallback": "strict",
+        "fallback": "visible_fallback",
+        "bbox": "visible_fallback",
+        "screen_bbox": "visible_fallback",
+        "visible": "visible_fallback",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ("best_effort", "strict", "visible_fallback"):
+        raise ValueError("background_mode must be best_effort, strict, or visible_fallback")
+    return mode
+
+
+def visible_window_fallback_allowed(args):
+    mode = normalize_background_mode(args)
+    if mode == "strict":
+        return False
+    return True
+
+
 def render_retry_options(args, default_wait_for_nonblank=False):
     limits = runtime_limits(args)
     wait_value = args.get("wait_for_nonblank")
@@ -1929,17 +1961,23 @@ def render_guard_status(source, args):
     direct_content = source.get("direct_window_content") if isinstance(source.get("direct_window_content"), dict) else {}
     if source_type == "window" and direct_content.get("client_low_information") and "window_client_low_information" not in checks:
         checks.append("window_client_low_information")
+    background_capture = source.get("background_capture") if isinstance(source.get("background_capture"), dict) else {}
+    if source_type == "window" and background_capture.get("strict_unavailable") and "background_capture_unavailable" not in checks:
+        checks.append("background_capture_unavailable")
     if source_type == "window" and "bbox" in capture_method and "bbox_identity_mismatch" not in checks:
         checks.append("bbox_identity_mismatch")
     issues = capture_guard_issues(source, args, checks)
     suspected_unrendered = any(issue.get("id") == "unrendered" for issue in issues)
     identity_mismatch = any(issue.get("id") == "bbox_identity_mismatch" for issue in issues)
+    background_unavailable = any(issue.get("id") == "background_capture_unavailable" for issue in issues)
     allow_unverified_bbox = bool(args.get("allow_unverified_bbox_fallback", False))
     confirmed = bool(args.get("render_guard_confirmed", False))
     if not issues:
         status = "passed"
     elif identity_mismatch and not allow_unverified_bbox:
         status = "awaiting_bbox_identity_decision"
+    elif background_unavailable and not confirmed:
+        status = "awaiting_background_capture_decision"
     elif confirmed:
         status = "confirmed_save"
     elif mode == "save":
@@ -1958,6 +1996,7 @@ def render_guard_status(source, args):
         "issues": issues,
         "suspected_unrendered": suspected_unrendered,
         "bbox_identity_mismatch": identity_mismatch,
+        "background_capture_unavailable": background_unavailable,
         "allow_unverified_bbox_fallback": allow_unverified_bbox,
         "confirmed": confirmed,
         "final_attempt": final_attempt,
@@ -2003,6 +2042,22 @@ def capture_guard_issues(source, args, checks):
                     "severity": "decision",
                     "message": "Direct HWND capture reported a blank or very low-information client/content area while the window frame may still be present.",
                     "evidence": direct_content,
+                }
+            )
+
+    if "background_capture_unavailable" in checks and source.get("type") == "window":
+        background_capture = source.get("background_capture") if isinstance(source.get("background_capture"), dict) else {}
+        if background_capture.get("strict_unavailable"):
+            issues.append(
+                {
+                    "id": "background_capture_unavailable",
+                    "severity": "decision",
+                    "message": "Strict background capture did not produce reliable direct HWND graphics, and visible-screen bbox fallback is disabled.",
+                    "evidence": {
+                        "background_capture": background_capture,
+                        "direct_window_content": source.get("direct_window_content"),
+                        "capture_method": source.get("capture_method"),
+                    },
                 }
             )
 
@@ -2085,7 +2140,8 @@ def render_guard_warning_payload(source, args):
     if not guard["issues"]:
         return None
     identity_mismatch_requires_decision = bool(guard.get("bbox_identity_mismatch")) and not bool(guard.get("allow_unverified_bbox_fallback"))
-    if not identity_mismatch_requires_decision and (guard["confirmed"] or guard["mode"] == "save"):
+    background_unavailable_requires_decision = bool(guard.get("background_capture_unavailable")) and not bool(guard.get("confirmed"))
+    if not identity_mismatch_requires_decision and not background_unavailable_requires_decision and (guard["confirmed"] or guard["mode"] == "save"):
         return None
     limits = runtime_limits(args)
     max_retry_count = int(limits.get("capture_render_retry_count_max") or 8)
@@ -2158,7 +2214,15 @@ def render_guard_warning_payload(source, args):
             "guard_checks": ["unrendered", "occlusion_risk"],
             "note": "Retry the HWND/window route without accepting visible-screen bbox fallback output silently.",
         }
+        payload["issue_specific_actions"]["retry_strict_background_capture"] = {
+            "background_mode": "strict",
+            "quiet_preferred": True,
+            "render_guard": "wait",
+            "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"],
+            "note": "Retry direct background HWND capture and do not save visible-screen bbox fallback pixels.",
+        }
         payload["issue_specific_actions"]["allow_visible_bbox_fallback"] = {
+            "background_mode": "visible_fallback",
             "quiet_preferred": False,
             "render_guard_confirmed": True,
             "note": "Accept the visible-screen fallback when the user understands the target may need to be visible or unobscured.",
@@ -2175,12 +2239,39 @@ def render_guard_warning_payload(source, args):
             "note": "Call list_windows, then retry with a specific hwnd or exact_title so the target identity is unambiguous.",
         }
         payload["issue_specific_actions"]["allow_unverified_bbox_fallback"] = {
+            "background_mode": "visible_fallback",
             "quiet_preferred": False,
             "render_guard_confirmed": True,
             "allow_unverified_bbox_fallback": True,
             "note": "Last-resort visible-pixel capture. This may save another window if it is covering the target.",
         }
         payload["recommended_next"] = "Prefer retry_with_hwnd_or_exact_title or bring_window_front_or_capture_screen. Use allow_unverified_bbox_fallback only as a last resort."
+    if "background_capture_unavailable" in issue_ids:
+        payload["warning"] = "Strict background window capture did not produce reliable direct HWND graphics, so no visible-screen fallback was saved."
+        payload["message"] = "Choose a strict retry with more render waiting, switch to a webpage/DOM route when the target is a browser page, or explicitly accept visible-screen fallback."
+        payload["available_actions"].pop("force_capture_now", None)
+        payload["issue_specific_actions"]["retry_strict_after_render_wait"] = {
+            "background_mode": "strict",
+            "quiet_preferred": True,
+            "wait_for_nonblank": True,
+            "render_guard": "wait",
+            "render_retry_count": min(max(current_retry_count, 2) + 2, max_retry_count),
+            "render_retry_interval_ms": min(max(current_retry_interval_ms, 500), max_retry_interval_ms),
+            "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"],
+            "note": "Keep the capture occlusion-resistant and wait longer for direct HWND content before returning another decision.",
+        }
+        payload["issue_specific_actions"]["switch_to_webpage_route"] = {
+            "tool": "capture_webpage",
+            "background_mode": "strict",
+            "note": "For browser content, use the webpage route with an explicit URL when possible instead of relying on window pixels.",
+        }
+        payload["issue_specific_actions"]["allow_visible_bbox_fallback"] = {
+            "background_mode": "visible_fallback",
+            "quiet_preferred": False,
+            "render_guard": "warn",
+            "note": "Explicitly switch to visible-screen bbox fallback. This is not occlusion-proof and should be treated as a visible screenshot route.",
+        }
+        payload["recommended_next"] = "Prefer retry_strict_after_render_wait or switch_to_webpage_route. Use allow_visible_bbox_fallback only when the user accepts visible desktop pixels."
     if is_strict_failure:
         payload["error"] = "Capture guard blocked suspected incomplete output because render_guard='fail'."
         payload["requires_confirmation"] = False
@@ -2585,14 +2676,19 @@ def grab_screen_once(args):
 
 def grab_window_once(args, status, libs, window):
     hwnd = int(window["hwnd"])
+    background_mode = normalize_background_mode(args)
+    fallback_allowed = visible_window_fallback_allowed(args)
     capture_method = "pillow-imagegrab-window"
     direct_content_status = {}
+    direct_black = False
+    direct_client_low_info = False
+    direct_hwnd_error = ""
     try:
         image = libs["ImageGrab"].grab(window=hwnd)
         direct_content_status = window_client_content_status(image.convert("RGB"), libs, window)
         direct_black = image_looks_black(image, libs)
         direct_client_low_info = bool(direct_content_status.get("client_low_information", False))
-        if direct_black or direct_client_low_info:
+        if fallback_allowed and (direct_black or direct_client_low_info):
             rect = window.get("rect") or {}
             if rect:
                 capture_method = "pillow-imagegrab-bbox-after-black-window-frame" if direct_black else "pillow-imagegrab-bbox-after-low-info-window-client"
@@ -2600,8 +2696,14 @@ def grab_window_once(args, status, libs, window):
                     bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
                     all_screens=True,
                 )
-    except TypeError:
+    except TypeError as exc:
+        direct_hwnd_error = str(exc)
         rect = window.get("rect") or {}
+        if not fallback_allowed:
+            raise RuntimeError(
+                "Strict background window capture is unavailable because this Pillow runtime does not support direct HWND capture; "
+                "retry with background_mode='best_effort' or 'visible_fallback' only if visible-screen fallback is acceptable."
+            )
         if not rect:
             raise
         capture_method = "pillow-imagegrab-bbox-fallback"
@@ -2609,6 +2711,12 @@ def grab_window_once(args, status, libs, window):
             bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
                 all_screens=True,
             )
+    visible_fallback_used = "bbox" in capture_method
+    strict_background_unavailable = bool(
+        background_mode == "strict"
+        and not visible_fallback_used
+        and (direct_black or direct_client_low_info or direct_hwnd_error)
+    )
     source = {
         "type": "window",
         "adapter": status["id"],
@@ -2616,18 +2724,29 @@ def grab_window_once(args, status, libs, window):
         "quiet_capture": {
             "preferred": quiet_capture_preferred(args, "window"),
             "foreground_activation_performed": False,
-            "visible_screen_fallback": "bbox" in capture_method,
-            "occlusion_risk_check_applicable": "bbox" in capture_method,
-            "bbox_identity_check_applicable": "bbox" in capture_method,
+            "visible_screen_fallback": visible_fallback_used,
+            "occlusion_risk_check_applicable": visible_fallback_used,
+            "bbox_identity_check_applicable": visible_fallback_used,
             "direct_hwnd_guard_note": "occlusion_risk and bbox_identity_mismatch apply only after visible-screen bbox fallback; direct HWND capture uses client-content quality checks instead.",
+        },
+        "background_capture": {
+            "mode": background_mode,
+            "direct_hwnd_attempted": True,
+            "direct_hwnd_error": direct_hwnd_error,
+            "visible_screen_fallback_allowed": fallback_allowed,
+            "visible_screen_fallback_used": visible_fallback_used,
+            "foreground_activation_performed": False,
+            "occlusion_resistant_current_frame": not visible_fallback_used,
+            "strict_unavailable": strict_background_unavailable,
+            "note": "Strict mode is a graphics/window acquisition attempt, not a visible desktop screenshot. It does not raise the target window and does not save a visible-screen bbox fallback.",
         },
         "window": window,
         "virtual_screen": virtual_screen_rect(),
         "capture_box": window.get("rect"),
         "direct_window_content": direct_content_status,
-        "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Minimized, protected, GPU-rendered, or occluded windows may return blank, stale, or fallback-visible frames.",
+        "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Strict background mode avoids visible-screen fallback but may return a decision when the app exposes only blank, stale, protected, or GPU-rendered client pixels.",
     }
-    if "bbox" in capture_method:
+    if visible_fallback_used:
         source["visible_screen_identity"] = bbox_identity_probe(window)
     return image.convert("RGB"), source, libs
 
@@ -2638,6 +2757,58 @@ def grab_window_image(args):
         raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
     window = find_window(args)
     return grab_known_window_image(args, window, status, libs)
+
+
+def window_pre_capture_guard_payload(args, window, status=None):
+    checks = normalize_guard_checks(args)
+    preflight_checks = {"minimized_window", "offscreen_window", "tiny_capture"}
+    if not any(check in checks for check in preflight_checks):
+        return None
+    background_mode = normalize_background_mode(args)
+    source = {
+        "type": "window",
+        "adapter": (status or {}).get("id") or "pillow-window",
+        "capture_method": "preflight-window-state",
+        "quiet_capture": {
+            "preferred": quiet_capture_preferred(args, "window"),
+            "foreground_activation_performed": False,
+            "visible_screen_fallback": False,
+            "occlusion_risk_check_applicable": False,
+            "bbox_identity_check_applicable": False,
+            "direct_hwnd_guard_note": "Pre-capture window-state guards run before any HWND or visible-screen grab is attempted.",
+        },
+        "background_capture": {
+            "mode": background_mode,
+            "direct_hwnd_attempted": False,
+            "direct_hwnd_error": "",
+            "visible_screen_fallback_allowed": background_mode != "strict",
+            "visible_screen_fallback_used": False,
+            "foreground_activation_performed": False,
+            "occlusion_resistant_current_frame": background_mode == "strict",
+            "strict_unavailable": False,
+            "note": "Window-state guard returned a decision before capture, so no desktop pixels or direct HWND pixels were saved.",
+        },
+        "window": window,
+        "virtual_screen": virtual_screen_rect(),
+        "capture_box": window.get("rect"),
+        "render_timing": {
+            "delay_seconds": 0,
+            "wait_for_nonblank": False,
+            "render_guard": normalize_render_guard(args, "window"),
+            "attempts": [],
+            "final_attempt": {},
+            "final_likely_blank": False,
+            "note": "No render attempt was made because a pre-capture window-state guard requires a decision first.",
+        },
+        "compatibility_note": "Pre-capture guards prevent minimized, offscreen, or tiny window states from turning into low-level grab errors or misleading blank images.",
+    }
+    payload = render_guard_warning_payload(source, args)
+    if payload:
+        payload["reason"] = "window_pre_capture_guard_decision"
+        payload["warning"] = "Window state suggests this capture may be incomplete or misleading. Capture was deferred before any grab was attempted."
+        payload["message"] = "Restore or move the target window, choose a safer route, or explicitly confirm that this state should still be captured."
+        payload["privacy"] = "No screenshot was saved, uploaded, sent to a model, or retried in the background after this pre-capture decision warning."
+    return payload
 
 
 def grab_known_window_image(args, window, status=None, libs=None):
@@ -3690,7 +3861,7 @@ def action_guardian_check(args):
         "extra_output_dirs": serialize_paths(mirrors),
         "key_capabilities": key_capability_summary(flags),
         "recommended_next": recommended_next,
-        "ai_first_tools": ["guardian_check", "guardian_perceive", "guardian_survey_windows", "guardian_prepare_workflow"],
+        "ai_first_tools": ["guardian_check", "guardian_capture_targets", "guardian_perceive", "guardian_survey_windows", "guardian_prepare_workflow"],
         "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
     }
     if detail == "full":
@@ -3711,6 +3882,195 @@ def action_guardian_check(args):
     return write_json(payload)
 
 
+def display_capture_targets(args):
+    status, libs = mss_adapter_status()
+    if not status.get("available"):
+        return {
+            "available": False,
+            "adapter": status,
+            "targets": [],
+            "reason": status.get("import_error") or "screen_capture_adapter_unavailable",
+        }
+    with libs["mss"].MSS() as sct:
+        monitors = [monitor_to_dict(i, monitor) for i, monitor in enumerate(sct.monitors)]
+    targets = []
+    for monitor in monitors:
+        display_index = int(monitor.get("display_index") or 0)
+        label = "Virtual desktop" if display_index == 0 else f"Display {display_index}"
+        targets.append(
+            {
+                "id": f"display:{display_index}",
+                "type": "display",
+                "label": label,
+                "tool": "capture_screen",
+                "args": {"display_index": display_index},
+                "display": monitor,
+                "quiet_capture": False,
+                "occlusion_resistant": False,
+                "note": "Display capture reads visible desktop pixels and is affected by overlap, occlusion, and foreground state.",
+            }
+        )
+    return {"available": True, "adapter": status.get("id"), "targets": targets}
+
+
+def normalized_page_targets(args):
+    raw_pages = []
+    if args.get("url"):
+        raw_pages.append({"url": args.get("url")})
+    for url in args.get("urls") or []:
+        raw_pages.append({"url": url})
+    for page in args.get("pages") or []:
+        if isinstance(page, dict):
+            raw_pages.append(dict(page))
+    pages = []
+    seen = set()
+    for index, page in enumerate(raw_pages, start=1):
+        url = normalized_webpage_url({"url": page.get("url")})
+        key = (url, str(page.get("selector") or ""), str(page.get("frame_selector") or ""), str(page.get("mode") or "full_page"))
+        if key in seen:
+            continue
+        seen.add(key)
+        mode = str(page.get("mode") or "full_page").strip().lower()
+        if mode not in ("full_page", "viewport", "element", "scroll_container"):
+            raise ValueError("page mode must be full_page, viewport, element, or scroll_container")
+        capture_args = {"url": url, "mode": mode}
+        for key_name in ("selector", "frame_selector"):
+            if page.get(key_name):
+                capture_args[key_name] = str(page.get(key_name))
+        label = str(page.get("label") or urllib.parse.urlparse(url).netloc or f"page {index}").strip()
+        pages.append(
+            {
+                "id": f"page:{index}",
+                "type": "webpage",
+                "label": label,
+                "tool": "capture_webpage",
+                "args": capture_args,
+                "quiet_capture": True,
+                "occlusion_resistant": True,
+                "note": "Webpage capture uses an explicit URL and a browser-rendered route, not visible desktop pixels.",
+            }
+        )
+    return pages
+
+
+def window_capture_target_record(window, include_visibility_probe, background_mode):
+    record = window_survey_status(window, include_visibility_probe)
+    hwnd = int(window.get("hwnd"))
+    strict_args = {
+        "hwnd": hwnd,
+        "background_mode": background_mode,
+        "quiet_preferred": True,
+        "wait_for_nonblank": True,
+        "render_guard": "warn",
+        "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"],
+    }
+    fallback_args = {
+        "hwnd": hwnd,
+        "background_mode": "visible_fallback",
+        "quiet_preferred": False,
+        "render_guard": "warn",
+        "guard_checks": ["unrendered", "occlusion_risk", "bbox_identity_mismatch"],
+    }
+    record["id"] = f"window:{hwnd}"
+    record["type"] = "window"
+    record["label"] = " - ".join(part for part in (record.get("process_name"), record.get("title")) if part)
+    record["tool"] = "capture_window"
+    record["args"] = strict_args
+    record["capture_target"] = {
+        "primary": {"tool": "capture_window", "args": strict_args},
+        "visible_fallback": {"tool": "capture_window", "args": fallback_args},
+        "selection_key": {"hwnd": hwnd, "exact_title": window.get("title"), "process_name": window.get("process_name")},
+    }
+    record["background_capture"] = {
+        "preferred": True,
+        "mode": background_mode,
+        "foreground_activation_required": False,
+        "visible_screen_fallback_allowed": background_mode != "strict",
+        "occlusion_resistant_when_direct_hwnd_succeeds": True,
+        "capability_confirmed": "unknown_until_capture",
+        "note": "The target index does not capture pixels. Strict background capability is confirmed by the capture result metadata.",
+    }
+    return record
+
+
+def action_guardian_capture_targets(args):
+    try:
+        flags = feature_flags(args)
+        include_displays = bool(args.get("include_displays", True))
+        include_windows = bool(args.get("include_windows", True))
+        include_pages = bool(args.get("include_pages", True))
+        include_visibility_probe = bool(args.get("include_visibility_probe", True))
+        background_mode = normalize_background_mode({"background_mode": args.get("background_mode") or "strict"})
+        limit = int(args.get("limit", 50))
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        limit = min(limit, 200)
+
+        display_payload = {"available": False, "targets": [], "reason": "not_requested"}
+        if include_displays:
+            if flags.get("screen_capture"):
+                display_payload = display_capture_targets(args)
+            else:
+                display_payload = {"available": False, "targets": [], "reason": "screen_capture_feature_disabled"}
+
+        window_targets = []
+        windows_total = 0
+        if include_windows:
+            if flags.get("window_capture"):
+                windows = filtered_survey_windows(args)
+                windows_total = len(windows)
+                window_targets = [window_capture_target_record(window, include_visibility_probe, background_mode) for window in windows[:limit]]
+            else:
+                window_targets = []
+
+        page_targets = []
+        page_error = ""
+        if include_pages:
+            try:
+                page_targets = normalized_page_targets(args)
+            except Exception as exc:
+                page_error = str(exc)
+
+        targets = []
+        targets.extend(display_payload.get("targets") or [])
+        targets.extend(window_targets)
+        targets.extend(page_targets)
+        return write_json(
+            {
+                "ok": True,
+                "target_index_ready": True,
+                "capture_performed": False,
+                "targets_total": len(targets),
+                "targets": targets,
+                "displays": display_payload,
+                "windows": {
+                    "available": bool(flags.get("window_capture")),
+                    "reported": len(window_targets),
+                    "total_matching": windows_total,
+                    "targets": window_targets,
+                },
+                "pages": {
+                    "available": bool(flags.get("webpage_capture")),
+                    "reported": len(page_targets),
+                    "targets": page_targets,
+                    "error": page_error,
+                    "current_browser_tab_enumeration": {
+                        "available": False,
+                        "reason": "The local helper does not inspect the user's browser session or tab list. Pass explicit URLs or use a browser/Chrome connector before calling capture_webpage.",
+                    },
+                },
+                "recommended_capture_policy": {
+                    "application_window": "Use capture_target.primary first. With the default background_mode='strict', it does not raise the window and does not save visible-screen bbox fallback pixels.",
+                    "browser_page": "Use capture_webpage with an explicit URL when page content matters more than the browser chrome.",
+                    "desktop": "Use display targets only when visible desktop pixels are desired.",
+                },
+                "privacy": "Target indexing only. No screenshot, audio recording, upload, model call, browser navigation, or background monitor was performed.",
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
+
+
 def guardian_base_context(args, default_source_label):
     forwarded = {}
     for key in (
@@ -3723,6 +4083,8 @@ def guardian_base_context(args, default_source_label):
         "settle_delay_ms",
         "wait_for_nonblank",
         "quiet_preferred",
+        "background_mode",
+        "window_background_mode",
         "render_guard",
         "render_guard_confirmed",
         "allow_unverified_bbox_fallback",
@@ -4824,7 +5186,14 @@ def action_capture_region(args):
 def action_capture_window(args):
     try:
         require_feature("window_capture", args)
-        image, source, libs = grab_window_image(args)
+        status, libs = window_adapter_status()
+        if not status["available"]:
+            raise RuntimeError(status.get("import_error") or "Window capture adapter is unavailable")
+        window = find_window(args)
+        preflight = window_pre_capture_guard_payload(args, window, status)
+        if preflight:
+            return write_json(preflight)
+        image, source, libs = grab_known_window_image(args, window, status, libs)
         return write_json(save_or_warn_capture(image, source, libs, args))
     except WindowMatchError as exc:
         return error(str(exc), **exc.payload)
@@ -5032,6 +5401,7 @@ def action_clear_cache(args):
 
 ACTIONS = {
     "guardian_check": action_guardian_check,
+    "guardian_capture_targets": action_guardian_capture_targets,
     "guardian_perceive": action_guardian_perceive,
     "guardian_survey_windows": action_guardian_survey_windows,
     "guardian_prepare_workflow": action_guardian_prepare_workflow,

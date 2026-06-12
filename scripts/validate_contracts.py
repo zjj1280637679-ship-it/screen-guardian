@@ -34,6 +34,7 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 
 REQUIRED_TOOLS = [
     "guardian_check",
+    "guardian_capture_targets",
     "guardian_perceive",
     "guardian_survey_windows",
     "guardian_prepare_workflow",
@@ -119,7 +120,7 @@ REQUIRED_TRACEABILITY_FIELDS = [
 
 
 DESIGN_COVERAGE = {
-    "ai-first interface": ["ai-first", "guardian_check", "guardian_perceive"],
+    "ai-first interface": ["ai-first", "guardian_check", "guardian_capture_targets", "guardian_perceive"],
     "anti-abuse stance": ["anti-abuse", "not designed or supported for bypassing"],
     "advisory context signals": ["advisory", "regex", "hard moral blockers"],
     "capability runtime": ["capability runtime", "registered commands", "break-glass"],
@@ -371,6 +372,8 @@ def check_static_contracts() -> CheckSet:
 
     guardian_terms = {
         "guardian_check reports status without capture": ["action_guardian_check", "no screenshot", "recommended_next"],
+        "guardian_capture_targets indexes targets before capture": ["action_guardian_capture_targets", "target_index_ready", "capture_performed", "background_mode"],
+        "strict background capture avoids bbox fallback": ["normalize_background_mode", "strict", "background_capture_unavailable", "visible_screen_fallback_allowed"],
         "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
         "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
         "guardian_perceive watch_change uses bounded watch": ['task == "watch_change"', "action_watch_screen"],

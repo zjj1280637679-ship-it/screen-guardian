@@ -7,18 +7,20 @@ Screen Guardian now separates capture intent into routes. This keeps the main AI
 | Route | Best for | Quiet capture | Primary tools |
 | --- | --- | --- | --- |
 | `desktop` | Visible desktop pixels, multi-display fallback, old-system capture | No. It sees what is visible on the desktop. | `capture_screen`, `capture_region`, `watch_screen` |
-| `application` | A specific Windows program, HWND, process, title, or bounded multi-window survey | Quiet-preferred by default. It does not activate or raise the window, but minimized, protected, GPU-rendered, or occluded windows can still fail. | `list_windows`, `capture_window`, `guardian_survey_windows` |
+| `application` | A specific Windows program, HWND, process, title, or bounded multi-window survey | Quiet-preferred by default. `background_mode="strict"` uses direct HWND graphics without visible-screen bbox fallback; best-effort mode can still return guarded fallback decisions. | `guardian_capture_targets`, `list_windows`, `capture_window`, `guardian_survey_windows` |
 | `webpage` | Browser-rendered viewport, element, or full scrollable webpage | Yes, when optional `webpage_capture` is enabled. Default status is inactive. | `prepare_webpage_capture`, `capture_webpage` |
 | `nested_scroll` | Admin tables, scrollable panels, and embedded iframes inside a page | Yes, through a headless browser route when `webpage_capture=true`. Default status is inactive. | `capture_webpage` with `mode="scroll_container"` |
 | `mixed` or `auto` | A caller wants a route plan before choosing exact tools | Depends on selected steps. | `prepare_capture_chain` |
 
-Use `list_capture_routes` when the AI is unsure which route to choose.
+Use `guardian_capture_targets` when the AI needs concrete capturable targets before taking any screenshot. Use `list_capture_routes` when the AI is unsure which route family to choose.
 
 ## Desktop Versus Application Versus Webpage
 
 Desktop capture is a pixel fallback. It is the right first route when compatibility is the problem and the user needs the currently visible screen. It is also the route for short visible change capture.
 
-Application capture is a window route. It should start with `list_windows` when the target is ambiguous, then use `capture_window` with `hwnd` or exact match. It is quiet-preferred by default: Screen Guardian does not activate, focus, raise, or make the target topmost. If the HWND route has to fall back to a visible-screen bbox capture, the plugin samples the topmost window identity inside the bbox before saving. If the sampled visible window does not match the requested HWND, it returns a decision warning even if the caller already set `render_guard_confirmed=true`.
+Application capture is a window route. It should start with `guardian_capture_targets` or `list_windows` when the target is ambiguous, then use `capture_window` with `hwnd` or exact match. It is quiet-preferred by default: Screen Guardian does not activate, focus, raise, or make the target topmost. For occlusion-resistant capture, use `background_mode="strict"` so the adapter attempts direct HWND graphics and disables visible-screen bbox fallback. If direct HWND graphics are unavailable or too low-information, the result returns `background_capture_unavailable` and no misleading fallback image is saved.
+
+Best-effort window capture can still fall back to visible-screen bbox pixels for compatibility. If that happens, the plugin samples the topmost window identity inside the bbox before saving. If the sampled visible window does not match the requested HWND, it returns a decision warning even if the caller already set `render_guard_confirmed=true`.
 
 For "report all program windows" tasks, use `guardian_survey_windows` instead of repeatedly calling `list_windows` and `capture_window`. It returns a structured status table first, then optionally saves a bounded set of local window captures using `capture_mode="hold_file"` or `capture_mode="return_paths"`. The AI can then inspect only the saved paths that matter.
 
