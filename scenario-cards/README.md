@@ -40,5 +40,6 @@ Use [TEMPLATE.md](TEMPLATE.md) for new cards.
 - [advanced/edge-task-gauntlet.md](advanced/edge-task-gauntlet.md)
 - [advanced/browser-session-nested-scroll-longshot.md](advanced/browser-session-nested-scroll-longshot.md)
 - [advanced/authorized-sniffing-layer.md](advanced/authorized-sniffing-layer.md)
+- [advanced/unopened-app-page.md](advanced/unopened-app-page.md)
 - [user-types/beginner-user.md](user-types/beginner-user.md)
 - [user-types/high-intensity-user.md](user-types/high-intensity-user.md)

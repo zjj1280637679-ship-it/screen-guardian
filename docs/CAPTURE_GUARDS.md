@@ -12,12 +12,15 @@ The ordinary screenshot default guard is intentionally small:
 
 Most other checks are opt-in. Window routes have two exceptions. `window_client_low_information` can be attached automatically when a direct HWND capture returns a rendered frame but a blank or very low-information client/content area. `occlusion_risk` and `bbox_identity_mismatch` can be attached automatically after visible-screen bbox fallback because that fallback can save the wrong pixels when another window overlaps the target. This keeps ordinary screenshots fast while making fragile window fallback honest.
 
+Direct HWND capture can also fail before pixels are returned, for example with minimized, WebView, GPU-rendered, protected, or custom-drawn windows. In strict background mode this is reported as a `background_capture_unavailable` decision with `saved=false`, not as a saved black image or a raw `screen grab failed` error. Visible-screen fallback is only used when the caller explicitly chooses a fallback mode.
+
 ## Guard Checks
 
 | Check | Default | Detects | Typical cause | Decision menu |
 | --- | --- | --- | --- | --- |
 | `unrendered` | On | Blank, solid, black, white, or very low-information final frame | Slow rendering, loading screen, GPU/protected overlay, blank fallback | Force capture now, capture later, auto-detect render then capture |
 | `window_client_low_information` | On when direct HWND client content looks blank | Browser/GPU client area is blank while frame/title exists | Chrome, Edge, UWP, DirectX/GPU content that direct HWND capture cannot read | Retry quiet capture, use bbox fallback with identity checks, bring target forward, or use webpage/UI route |
+| `background_capture_unavailable` | On for strict target-index window arguments | Direct HWND capture failed or exposed no reliable content while visible fallback is disabled | Minimized, protected, WebView, GPU, or custom-drawn windows | Retry after render wait, use semantic/browser route, restore window, or explicitly accept visible fallback |
 | `minimized_window` | Off | Target window is minimized | HWND/window capture cannot see useful pixels while minimized | Restore window then capture, force capture now |
 | `offscreen_window` | Off | Window is partly or fully outside the virtual desktop | Multi-monitor movement, disconnected display, bad window coordinates | Move window visible then capture, reselect target |
 | `tiny_capture` | Off | Capture box width or height is below `guard_tiny_min_pixels` | Bad region coordinates, wrong display, overly small UI target | Reselect region/window, force capture now |

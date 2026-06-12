@@ -399,6 +399,7 @@ def check_static_contracts() -> CheckSet:
         "guard decision is not mistaken for saved file": ['"saved": False', '"result_state": "decision_required"', "ok=true", "saved=false"],
         "capture guard checks document fallback exceptions": ["DEFAULT_GUARD_CHECKS = [\"unrendered\"]", "CAPTURE_GUARD_CHECKS", "bbox_identity_mismatch"],
         "direct hwnd client guard detects browser blank content": ["window_client_low_information", "window_client_content_status", "pillow-imagegrab-bbox-after-low-info-window-client"],
+        "direct hwnd grab failure returns a decision": ["CaptureDecision", "background_capture_unavailable_payload", "direct_hwnd_grab_failed", "pillow-imagegrab-window-direct-error"],
         "bbox fallback identity guard": ["bbox_identity_probe", "bbox_identity_mismatch", "allow_unverified_bbox_fallback"],
         "guardian facade forwards fallback controls": ["guardian_base_context", '"quiet_preferred"', '"render_guard_confirmed"', '"allow_unverified_bbox_fallback"'],
         "mcp child timeout bounds hung scripts": ["childTimeoutMs", "SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS", "Screen Guardian runtime timed out"],

@@ -261,6 +261,12 @@ class WindowMatchError(ValueError):
         self.payload = payload
 
 
+class CaptureDecision(Exception):
+    def __init__(self, message, payload):
+        super().__init__(message)
+        self.payload = payload
+
+
 CAPABILITY_COMMANDS = [
     {
         "id": "diagnostic.readiness",
@@ -2674,6 +2680,75 @@ def grab_screen_once(args):
     return image, source, libs
 
 
+def background_capture_unavailable_source(args, window, status, direct_hwnd_error):
+    background_mode = normalize_background_mode(args)
+    return {
+        "type": "window",
+        "adapter": status["id"],
+        "capture_method": "pillow-imagegrab-window-direct-error",
+        "quiet_capture": {
+            "preferred": quiet_capture_preferred(args, "window"),
+            "foreground_activation_performed": False,
+            "visible_screen_fallback": False,
+            "occlusion_risk_check_applicable": False,
+            "bbox_identity_check_applicable": False,
+            "direct_hwnd_guard_note": "Direct HWND capture failed before pixels were available, so no visible-screen bbox fallback was saved.",
+        },
+        "background_capture": {
+            "mode": background_mode,
+            "direct_hwnd_attempted": True,
+            "direct_hwnd_error": str(direct_hwnd_error or ""),
+            "visible_screen_fallback_allowed": visible_window_fallback_allowed(args),
+            "visible_screen_fallback_used": False,
+            "foreground_activation_performed": False,
+            "occlusion_resistant_current_frame": background_mode == "strict",
+            "strict_unavailable": True,
+            "direct_hwnd_failed_without_image": True,
+            "note": "Strict mode could not acquire direct HWND graphics. No desktop-visible fallback pixels were saved.",
+        },
+        "window": window,
+        "virtual_screen": virtual_screen_rect(),
+        "capture_box": window.get("rect"),
+        "direct_window_content": {"client_low_information": True, "reason": "direct_hwnd_grab_failed"},
+        "render_timing": {
+            "delay_seconds": 0,
+            "wait_for_nonblank": False,
+            "render_guard": normalize_render_guard(args, "window"),
+            "attempts": [],
+            "final_attempt": {},
+            "final_likely_blank": False,
+            "note": "No frame was captured because direct HWND grab failed before pixels were available.",
+        },
+        "compatibility_note": "Some protected, GPU-rendered, WebView, or custom-drawn windows do not expose direct HWND pixels. Use a browser/page route or explicitly choose visible-screen fallback if visible pixels are acceptable.",
+    }
+
+
+def background_capture_unavailable_payload(args, window, status, direct_hwnd_error):
+    source = background_capture_unavailable_source(args, window, status, direct_hwnd_error)
+    guard_args = {**args, "render_guard_confirmed": False}
+    payload = render_guard_warning_payload(source, guard_args)
+    if payload:
+        payload["reason"] = "background_capture_unavailable"
+        payload["warning"] = "Strict background window capture failed before direct HWND pixels were available, so no visible-screen fallback was saved."
+        payload["message"] = "Use a safer route, retry after render wait, or explicitly accept visible-screen fallback if the user allows visible desktop pixels."
+        return payload
+    return {
+        "ok": True,
+        "saved": False,
+        "path": None,
+        "metadata_path": None,
+        "result_state": "decision_required",
+        "reason": "background_capture_unavailable",
+        "issue_ids": ["background_capture_unavailable"],
+        "capture_deferred": True,
+        "requires_decision": True,
+        "requires_confirmation": True,
+        "source": source,
+        "recommended_next": "Retry with background_mode='visible_fallback' only if visible desktop pixels are acceptable, or choose a semantic/browser route.",
+        "privacy": "No screenshot was saved, uploaded, sent to a model, or retried in the background after this decision warning.",
+    }
+
+
 def grab_window_once(args, status, libs, window):
     hwnd = int(window["hwnd"])
     background_mode = normalize_background_mode(args)
@@ -2696,21 +2771,21 @@ def grab_window_once(args, status, libs, window):
                     bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
                     all_screens=True,
                 )
-    except TypeError as exc:
+    except Exception as exc:
         direct_hwnd_error = str(exc)
         rect = window.get("rect") or {}
         if not fallback_allowed:
-            raise RuntimeError(
-                "Strict background window capture is unavailable because this Pillow runtime does not support direct HWND capture; "
-                "retry with background_mode='best_effort' or 'visible_fallback' only if visible-screen fallback is acceptable."
+            raise CaptureDecision(
+                "Strict background window capture is unavailable because direct HWND capture failed.",
+                background_capture_unavailable_payload(args, window, status, direct_hwnd_error),
             )
         if not rect:
             raise
-        capture_method = "pillow-imagegrab-bbox-fallback"
+        capture_method = "pillow-imagegrab-bbox-fallback-after-direct-hwnd-error"
         image = libs["ImageGrab"].grab(
             bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
-                all_screens=True,
-            )
+            all_screens=True,
+        )
     visible_fallback_used = "bbox" in capture_method
     strict_background_unavailable = bool(
         background_mode == "strict"
@@ -3962,14 +4037,14 @@ def window_capture_target_record(window, include_visibility_probe, background_mo
         "quiet_preferred": True,
         "wait_for_nonblank": True,
         "render_guard": "warn",
-        "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"],
+        "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable", "minimized_window", "offscreen_window", "tiny_capture"],
     }
     fallback_args = {
         "hwnd": hwnd,
         "background_mode": "visible_fallback",
         "quiet_preferred": False,
         "render_guard": "warn",
-        "guard_checks": ["unrendered", "occlusion_risk", "bbox_identity_mismatch"],
+        "guard_checks": ["unrendered", "occlusion_risk", "bbox_identity_mismatch", "minimized_window", "offscreen_window", "tiny_capture"],
     }
     record["id"] = f"window:{hwnd}"
     record["type"] = "window"
@@ -4228,7 +4303,7 @@ def sniff_route_candidates(args, level, permissions):
             "priority": 20,
             "authorization_required": "L0_visual_only",
             "status": "available",
-            "args": {"background_mode": "strict", "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"]},
+            "args": {"background_mode": "strict", "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable", "minimized_window", "offscreen_window", "tiny_capture"]},
             "side_effects": ["local_file_write_when_executed"],
             "note": "Use for occlusion-resistant HWND graphics. It is not a DOM/data route.",
         },
@@ -5538,6 +5613,8 @@ def action_capture_window(args):
         return write_json(save_or_warn_capture(image, source, libs, args))
     except WindowMatchError as exc:
         return error(str(exc), **exc.payload)
+    except CaptureDecision as exc:
+        return write_json(exc.payload)
     except Exception as exc:
         return error(str(exc))
 
@@ -5652,6 +5729,8 @@ def action_watch_screen(args):
         )
     except WindowMatchError as exc:
         return error(str(exc), **exc.payload)
+    except CaptureDecision as exc:
+        return write_json(exc.payload)
     except Exception as exc:
         return error(str(exc))
 
