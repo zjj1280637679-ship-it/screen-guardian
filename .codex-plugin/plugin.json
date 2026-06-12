@@ -22,6 +22,7 @@
     "defaultPrompt": [
       "Check Screen Guardian dependencies.",
       "Check Screen Guardian readiness with guardian_check.",
+      "Sniff authorized perception and data routes with guardian_sniff_context.",
       "Use guardian_perceive for a quick local look.",
       "Capture after a short delay or wait for a window to finish rendering.",
       "List reusable guardian capability commands.",

@@ -54,6 +54,7 @@ Prefer the AI-first facade tools before the expert tool surface:
 
 - Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
 - Use `guardian_capture_targets` before capture when the AI should see all available display/window/page targets and choose a route without taking a screenshot.
+- Use `guardian_sniff_context` before acting when the user has granted a scoped authorization envelope and the AI must choose between visual capture, browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry routes. Treat it as route planning only: no screenshot, no browser secret storage read, no database/registry access, and no network request is performed.
 - Use `guardian_perceive` for ordinary visual tasks: quick look, text-heavy screenshot, UI debugging, window capture, short bounded change watch, or hold-file context control.
 - Use `guardian_survey_windows` when the user asks for all program-window status or wants a bounded batch of quiet window captures. Start with `capture_mode="status_only"`; use `capture_mode="hold_file"` when screenshots should be saved for later selective review.
 - `guardian_perceive` defaults to fast direct capture. Use stackable `capture_modes` only when a non-default strategy is needed: `delay`, `wait_render`, `wait_buffer`, and `wait_error`.
@@ -76,6 +77,7 @@ AI-first tools:
 
 - `guardian_check`
 - `guardian_capture_targets`
+- `guardian_sniff_context`
 - `guardian_perceive`
 - `guardian_survey_windows`
 - `guardian_prepare_workflow`
@@ -85,12 +87,15 @@ AI-first tools:
 
 Core tools:
 
+- `guardian_check`
+- `guardian_capture_targets`
+- `guardian_sniff_context`
+- `guardian_perceive`
+- `guardian_survey_windows`
 - `check_dependencies`
 - `list_adapters`
 - `list_displays`
 - `list_windows`
-- `guardian_capture_targets`
-- `guardian_survey_windows`
 - `list_capture_routes`
 - `capture_screen`
 - `capture_region`

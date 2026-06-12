@@ -593,6 +593,80 @@ const tools = [
     },
   },
   {
+    name: "guardian_sniff_context",
+    description: "AI-first authorized route-sniffing layer. Recommends the most efficient safe perception/data routes from declared authorization without capturing pixels, reading secrets, or touching databases/registries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        objective: {
+          type: "string",
+          description: "What the user wants to accomplish. Used only to rank routes; no external action is performed.",
+        },
+        authorization_level: {
+          type: "string",
+          enum: ["L0_visual_only", "L1_current_page_readonly", "L2_page_interaction", "L3_sensitive_action_confirmed", "L4_sensitive_storage_or_data_access"],
+          default: "L0_visual_only",
+          description: "Explicit user authorization envelope. Higher levels only recommend routes; they do not execute sensitive actions.",
+        },
+        declared_permissions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional user-declared permissions such as dom_measure, container_scroll, screenshot, export_download, file_convert, api_readonly, database_readonly, or registry_readonly.",
+        },
+        target: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["unknown", "screen", "window", "browser_tab", "webpage", "file", "folder", "api", "database", "registry"] },
+            title: { type: "string" },
+            url: { type: "string" },
+            selector: { type: "string" },
+            frame_selector: { type: "string" },
+            path: { type: "string" },
+          },
+          additionalProperties: false,
+          description: "Optional current target hint. The sniffer treats it as a hint, not proof of authorization.",
+        },
+        file_paths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional local files to classify by metadata and extension only. Contents are not read.",
+        },
+        url: {
+          type: "string",
+          description: "Optional webpage URL hint for route planning.",
+        },
+        urls: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional webpage URL hints.",
+        },
+        include_capture_targets: {
+          type: "boolean",
+          default: false,
+          description: "When true, include the normal guardian_capture_targets index. This still performs no screenshot.",
+        },
+        include_document_routes: {
+          type: "boolean",
+          default: true,
+          description: "Include document-to-markdown and file-conversion route recommendations for supplied file paths.",
+        },
+        allow_network_file_metadata_probe: {
+          type: "boolean",
+          default: false,
+          description: "Opt in to metadata probing for UNC or file:// paths. Defaults false so route sniffing does not touch potential network paths.",
+        },
+        include_sensitive_routes: {
+          type: "boolean",
+          default: false,
+          description: "Include high-risk API/database/registry route candidates as blocked-or-confirmation-required options.",
+        },
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "guardian_perceive",
     description: "AI-first perception facade for quick screen looks, text/UI captures, window capture, bounded watch, or hold-file context control.",
     inputSchema: {
@@ -1802,6 +1876,7 @@ const tools = [
 const CORE_TOOL_NAMES = new Set([
   "guardian_check",
   "guardian_capture_targets",
+  "guardian_sniff_context",
   "guardian_perceive",
   "guardian_survey_windows",
   "check_dependencies",
@@ -2543,6 +2618,9 @@ async function callTool(name, args) {
   }
   if (name === "guardian_capture_targets") {
     return runPython("guardian_capture_targets", args);
+  }
+  if (name === "guardian_sniff_context") {
+    return runPython("guardian_sniff_context", args);
   }
   if (name === "guardian_perceive") {
     return runPython("guardian_perceive", args);

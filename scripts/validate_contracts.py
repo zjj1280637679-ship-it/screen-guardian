@@ -35,6 +35,7 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 REQUIRED_TOOLS = [
     "guardian_check",
     "guardian_capture_targets",
+    "guardian_sniff_context",
     "guardian_perceive",
     "guardian_survey_windows",
     "guardian_prepare_workflow",
@@ -196,6 +197,10 @@ def read_text(path: Path) -> str:
 
 def read_json(path: Path) -> dict:
     return json.loads(read_text(path))
+
+
+def payload_text(payload: object) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def traceability_claim_blocks(source: str) -> list[tuple[str, str]]:
@@ -373,6 +378,7 @@ def check_static_contracts() -> CheckSet:
     guardian_terms = {
         "guardian_check reports status without capture": ["action_guardian_check", "no screenshot", "recommended_next"],
         "guardian_capture_targets indexes targets before capture": ["action_guardian_capture_targets", "target_index_ready", "capture_performed", "background_mode"],
+        "guardian_sniff_context is authorization scoped route sniffing": ["action_guardian_sniff_context", "AUTHORIZATION_LEVELS", "secret_storage_read", "markitdown_style_optional", "database_or_registry_touched", "allow_network_file_metadata_probe", "blocked_by_authorization_level"],
         "strict background capture avoids bbox fallback": ["normalize_background_mode", "strict", "background_capture_unavailable", "visible_screen_fallback_allowed"],
         "guardian_perceive read_text maps to text preprocess": ['task == "read_text"', '"preprocess"] = "text"', '"analyze"] = True'],
         "guardian_perceive hold_file marks local file only": ['task == "hold_file"', '"context_policy"] = "hold_file"', '"marked_file_only"] = True'],
@@ -470,8 +476,30 @@ def run_mcp_stress(loops: int) -> CheckSet:
         tool_request(3, "guardian_check", {"detail": "short"}),
         tool_request(4, "guardian_list_commands", {"category": "diagnostic"}),
         tool_request(5, "guardian_run_command", {"command_id": "diagnostic.readiness"}),
+        tool_request(
+            6,
+            "guardian_sniff_context",
+            {
+                "authorization_level": "L0_visual_only",
+                "declared_permissions": ["api_readonly", "database_readonly", "registry_readonly"],
+                "target": {"kind": "database"},
+                "file_paths": ["\\\\example.invalid\\share\\source.pdf"],
+            },
+        ),
+        tool_request(
+            7,
+            "guardian_sniff_context",
+            {
+                "authorization_level": "L4_sensitive_storage_or_data_access",
+                "include_sensitive_routes": True,
+                "target": {"kind": "browser_tab", "url": "https://example.com", "selector": ".table"},
+                "include_capture_targets": True,
+                "limit": 1,
+                "include_visibility_probe": False,
+            },
+        ),
     ]
-    request_id = 6
+    request_id = 8
     stress_ids = [f"sg-stress-{i}" for i in range(loops)]
 
     with tempfile.TemporaryDirectory(prefix="screen-guardian-stress-") as tmp:
@@ -701,6 +729,40 @@ def run_mcp_stress(loops: int) -> CheckSet:
         checks.check(initialized_version == package_version, "runtime initialize version matches package version")
         listed_tools = {tool.get("name") for tool in (responses[1].get("result") or {}).get("tools", [])}
         checks.check(set(REQUIRED_TOOLS) <= listed_tools, "runtime tools/list covers required tools")
+
+        responses_by_id = {response.get("id"): response for response in responses}
+        sniff_l0 = parse_tool_payload(responses_by_id.get(6) or {})
+        checks.check(
+            sniff_l0.get("ok") is True
+            and sniff_l0.get("sniff_performed") is True
+            and sniff_l0.get("capture_performed") is False
+            and sniff_l0.get("secret_storage_read") is False
+            and sniff_l0.get("database_or_registry_touched") is False
+            and sniff_l0.get("network_request_performed") is False,
+            "guardian_sniff_context returns no-action contract",
+            payload_text(sniff_l0)[:500],
+        )
+        sniff_l0_routes = sniff_l0.get("route_candidates") or []
+        checks.check(
+            any(route.get("id") == "database_readonly" and route.get("status") == "blocked_by_authorization_level" for route in sniff_l0_routes),
+            "guardian_sniff_context blocks sensitive routes at low authorization",
+            payload_text(sniff_l0)[:500],
+        )
+        sniff_l0_files = sniff_l0.get("file_routes") or []
+        checks.check(
+            bool(sniff_l0_files) and sniff_l0_files[0].get("metadata_probe_skipped") == "potential_network_path" and sniff_l0_files[0].get("content_read") is False,
+            "guardian_sniff_context skips potential network file metadata by default",
+            payload_text(sniff_l0)[:500],
+        )
+        sniff_l4 = parse_tool_payload(responses_by_id.get(7) or {})
+        l4_forbidden = set(((sniff_l4.get("authorization") or {}).get("forbidden_actions") or []))
+        checks.check(
+            {"cookie_read", "localStorage_read", "sessionStorage_read"} <= l4_forbidden
+            and sniff_l4.get("capture_performed") is False
+            and ((sniff_l4.get("capture_targets") or {}).get("pages") or {}).get("reported", 0) >= 1,
+            "guardian_sniff_context preserves L4 browser-storage boundary and target URL indexing",
+            payload_text(sniff_l4)[:500],
+        )
 
         failed_payloads: list[str] = []
         for response in responses:

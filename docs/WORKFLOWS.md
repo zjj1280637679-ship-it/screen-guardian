@@ -2,7 +2,9 @@
 
 Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
 
-For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
+For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
+
+Use `guardian_sniff_context` when the next step might be faster as browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry access. It only ranks routes from declared authorization; it does not capture, navigate, read browser secret storage, query databases, read the registry, upload files, or call models.
 
 After the advanced surface is enabled, use `guardian_prepare_workflow` for local model, decision, monitor, or capture-chain envelopes. For reusable capability workflows, use `guardian_list_commands` and `guardian_run_command`. For emergency user-directed code execution, use `guardian_prepare_exec` and `guardian_run_exec`; raw execution is a disabled-by-default break-glass path, not ordinary automation.
 

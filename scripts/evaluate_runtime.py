@@ -26,12 +26,16 @@ SERVER_PATH = ROOT / "mcp" / "server.cjs"
 CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 EXPECTED_AI_FIRST_TOOLS = {
     "guardian_check",
+    "guardian_capture_targets",
+    "guardian_sniff_context",
     "guardian_perceive",
     "guardian_survey_windows",
     "guardian_prepare_workflow",
 }
 EXPECTED_CORE_TOOLS = {
     "guardian_check",
+    "guardian_capture_targets",
+    "guardian_sniff_context",
     "guardian_perceive",
     "guardian_survey_windows",
     "check_dependencies",
@@ -239,6 +243,31 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "guardian_check returns without capture", ok_transport(guardian_check) and guardian_payload.get("ok") is True, payload_text(guardian_payload)[:500])
             add_check(checks, "guardian_check recommends an explicit next step", bool(guardian_payload.get("recommended_next")), payload_text(guardian_payload)[:500])
             add_check(checks, "guardian_check exposes local cache path", bool(guardian_payload.get("active_cache_dir")), payload_text(guardian_payload)[:500])
+
+            sniff_result = timed_tool(
+                "guardian_sniff_context",
+                {
+                    "authorization_level": "L1_current_page_readonly",
+                    "declared_permissions": ["dom_measure", "container_scroll", "screenshot"],
+                    "target": {"kind": "browser_tab", "url": "https://example.com", "selector": ".table-scroll"},
+                },
+                env,
+            )
+            timings["guardian_sniff_context"] = sniff_result
+            sniff_payload = sniff_result["payload"]
+            add_check(
+                checks,
+                "guardian_sniff_context returns route candidates without acting",
+                ok_transport(sniff_result)
+                and sniff_payload.get("ok") is True
+                and sniff_payload.get("sniff_performed") is True
+                and sniff_payload.get("capture_performed") is False
+                and sniff_payload.get("secret_storage_read") is False
+                and sniff_payload.get("database_or_registry_touched") is False
+                and sniff_payload.get("network_request_performed") is False
+                and bool(sniff_payload.get("route_candidates")),
+                payload_text(sniff_payload)[:500],
+            )
 
             commands_result = timed_tool("guardian_list_commands", {}, env)
             timings["guardian_list_commands"] = commands_result

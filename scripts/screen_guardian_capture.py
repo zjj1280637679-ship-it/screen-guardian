@@ -3995,76 +3995,417 @@ def window_capture_target_record(window, include_visibility_probe, background_mo
 
 def action_guardian_capture_targets(args):
     try:
-        flags = feature_flags(args)
-        include_displays = bool(args.get("include_displays", True))
-        include_windows = bool(args.get("include_windows", True))
-        include_pages = bool(args.get("include_pages", True))
-        include_visibility_probe = bool(args.get("include_visibility_probe", True))
-        background_mode = normalize_background_mode({"background_mode": args.get("background_mode") or "strict"})
-        limit = int(args.get("limit", 50))
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
-        limit = min(limit, 200)
+        return write_json(guardian_capture_targets_payload(args))
+    except Exception as exc:
+        return error(str(exc))
 
-        display_payload = {"available": False, "targets": [], "reason": "not_requested"}
-        if include_displays:
-            if flags.get("screen_capture"):
-                display_payload = display_capture_targets(args)
-            else:
-                display_payload = {"available": False, "targets": [], "reason": "screen_capture_feature_disabled"}
 
-        window_targets = []
-        windows_total = 0
-        if include_windows:
-            if flags.get("window_capture"):
-                windows = filtered_survey_windows(args)
-                windows_total = len(windows)
-                window_targets = [window_capture_target_record(window, include_visibility_probe, background_mode) for window in windows[:limit]]
-            else:
-                window_targets = []
+def guardian_capture_targets_payload(args):
+    flags = feature_flags(args)
+    include_displays = bool(args.get("include_displays", True))
+    include_windows = bool(args.get("include_windows", True))
+    include_pages = bool(args.get("include_pages", True))
+    include_visibility_probe = bool(args.get("include_visibility_probe", True))
+    background_mode = normalize_background_mode({"background_mode": args.get("background_mode") or "strict"})
+    limit = int(args.get("limit", 50))
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    limit = min(limit, 200)
 
-        page_targets = []
-        page_error = ""
-        if include_pages:
-            try:
-                page_targets = normalized_page_targets(args)
-            except Exception as exc:
-                page_error = str(exc)
+    display_payload = {"available": False, "targets": [], "reason": "not_requested"}
+    if include_displays:
+        if flags.get("screen_capture"):
+            display_payload = display_capture_targets(args)
+        else:
+            display_payload = {"available": False, "targets": [], "reason": "screen_capture_feature_disabled"}
 
-        targets = []
-        targets.extend(display_payload.get("targets") or [])
-        targets.extend(window_targets)
-        targets.extend(page_targets)
+    window_targets = []
+    windows_total = 0
+    if include_windows:
+        if flags.get("window_capture"):
+            windows = filtered_survey_windows(args)
+            windows_total = len(windows)
+            window_targets = [window_capture_target_record(window, include_visibility_probe, background_mode) for window in windows[:limit]]
+        else:
+            window_targets = []
+
+    page_targets = []
+    page_error = ""
+    if include_pages:
+        try:
+            page_targets = normalized_page_targets(args)
+        except Exception as exc:
+            page_error = str(exc)
+
+    targets = []
+    targets.extend(display_payload.get("targets") or [])
+    targets.extend(window_targets)
+    targets.extend(page_targets)
+    return {
+        "ok": True,
+        "target_index_ready": True,
+        "capture_performed": False,
+        "targets_total": len(targets),
+        "targets": targets,
+        "displays": display_payload,
+        "windows": {
+            "available": bool(flags.get("window_capture")),
+            "reported": len(window_targets),
+            "total_matching": windows_total,
+            "targets": window_targets,
+        },
+        "pages": {
+            "available": bool(flags.get("webpage_capture")),
+            "reported": len(page_targets),
+            "targets": page_targets,
+            "error": page_error,
+            "current_browser_tab_enumeration": {
+                "available": False,
+                "reason": "The local helper does not inspect the user's browser session or tab list. Pass explicit URLs or use a browser/Chrome connector before calling capture_webpage.",
+            },
+        },
+        "recommended_capture_policy": {
+            "application_window": "Use capture_target.primary first. With the default background_mode='strict', it does not raise the window and does not save visible-screen bbox fallback pixels.",
+            "browser_page": "Use capture_webpage with an explicit URL when page content matters more than the browser chrome.",
+            "desktop": "Use display targets only when visible desktop pixels are desired.",
+        },
+        "privacy": "Target indexing only. No screenshot, audio recording, upload, model call, browser navigation, or background monitor was performed.",
+    }
+
+
+AUTHORIZATION_LEVELS = {
+    "L0_visual_only": {
+        "rank": 0,
+        "label": "Default visual-only",
+        "allowed_actions": ["target_index", "display_list", "window_list", "screenshot", "window_capture", "hold_file"],
+        "forbidden_actions": ["dom_measure", "container_scroll", "form_submit", "export_download", "cookie_read", "localStorage_read", "sessionStorage_read", "database_read", "registry_read", "credential_read"],
+    },
+    "L1_current_page_readonly": {
+        "rank": 1,
+        "label": "Current page readonly",
+        "allowed_actions": ["target_index", "dom_measure", "container_scroll", "screenshot", "window_capture", "browser_session_screenshot", "nested_scroll_longshot", "hold_file"],
+        "forbidden_actions": ["form_submit", "export_download", "cookie_read", "localStorage_read", "sessionStorage_read", "database_read", "registry_read", "credential_read"],
+    },
+    "L2_page_interaction": {
+        "rank": 2,
+        "label": "Page interaction",
+        "allowed_actions": ["target_index", "dom_measure", "container_scroll", "screenshot", "click_filter", "open_dropdown", "pagination", "export_download_after_confirmation", "file_convert", "hold_file"],
+        "forbidden_actions": ["destructive_submit", "permission_change", "purchase", "cookie_read", "localStorage_read", "sessionStorage_read", "database_read", "registry_read", "credential_read"],
+    },
+    "L3_sensitive_action_confirmed": {
+        "rank": 3,
+        "label": "Sensitive action with confirmation",
+        "allowed_actions": ["target_index", "dom_measure", "container_scroll", "screenshot", "export_download_after_confirmation", "api_readonly_after_confirmation", "file_convert", "hold_file"],
+        "forbidden_actions": ["credential_read", "cookie_read", "localStorage_read", "sessionStorage_read", "raw_database_mutation", "raw_registry_mutation"],
+    },
+    "L4_sensitive_storage_or_data_access": {
+        "rank": 4,
+        "label": "Sensitive storage or data access",
+        "allowed_actions": ["target_index", "dom_measure", "container_scroll", "screenshot", "export_download_after_confirmation", "api_readonly_after_confirmation", "database_readonly_after_confirmation", "registry_readonly_after_confirmation", "file_convert", "hold_file"],
+        "forbidden_actions": ["cookie_read", "localStorage_read", "sessionStorage_read", "password_store_read", "credential_read", "credential_printing", "secret_exfiltration", "database_mutation_without_explicit_scope", "registry_mutation_without_explicit_scope"],
+    },
+}
+
+
+def normalize_authorization_level(args):
+    level = str(args.get("authorization_level") or "L0_visual_only").strip()
+    aliases = {
+        "l0": "L0_visual_only",
+        "visual": "L0_visual_only",
+        "visual_only": "L0_visual_only",
+        "l1": "L1_current_page_readonly",
+        "page_readonly": "L1_current_page_readonly",
+        "readonly_page": "L1_current_page_readonly",
+        "l2": "L2_page_interaction",
+        "page_interaction": "L2_page_interaction",
+        "l3": "L3_sensitive_action_confirmed",
+        "confirmed_sensitive": "L3_sensitive_action_confirmed",
+        "l4": "L4_sensitive_storage_or_data_access",
+        "full": "L4_sensitive_storage_or_data_access",
+        "full_rights": "L4_sensitive_storage_or_data_access",
+    }
+    level = aliases.get(level.lower(), level)
+    if level not in AUTHORIZATION_LEVELS:
+        raise ValueError("authorization_level must be L0_visual_only, L1_current_page_readonly, L2_page_interaction, L3_sensitive_action_confirmed, or L4_sensitive_storage_or_data_access")
+    return level
+
+
+def sniff_target_hints(args):
+    target = args.get("target") if isinstance(args.get("target"), dict) else {}
+    hints = []
+    if target:
+        hints.append(
+            {
+                "kind": str(target.get("kind") or "unknown"),
+                "title": str(target.get("title") or ""),
+                "url": str(target.get("url") or ""),
+                "selector": str(target.get("selector") or ""),
+                "frame_selector": str(target.get("frame_selector") or ""),
+                "path": str(target.get("path") or ""),
+            }
+        )
+    if args.get("url"):
+        hints.append({"kind": "webpage", "url": str(args.get("url")), "title": "", "selector": "", "frame_selector": "", "path": ""})
+    for url in args.get("urls") or []:
+        hints.append({"kind": "webpage", "url": str(url), "title": "", "selector": "", "frame_selector": "", "path": ""})
+    for path in args.get("file_paths") or []:
+        hints.append({"kind": "file", "path": str(path), "title": "", "url": "", "selector": "", "frame_selector": ""})
+    return hints
+
+
+def is_potential_network_path(path_text):
+    raw = str(path_text or "").strip()
+    lowered = raw.lower()
+    return raw.startswith("\\\\") or lowered.startswith("//") or lowered.startswith("file://")
+
+
+def file_route_record(path_text, allow_network_metadata_probe=False):
+    raw_path = str(path_text or "")
+    path = Path(raw_path).expanduser()
+    suffix = path.suffix.lower()
+    markdown_like = suffix in {".md", ".markdown", ".txt", ".rst", ".csv", ".tsv", ".json", ".yaml", ".yml", ".xml", ".html", ".htm"}
+    document_like = suffix in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".odt", ".rtf", ".epub"}
+    image_like = suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+    media_like = suffix in {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".mkv", ".webm"}
+    network_path = is_potential_network_path(raw_path)
+    exists = None
+    size_bytes = None
+    metadata_checked = False
+    metadata_probe_skipped = ""
+    if network_path and not allow_network_metadata_probe:
+        metadata_probe_skipped = "potential_network_path"
+    else:
+        metadata_checked = True
+        exists = path.exists()
+        size_bytes = path.stat().st_size if exists and path.is_file() else None
+    record = {
+        "path": str(path),
+        "exists": bool(exists) if exists is not None else None,
+        "suffix": suffix,
+        "size_bytes": size_bytes,
+        "metadata_checked": metadata_checked,
+        "metadata_probe_skipped": metadata_probe_skipped,
+        "potential_network_path": bool(network_path),
+        "content_read": False,
+        "recommended_routes": [],
+    }
+    if markdown_like:
+        record["recommended_routes"].append({"route": "direct_text_or_structured_parse", "priority": 20, "requires_authorization": "file_path_access", "note": "Prefer structured/text parsing for already textual files."})
+    if document_like or image_like:
+        record["recommended_routes"].append({"route": "document_to_markdown", "adapter": "markitdown_style_optional", "priority": 30, "requires_authorization": "file_convert", "note": "A MarkItDown-style adapter can convert authorized local documents/images into markdown-like text, but the core sniffer only reports the route and does not read contents."})
+    if media_like:
+        record["recommended_routes"].append({"route": "media_audio_or_frame_analysis", "priority": 50, "requires_authorization": "media_analysis", "note": "Media routes should stay optional and bounded."})
+    if not record["recommended_routes"]:
+        record["recommended_routes"].append({"route": "unknown_file_hold_file", "priority": 90, "requires_authorization": "file_review", "note": "Unknown suffix. Keep as hold-file until a caller chooses a parser."})
+    return record
+
+
+def sniff_route_candidates(args, level, permissions):
+    rank = AUTHORIZATION_LEVELS[level]["rank"]
+    target = args.get("target") if isinstance(args.get("target"), dict) else {}
+    target_kind = str(target.get("kind") or "unknown").strip().lower()
+    has_url = bool(args.get("url") or args.get("urls") or target.get("url"))
+    has_selector = bool(target.get("selector"))
+    wants_export = "export_download" in permissions
+    wants_api = "api_readonly" in permissions or target_kind == "api"
+    wants_database = "database_readonly" in permissions or target_kind == "database"
+    wants_registry = "registry_readonly" in permissions or target_kind == "registry"
+    wants_sensitive_routes = bool(args.get("include_sensitive_routes") or rank >= 3 or wants_export or wants_api or wants_database or wants_registry)
+    candidates = [
+        {
+            "id": "visual_target_index",
+            "route": "guardian_capture_targets",
+            "priority": 10,
+            "authorization_required": "L0_visual_only",
+            "status": "available",
+            "side_effects": ["window_enumeration_optional"],
+            "forbidden": ["cookie_read", "localStorage_read", "registry_read", "database_read"],
+            "note": "Default first sniff. It gives the AI capture targets before any screenshot.",
+        },
+        {
+            "id": "strict_window_background",
+            "route": "capture_window",
+            "priority": 20,
+            "authorization_required": "L0_visual_only",
+            "status": "available",
+            "args": {"background_mode": "strict", "guard_checks": ["unrendered", "window_client_low_information", "background_capture_unavailable"]},
+            "side_effects": ["local_file_write_when_executed"],
+            "note": "Use for occlusion-resistant HWND graphics. It is not a DOM/data route.",
+        },
+    ]
+    if rank >= 1 or "dom_measure" in permissions or target_kind in ("browser_tab", "webpage"):
+        candidates.append(
+            {
+                "id": "browser_session_readonly",
+                "route": "browser_connector_current_tab",
+                "priority": 5 if target_kind == "browser_tab" else 25,
+                "authorization_required": "L1_current_page_readonly",
+                "status": "available_with_external_connector",
+                "side_effects": ["bounded_dom_measure", "container_scroll_if_executed", "local_screenshot_if_executed"],
+                "forbidden": ["cookie_read", "localStorage_read", "sessionStorage_read", "form_submit"],
+                "note": "Best route for already-authenticated pages. Use current tab state without inspecting browser secrets.",
+            }
+        )
+    if has_url:
+        candidates.append(
+            {
+                "id": "headless_webpage_capture",
+                "route": "capture_webpage",
+                "priority": 35,
+                "authorization_required": "L1_current_page_readonly",
+                "status": "feature_flag_dependent",
+                "side_effects": ["browser_navigation_when_executed", "local_file_write_when_executed"],
+                "note": "Use for explicit URLs when login/session state is not required or a separate browser context is acceptable.",
+            }
+        )
+    if has_selector:
+        candidates.append(
+            {
+                "id": "nested_scroll_longshot",
+                "route": "browser_session_nested_scroll" if target_kind == "browser_tab" else "capture_webpage_scroll_container",
+                "priority": 8 if target_kind == "browser_tab" else 30,
+                "authorization_required": "L1_current_page_readonly",
+                "status": "planned",
+                "side_effects": ["container_scroll_if_executed", "local_file_write_when_executed"],
+                "note": "Use for inner tables, panels, and iframes. Metadata must record selector, segments, and restored scroll state.",
+            }
+        )
+    if rank >= 2 or "file_convert" in permissions:
+        candidates.append(
+            {
+                "id": "document_to_markdown",
+                "route": "markitdown_style_optional_adapter",
+                "priority": 18,
+                "authorization_required": "L2_page_interaction_or_file_convert",
+                "status": "optional_adapter_not_executed",
+                "side_effects": ["local_file_read_when_executed", "local_markdown_output_when_executed"],
+                "forbidden": ["credential_extraction", "hidden_upload"],
+                "note": "For authorized documents, a MarkItDown-style adapter can be faster than screenshots. The sniffer only recommends the route.",
+            }
+        )
+    if target_kind == "folder":
+        candidates.append(
+            {
+                "id": "folder_manifest",
+                "route": "folder_metadata_manifest",
+                "priority": 55,
+                "authorization_required": "explicit_folder_scope",
+                "status": "blocked_until_explicit_folder_scope",
+                "side_effects": ["folder_enumeration_when_executed"],
+                "note": "Folder targets need an explicit path scope and are not enumerated by the sniffer.",
+            }
+        )
+    if wants_sensitive_routes or rank >= 3:
+        candidates.extend(
+            [
+                {
+                    "id": "page_export",
+                    "route": "authorized_export_download",
+                    "priority": 12,
+                    "authorization_required": "L3_sensitive_action_confirmed",
+                    "status": "requires_action_confirmation" if rank >= 3 else "blocked_by_authorization_level",
+                    "side_effects": ["download", "possible_sensitive_data_file"],
+                    "note": "Efficient when the page provides an export button, but requires action-time confirmation.",
+                },
+                {
+                    "id": "api_readonly",
+                    "route": "api_readonly",
+                    "priority": 14,
+                    "authorization_required": "L3_sensitive_action_confirmed",
+                    "status": "requires_explicit_endpoint_and_scope" if rank >= 3 else "blocked_by_authorization_level",
+                    "side_effects": ["network_request_when_executed"],
+                    "note": "Only use with explicit API endpoint, scope, and user confirmation.",
+                },
+            ]
+        )
+    if wants_sensitive_routes or rank >= 4:
+        candidates.extend(
+            [
+                {
+                    "id": "database_readonly",
+                    "route": "database_readonly",
+                    "priority": 16,
+                    "authorization_required": "L4_sensitive_storage_or_data_access",
+                    "status": "blocked_until_explicit_connection_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "side_effects": ["database_query_when_executed"],
+                    "note": "Must be explicit readonly scope. Never infer database access from page visibility alone.",
+                },
+                {
+                    "id": "registry_readonly",
+                    "route": "registry_readonly",
+                    "priority": 60,
+                    "authorization_required": "L4_sensitive_storage_or_data_access",
+                    "status": "blocked_until_explicit_key_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "side_effects": ["registry_read_when_executed"],
+                    "note": "Registry reads are not a normal webpage/file perception route.",
+                },
+            ]
+        )
+    return sorted(candidates, key=lambda item: int(item.get("priority", 100)))
+
+
+def action_guardian_sniff_context(args):
+    try:
+        level = normalize_authorization_level(args)
+        profile = copy.deepcopy(AUTHORIZATION_LEVELS[level])
+        permissions = {str(item).strip().lower() for item in normalized_tags(args.get("declared_permissions"))}
+        file_routes = []
+        allow_network_metadata_probe = bool(args.get("allow_network_file_metadata_probe", False))
+        if bool(args.get("include_document_routes", True)):
+            for path_text in args.get("file_paths") or []:
+                file_routes.append(file_route_record(path_text, allow_network_metadata_probe))
+            target = args.get("target") if isinstance(args.get("target"), dict) else {}
+            if target.get("kind") == "file" and target.get("path"):
+                file_routes.append(file_route_record(target.get("path"), allow_network_metadata_probe))
+
+        capture_index = None
+        if bool(args.get("include_capture_targets", False)):
+            target = args.get("target") if isinstance(args.get("target"), dict) else {}
+            capture_args = {**args, "include_pages": bool(args.get("url") or args.get("urls") or target.get("url")), "include_displays": True, "include_windows": True}
+            if target.get("url") and not capture_args.get("url"):
+                capture_args["url"] = target.get("url")
+            capture_index = guardian_capture_targets_payload(capture_args)
+
+        candidates = sniff_route_candidates(args, level, permissions)
         return write_json(
             {
                 "ok": True,
-                "target_index_ready": True,
+                "sniff_performed": True,
                 "capture_performed": False,
-                "targets_total": len(targets),
-                "targets": targets,
-                "displays": display_payload,
-                "windows": {
-                    "available": bool(flags.get("window_capture")),
-                    "reported": len(window_targets),
-                    "total_matching": windows_total,
-                    "targets": window_targets,
+                "secret_storage_read": False,
+                "database_or_registry_touched": False,
+                "network_request_performed": False,
+                "objective": str(args.get("objective") or ""),
+                "authorization": {
+                    "level": level,
+                    "label": profile["label"],
+                    "declared_permissions": sorted(permissions),
+                    "recommendable_actions": profile["allowed_actions"],
+                    "allowed_actions": profile["allowed_actions"],
+                    "performed_actions": [],
+                    "forbidden_actions": profile["forbidden_actions"],
+                    "note": "Authorization is scoped by action and data type. allowed_actions are recommendable actions for later tools; guardian_sniff_context itself performs no route actions.",
                 },
-                "pages": {
-                    "available": bool(flags.get("webpage_capture")),
-                    "reported": len(page_targets),
-                    "targets": page_targets,
-                    "error": page_error,
-                    "current_browser_tab_enumeration": {
-                        "available": False,
-                        "reason": "The local helper does not inspect the user's browser session or tab list. Pass explicit URLs or use a browser/Chrome connector before calling capture_webpage.",
-                    },
+                "target_hints": sniff_target_hints(args),
+                "route_candidates": candidates,
+                "file_routes": file_routes,
+                "capture_targets": capture_index,
+                "recommended_order": [item["id"] for item in candidates[:5]],
+                "sensitive_boundaries": {
+                    "never_by_default": ["cookie_read", "localStorage_read", "sessionStorage_read", "password_store_read", "credential_printing", "secret_exfiltration"],
+                    "requires_explicit_scope": ["api_readonly", "database_readonly", "registry_readonly", "export_download"],
+                    "markitdown_style_route": "Allowed only for user-authorized local files or downloads; it is a converter route, not a credential or browser-session route.",
+                    "file_metadata_probe": "Local path metadata may be checked for supplied file_paths. Potential network paths are skipped unless allow_network_file_metadata_probe=true.",
                 },
-                "recommended_capture_policy": {
-                    "application_window": "Use capture_target.primary first. With the default background_mode='strict', it does not raise the window and does not save visible-screen bbox fallback pixels.",
-                    "browser_page": "Use capture_webpage with an explicit URL when page content matters more than the browser chrome.",
-                    "desktop": "Use display targets only when visible desktop pixels are desired.",
+                "metadata_contract": {
+                    "authorization_level": level,
+                    "recommendable_actions": profile["allowed_actions"],
+                    "performed_actions": [],
+                    "forbidden_actions": profile["forbidden_actions"],
+                    "restored_state_required": True,
+                    "route_must_not_be_mislabelled": ["browser_session_capture_as_headless_url_capture", "visible_bbox_as_strict_background_capture", "document_conversion_as_cookie_access"],
                 },
-                "privacy": "Target indexing only. No screenshot, audio recording, upload, model call, browser navigation, or background monitor was performed.",
+                "privacy": "Route sniffing only. No screenshot, page navigation, browser storage read, database query, registry read, upload, model call, or background monitor was performed.",
             }
         )
     except Exception as exc:
@@ -5402,6 +5743,7 @@ def action_clear_cache(args):
 ACTIONS = {
     "guardian_check": action_guardian_check,
     "guardian_capture_targets": action_guardian_capture_targets,
+    "guardian_sniff_context": action_guardian_sniff_context,
     "guardian_perceive": action_guardian_perceive,
     "guardian_survey_windows": action_guardian_survey_windows,
     "guardian_prepare_workflow": action_guardian_prepare_workflow,
