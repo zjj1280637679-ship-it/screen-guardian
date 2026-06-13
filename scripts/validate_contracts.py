@@ -27,6 +27,9 @@ MANIFEST_PATH = ROOT / ".codex-plugin" / "plugin.json"
 PACKAGE_PATH = ROOT / "package.json"
 MCP_PATH = ROOT / ".mcp.json"
 TEXT_ENCODING_PATH = ROOT / "scripts" / "check_text_encoding.py"
+TARGET_RANGE_PATH = ROOT / "scripts" / "target_range_server.py"
+TARGET_RANGE_DOC_PATH = ROOT / "docs" / "TARGET_RANGE.md"
+TARGET_RANGE_SCENARIO_PATH = ROOT / "scenario-cards" / "advanced" / "local-target-range.md"
 TRACEABILITY_MAP_PATH = ROOT / "traceability" / "whitepaper-scenario-map.yml"
 MAX_STRESS_LOOPS = 200
 CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
@@ -176,6 +179,7 @@ SCENARIO_COVERAGE = {
     "video/audio extraction": ["video", "extract_audio_track", "ffmpeg"],
     "decision routing": ["decision", "scoring function", "codex subagent"],
     "bounded watch": ["bounded watch", "watch_screen", "change-triggered"],
+    "local target range": ["target range", "nested-docs", "token-console", "delayed-render", "shadow-settings"],
 }
 
 
@@ -339,6 +343,16 @@ def check_static_contracts() -> CheckSet:
         bool(server_version) and server_version.group(1) == package["version"],
         "server version matches package version",
     )
+    scripts = package.get("scripts") or {}
+    checks.check(scripts.get("target-range") == "python ./scripts/target_range_server.py", "target range npm script is registered")
+    checks.check(scripts.get("target-range:check") == "python ./scripts/target_range_server.py --self-test", "target range self-test npm script is registered")
+    checks.check(TARGET_RANGE_PATH.exists(), "target range server script exists")
+    checks.check(TARGET_RANGE_DOC_PATH.exists(), "target range docs exist")
+    checks.check(TARGET_RANGE_SCENARIO_PATH.exists(), "target range scenario card exists")
+    if TARGET_RANGE_PATH.exists():
+        target_range_source = read_text(TARGET_RANGE_PATH)
+        target_terms = ["nested-docs", "token-console", "delayed-render", "empty-doc", "virtual-table", "iframe-scroll", "overlay-obstruction", "shadow-settings", "manifest.json", "observation"]
+        checks.check(all(term in target_range_source for term in target_terms), "target range covers difficult browser/page states")
     mcp_server = mcp.get("mcpServers", {}).get("screen_guardian")
     checks.check(bool(mcp_server), "MCP config exposes screen_guardian server")
     if mcp_server:

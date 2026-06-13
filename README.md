@@ -325,6 +325,14 @@ You can smoke-test the MCP server with newline-delimited JSON-RPC:
 '@ | node .\mcp\server.cjs
 ```
 
+For browser/page perception tests without real accounts, start the local target range:
+
+```powershell
+npm run target-range
+```
+
+Then open `http://127.0.0.1:8765`. The target range includes nested-scroll docs, token-console danger zones, delayed rendering, empty articles, virtualized tables, iframes, overlays, and Shadow DOM settings. Run `npm run target-range:check` for a no-browser fixture self-test. See [docs/TARGET_RANGE.md](docs/TARGET_RANGE.md).
+
 ## Validation
 
 Run static contract validation:

@@ -5168,7 +5168,7 @@ def page_text_corpus(page):
     for key in ("title", "label", "url", "text", "content", "markdown", "description"):
         if page.get(key):
             fields.append(str(page.get(key)))
-    for key in ("headings", "blocks", "bodyCandidates", "body_candidates", "rows", "tables", "links", "controls", "forms", "sections", "articles"):
+    for key in ("headings", "blocks", "bodyCandidates", "body_candidates", "rows", "tables", "links", "controls", "forms", "sections", "articles", "frames", "overlays", "shadow_roots", "render"):
         if page.get(key):
             fields.extend(flatten_text_fragments(page.get(key), limit=220))
     return [compact_text(item, 1200) for item in fields if compact_text(item)]
@@ -5297,6 +5297,45 @@ def build_content_region_handles(page, page_handle_id):
                 "state": "valuable_object",
                 "row_count": len(rows) + sum(len(table) for table in tables if isinstance(table, list)),
                 "reason": "Rows/tables often hold settings, token summaries, quotas, prices, or model group facts.",
+            }
+        )
+    frames = page.get("frames") or []
+    iframe_count = int(first_number(page.get("iframe_count"), page.get("iframeCount"), default=0))
+    if frames or iframe_count:
+        handles.append(
+            {
+                "id": f"{page_handle_id}:region:frames",
+                "page_handle": page_handle_id,
+                "type": "frame_region",
+                "state": "valuable_object",
+                "frame_count": len(frames) or iframe_count,
+                "reason": "Frame content may have a separate DOM and scroll root that needs a frame-scoped observation.",
+            }
+        )
+    shadow_roots = page.get("shadow_roots") or page.get("shadowRoots") or []
+    if shadow_roots:
+        handles.append(
+            {
+                "id": f"{page_handle_id}:region:shadow_roots",
+                "page_handle": page_handle_id,
+                "type": "shadow_dom_region",
+                "state": "valuable_object",
+                "shadow_root_count": len(shadow_roots),
+                "reason": "Settings may live under Shadow DOM and require explicit shadow-root traversal by the caller.",
+            }
+        )
+    overlays = page.get("overlays") or []
+    if overlays:
+        handles.append(
+            {
+                "id": f"{page_handle_id}:region:overlays",
+                "page_handle": page_handle_id,
+                "type": "overlay_region",
+                "state": "dangerous_object",
+                "danger_type": "page_obstruction_or_modal_action",
+                "overlay_count": len(overlays),
+                "reason": "Overlay or modal state can hide answer-bearing content or expose risky confirmation actions.",
+                "default_policy": "separate_overlay_text_from_background_content",
             }
         )
     return handles
@@ -5482,6 +5521,7 @@ def action_guardian_extract_page_facts(args):
             region_handles = build_content_region_handles(page, page_handle_id)
             object_handles.extend(region_handles)
             valuable_objects.extend([item for item in region_handles if item.get("state") == "valuable_object"])
+            dangerous_objects.extend([item for item in region_handles if item.get("state") == "dangerous_object"])
             page_facts, page_valuable, page_dangerous, page_neutral, page_evidence = extract_structured_page_facts(page, page_handle_id, intent)
             merge_fact_sets(facts, page_facts)
             valuable_objects.extend(page_valuable)
