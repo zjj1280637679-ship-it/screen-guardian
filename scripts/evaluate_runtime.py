@@ -27,6 +27,7 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 EXPECTED_AI_FIRST_TOOLS = {
     "guardian_check",
     "guardian_radar",
+    "guardian_extract_page_facts",
     "guardian_capture_targets",
     "guardian_sniff_context",
     "guardian_perceive",
@@ -36,6 +37,7 @@ EXPECTED_AI_FIRST_TOOLS = {
 EXPECTED_CORE_TOOLS = {
     "guardian_check",
     "guardian_radar",
+    "guardian_extract_page_facts",
     "guardian_capture_targets",
     "guardian_sniff_context",
     "guardian_perceive",
@@ -282,6 +284,7 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 checks,
                 "guardian_check separates core and advanced AI-first tools",
                 "guardian_radar" in set(guardian_payload.get("ai_first_tools") or [])
+                and "guardian_extract_page_facts" in set(guardian_payload.get("ai_first_tools") or [])
                 and "guardian_sniff_context" in set(guardian_payload.get("ai_first_tools") or [])
                 and "guardian_prepare_workflow" not in set(guardian_payload.get("ai_first_tools") or [])
                 and "guardian_prepare_workflow" in set(guardian_payload.get("advanced_ai_first_tools") or []),
@@ -330,6 +333,68 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 and radar_pages[0].get("page_state") == "scroll_container_required"
                 and radar_pages[0].get("recommended_route") == "browser_session_nested_scroll",
                 payload_text(radar_payload)[:500],
+            )
+
+            facts_result = timed_tool(
+                "guardian_extract_page_facts",
+                {
+                    "authorization_level": "L1_current_page_readonly",
+                    "declared_permissions": ["dom_measure", "table_read", "form_metadata_read"],
+                    "intent": "api_settings",
+                    "current_pages": [
+                        {
+                            "title": "syapi api settings",
+                            "url": "https://syapi.apifox.cn/doc-8039103",
+                            "source": "browser_pages",
+                            "viewport": {"width": 1920, "height": 863},
+                            "documentSize": {"scrollWidth": 1920, "scrollHeight": 863},
+                            "scrollables": [
+                                {
+                                    "selectorHint": "div#main-scroll-container",
+                                    "clientWidth": 1910,
+                                    "clientHeight": 863,
+                                    "scrollWidth": 1910,
+                                    "scrollHeight": 2125,
+                                }
+                            ],
+                            "headings": ["API quick start", "Configuration steps"],
+                            "blocks": [
+                                "Use https://u1.syapi.cn https://u1.syapi.cn/v1 https://u1.syapi.cn/v1/chat/completions",
+                                "{\"base_url\":\"https://u1.syapi.cn\",\"api_key\":\"your_token_here\",\"model\":\"selected_model_name\"}",
+                                "Quota lookup supports current balance, usage detail, and consumption records.",
+                            ],
+                            "rows": [
+                                "Name Status Group Smart route Key Available models IP limit Created Expires",
+                                "zjj initial token enabled unlimited quota user group success-rate-first unlimited unlimited 2026-05-28 12:00:57 2026-07-02 18:18:44",
+                            ],
+                            "controls": [
+                                {"tag": "input", "type": "text", "text": "API key"},
+                                {"tag": "button", "text": "export all tokens"},
+                                {"tag": "button", "text": "query"},
+                            ],
+                        }
+                    ],
+                },
+                env,
+            )
+            timings["guardian_extract_page_facts"] = facts_result
+            facts_payload = facts_result["payload"]
+            facts = facts_payload.get("facts") or {}
+            dangerous = ((facts_payload.get("handles") or {}).get("dangerous_objects") or [])
+            add_check(
+                checks,
+                "guardian_extract_page_facts classifies valuable dangerous facts without acting",
+                ok_transport(facts_result)
+                and facts_payload.get("ok") is True
+                and facts_payload.get("fact_extraction_performed") is True
+                and facts_payload.get("capture_performed") is False
+                and facts_payload.get("secret_storage_read") is False
+                and (facts_payload.get("state_machine") or {}).get("current_state") == "redacted_answer_ready"
+                and bool(facts.get("base_url") or facts.get("endpoint_url"))
+                and bool(facts.get("token_rows"))
+                and bool(facts.get("config_fields"))
+                and bool(dangerous),
+                payload_text(facts_payload)[:500],
             )
 
             sniff_result = timed_tool(

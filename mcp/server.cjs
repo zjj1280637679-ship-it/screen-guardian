@@ -643,6 +643,104 @@ const tools = [
     },
   },
   {
+    name: "guardian_extract_page_facts",
+    description: "AI-first readonly page object/fact extractor. Turns caller-supplied page observations into valuable object handles, dangerous object handles, and redacted structured facts before any screenshot, navigation, browser-storage read, or data-layer access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        objective: {
+          type: "string",
+          description: "What the user wants to learn. Used only to label extraction intent; no page action is performed.",
+        },
+        intent: {
+          type: "string",
+          enum: ["general", "api_settings", "credentials_console", "docs", "pricing", "model_catalog"],
+          default: "general",
+        },
+        authorization_level: {
+          type: "string",
+          enum: ["L0_visual_only", "L1_current_page_readonly", "L2_page_interaction", "L3_sensitive_action_confirmed", "L4_sensitive_storage_or_data_access"],
+          default: "L1_current_page_readonly",
+        },
+        declared_permissions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional scoped permission words such as dom_measure, container_scroll, screenshot, table_read, or form_metadata_read. This tool performs none of those actions itself.",
+        },
+        privacy_mode: {
+          type: "string",
+          enum: ["redact_secrets", "metadata_only"],
+          default: "redact_secrets",
+          description: "redact_secrets is the normal mode. Raw API keys, bearer tokens, and secret-like values must not be emitted.",
+        },
+        target: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["unknown", "browser_tab", "webpage", "console", "document"] },
+            title: { type: "string" },
+            url: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        current_pages: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Readonly page observations from a browser connector: title/url, viewport/document size, scrollables, headings, links, article text, blocks, tables, rows, controls, or forms. Do not include cookies, localStorage, sessionStorage, passwords, or raw secrets.",
+        },
+        page_observations: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Alias for current_pages.",
+        },
+        documents: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Readonly extracted article/document snippets supplied by the caller.",
+        },
+        extracted_pages: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Readonly extracted page snippets supplied by the caller.",
+        },
+        article_pages: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Readonly article-like page snippets supplied by the caller.",
+        },
+        console_pages: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Readonly console/admin page snippets supplied by the caller. Sensitive values should already be omitted or masked; this tool redacts again.",
+        },
+        text: {
+          type: "string",
+          description: "Optional inline readonly text observation.",
+        },
+        title: {
+          type: "string",
+        },
+        url: {
+          type: "string",
+        },
+        blocks: {
+          type: "array",
+          items: { type: "string" },
+        },
+        rows: {
+          type: "array",
+          items: { type: "string" },
+        },
+        controls: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+        },
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "guardian_capture_targets",
     description: "AI-first pre-capture target index. Lists displays, capturable application windows, and optional webpage capture targets with recommended quiet/background capture arguments before any screenshot is taken.",
     inputSchema: {
@@ -2152,6 +2250,7 @@ const tools = [
 const CORE_TOOL_NAMES = new Set([
   "guardian_check",
   "guardian_radar",
+  "guardian_extract_page_facts",
   "guardian_capture_targets",
   "guardian_sniff_context",
   "guardian_perceive",
@@ -2896,6 +2995,9 @@ async function callTool(name, args) {
   }
   if (name === "guardian_radar") {
     return runPython("guardian_radar", args);
+  }
+  if (name === "guardian_extract_page_facts") {
+    return runPython("guardian_extract_page_facts", args);
   }
   if (name === "guardian_capture_targets") {
     return runPython("guardian_capture_targets", args);

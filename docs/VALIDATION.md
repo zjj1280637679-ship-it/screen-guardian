@@ -18,6 +18,7 @@ This verifies:
 - every mapped Python action exists
 - AI-first facade tools are wired and map to the intended status, perception, and envelope paths
 - the passive radar can classify page/window state before capture without reading browser storage or touching data layers
+- the page fact extractor can mark valuable objects, dangerous secret/action objects, and redacted structured facts from caller-supplied readonly observations
 - capability-runtime tools are wired, registered commands map through the command catalog, and break-glass execution is feature-flagged plus confirmation-gated
 - every feature flag has a feature-catalog entry
 - design principles are represented in docs and skill guidance

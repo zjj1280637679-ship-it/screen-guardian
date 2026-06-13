@@ -18,6 +18,7 @@ claims:
     acceptance_conditions:
       - "The AI can inspect target metadata before choosing an expensive capture route."
       - "The passive radar can classify page and window state into route cards before screenshots or sensitive reads."
+      - "The page fact extractor can classify valuable objects, dangerous objects, and redacted structured facts from caller-supplied readonly observations."
       - "Large surveys expose counts and truncation instead of implying complete coverage."
     side_effects:
       - "none for status-only index"
@@ -27,6 +28,9 @@ claims:
     receipt_fields:
       - radar_performed
       - radar_cards
+      - fact_extraction_performed
+      - dangerous_objects
+      - redacted_answer_ready
       - ok
       - saved
       - result_state

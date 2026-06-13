@@ -4220,7 +4220,7 @@ def action_guardian_check(args):
         "extra_output_dirs": serialize_paths(mirrors),
         "key_capabilities": key_capability_summary(flags),
         "recommended_next": recommended_next,
-        "ai_first_tools": ["guardian_check", "guardian_radar", "guardian_capture_targets", "guardian_sniff_context", "guardian_perceive", "guardian_survey_windows"],
+        "ai_first_tools": ["guardian_check", "guardian_radar", "guardian_extract_page_facts", "guardian_capture_targets", "guardian_sniff_context", "guardian_perceive", "guardian_survey_windows"],
         "advanced_ai_first_tools": ["guardian_prepare_workflow", "guardian_list_commands", "guardian_run_command", "list_capture_routes", "prepare_capture_chain"],
         "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
     }
@@ -5056,6 +5056,530 @@ def action_guardian_radar(args):
                     "success_requires": ["supported_answer", "saved_evidence_or_structured_metadata", "forbidden_side_effects_false"],
                 },
                 "privacy": "Passive radar only. No screenshot, page navigation, browser storage read, database query, registry read, upload, model call, command, or background monitor was performed.",
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
+
+
+SECRET_VALUE_PATTERNS = [
+    re.compile(r"(authorization\s*[:=]\s*bearer\s+)([A-Za-z0-9._\-]{8,})", re.I),
+    re.compile("((?:api[-_ ]?key|token|secret|\\u5bc6\\u94a5|\\u4ee4\\u724c)\\s*[:=]\\s*)([A-Za-z0-9._\\-]{8,})", re.I),
+    re.compile(r"\b(sk-[A-Za-z0-9._\-]{8,})\b"),
+    re.compile(r"\b([A-Za-z0-9_\-]{24,}\.[A-Za-z0-9_\-]{12,}\.[A-Za-z0-9_\-]{12,})\b"),
+]
+
+
+def compact_text(value, limit=800):
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if limit and len(text) > limit:
+        return text[: max(0, limit - 3)] + "..."
+    return text
+
+
+def redact_secret_text(text):
+    redacted = compact_text(text, limit=0)
+    for pattern in SECRET_VALUE_PATTERNS:
+        def replace(match):
+            if len(match.groups()) >= 2:
+                return f"{match.group(1)}***"
+            value = match.group(1)
+            if value.lower().startswith("sk-"):
+                return "sk-***"
+            return "***SECRET***"
+
+        redacted = pattern.sub(replace, redacted)
+    return redacted
+
+
+def text_has_any(text, words):
+    lowered = str(text or "").lower()
+    return any(str(word).lower() in lowered for word in words)
+
+
+def flatten_text_fragments(value, limit=400, _depth=0):
+    if limit <= 0 or _depth > 5:
+        return []
+    fragments = []
+    if isinstance(value, str):
+        text = compact_text(value, 1200)
+        if text:
+            fragments.append(text)
+        return fragments[:limit]
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, list):
+        for item in value:
+            fragments.extend(flatten_text_fragments(item, limit - len(fragments), _depth + 1))
+            if len(fragments) >= limit:
+                break
+        return fragments[:limit]
+    if isinstance(value, dict):
+        skip_keys = {"rect", "viewport", "documentSize", "document_size", "scrollables", "scroll_containers"}
+        for key, item in value.items():
+            if key in skip_keys:
+                continue
+            fragments.extend(flatten_text_fragments(item, limit - len(fragments), _depth + 1))
+            if len(fragments) >= limit:
+                break
+    return fragments[:limit]
+
+
+def page_fact_records(args):
+    records = []
+    records.extend(page_observation_records(args))
+    for key in ("documents", "extracted_pages", "article_pages", "console_pages", "fact_pages"):
+        for page in args.get(key) or []:
+            if isinstance(page, dict):
+                merged = dict(page)
+                merged.setdefault("source", key)
+                records.append(merged)
+    if args.get("text") or args.get("blocks") or args.get("rows") or args.get("controls"):
+        records.append(
+            {
+                "source": "inline_page",
+                "title": args.get("title") or "inline page observation",
+                "url": args.get("url"),
+                "text": args.get("text"),
+                "blocks": args.get("blocks") or [],
+                "rows": args.get("rows") or [],
+                "controls": args.get("controls") or [],
+            }
+        )
+
+    deduped = []
+    seen = set()
+    for record in records:
+        key = (
+            str(record.get("url") or ""),
+            str(record.get("title") or record.get("label") or ""),
+            str(record.get("source") or ""),
+            compact_text(record.get("text") or record.get("content") or "", 80),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def page_text_corpus(page):
+    fields = []
+    for key in ("title", "label", "url", "text", "content", "markdown", "description"):
+        if page.get(key):
+            fields.append(str(page.get(key)))
+    for key in ("headings", "blocks", "bodyCandidates", "body_candidates", "rows", "tables", "links", "controls", "forms", "sections", "articles"):
+        if page.get(key):
+            fields.extend(flatten_text_fragments(page.get(key), limit=220))
+    return [compact_text(item, 1200) for item in fields if compact_text(item)]
+
+
+def extract_urls_from_texts(texts):
+    urls = []
+    seen = set()
+    for text in texts:
+        for match in re.findall(r"https?://[^\s\"'<>),;]+", str(text or "")):
+            url = match.rstrip(".,;:")
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
+
+
+def classify_url_fact(url, contexts):
+    lower = url.lower()
+    joined = " ".join(contexts).lower()
+    if "\u989d\u5ea6" in joined or "quota" in joined or "\u4f59\u989d" in joined or "\u67e5\u8be2" in joined:
+        return "quota_url"
+    if "/chat/completions" in lower or "/v1/" in lower or lower.endswith("/v1"):
+        return "endpoint_url"
+    if re.match(r"https?://[^/]+/?$", url):
+        return "base_url"
+    return "service_url"
+
+
+def add_fact(facts, fact_type, value, evidence=None):
+    if not value:
+        return
+    value = redact_secret_text(value)
+    bucket = facts.setdefault(fact_type, [])
+    key = value.lower()
+    if any(str(item.get("value", "")).lower() == key for item in bucket):
+        return
+    item = {"value": value}
+    if evidence:
+        item["evidence"] = evidence
+    bucket.append(item)
+
+
+def classify_control_object(control, page_handle_id, index):
+    text = compact_text(control.get("text") or control.get("label") or control.get("ariaLabel") or control.get("placeholder") or control.get("value") or "", 160)
+    tag = str(control.get("tag") or control.get("tagName") or "").lower()
+    control_type = str(control.get("type") or "").lower()
+    role = str(control.get("role") or "").lower()
+    joined = f"{text} {tag} {control_type} {role}"
+    object_id = f"{page_handle_id}:control:{index}"
+    base = {
+        "id": object_id,
+        "page_handle": page_handle_id,
+        "type": "control",
+        "label": redact_secret_text(text),
+        "tag": tag,
+        "control_type": control_type,
+        "role": role,
+    }
+    dangerous_words = ["\u5220\u9664", "\u5bfc\u51fa", "\u590d\u5236", "copy token", "delete", "export", "\u6279\u91cf\u4fee\u6539", "\u6dfb\u52a0\u4ee4\u724c", "\u7f16\u8f91"]
+    secret_words = ["\u5bc6\u94a5", "\u4ee4\u724c", "token", "api key", "apikey", "secret", "authorization", "bearer"]
+    if text_has_any(joined, dangerous_words):
+        return {
+            **base,
+            "state": "dangerous_object",
+            "danger_type": "side_effect_or_bulk_action",
+            "reason": "Control may copy, export, modify, or delete sensitive data.",
+            "default_policy": "do_not_click_without_action_confirmation",
+        }
+    if text_has_any(joined, secret_words):
+        return {
+            **base,
+            "state": "dangerous_object",
+            "danger_type": "secret_surface",
+            "reason": "Control appears to expose or operate on API keys/tokens.",
+            "default_policy": "redact_or_do_not_read_full_value",
+        }
+    return {
+        **base,
+        "state": "valuable_object" if text_has_any(joined, ["\u67e5\u8be2", "\u641c\u7d22", "\u914d\u7f6e", "\u8bbe\u7f6e", "\u6a21\u578b", "\u5206\u7ec4"]) else "neutral_object",
+        "reason": "Readonly control metadata may help orient page structure.",
+    }
+
+
+def build_content_region_handles(page, page_handle_id):
+    handles = []
+    scrollables = page_scrollable_records(page)
+    for index, scrollable in enumerate(scrollables):
+        if scrollable.get("significant"):
+            handles.append(
+                {
+                    "id": f"{page_handle_id}:scroll:{index}",
+                    "page_handle": page_handle_id,
+                    "type": "scroll_container",
+                    "state": "valuable_object",
+                    "semantic_role": "main_scroll_candidate" if index == 0 else "nested_scroll_candidate",
+                    "selector": scrollable.get("selector"),
+                    "client_height": scrollable.get("client_height"),
+                    "scroll_height": scrollable.get("scroll_height"),
+                    "reason": "Scrollable area contains hidden content and should be handled as an object before capture or extraction.",
+                }
+            )
+    headings = [compact_text(item, 120) for item in flatten_text_fragments(page.get("headings") or [], limit=60)]
+    article_text = compact_text(page.get("text") or page.get("content") or page.get("markdown") or " ".join(flatten_text_fragments(page.get("blocks") or [], limit=80)), 1200)
+    if headings or article_text:
+        handles.append(
+            {
+                "id": f"{page_handle_id}:region:article",
+                "page_handle": page_handle_id,
+                "type": "content_region",
+                "state": "valuable_object",
+                "semantic_role": "main_article_or_content",
+                "headings": headings[:20],
+                "text_preview": redact_secret_text(article_text[:400]),
+                "reason": "Main headings/body blocks are likely answer-bearing content.",
+            }
+        )
+    tables = page.get("tables") or []
+    rows = page.get("rows") or []
+    if tables or rows:
+        handles.append(
+            {
+                "id": f"{page_handle_id}:region:table",
+                "page_handle": page_handle_id,
+                "type": "table_or_rows",
+                "state": "valuable_object",
+                "row_count": len(rows) + sum(len(table) for table in tables if isinstance(table, list)),
+                "reason": "Rows/tables often hold settings, token summaries, quotas, prices, or model group facts.",
+            }
+        )
+    return handles
+
+
+def extract_structured_page_facts(page, page_handle_id, intent):
+    facts = {}
+    valuable = []
+    dangerous = []
+    neutral = []
+    evidence = []
+    texts = page_text_corpus(page)
+    combined = "\n".join(texts)
+    redacted_combined = redact_secret_text(combined)
+
+    urls = extract_urls_from_texts(texts)
+    for url in urls:
+        contexts = [text for text in texts if url in text][:3] or [combined[:400]]
+        add_fact(facts, classify_url_fact(url, contexts), url, {"page_handle": page_handle_id, "source": "url_pattern"})
+
+    if text_has_any(combined, ["base_url", "api_key", "model", "\u63a5\u53e3\u914d\u7f6e", "\u914d\u7f6e\u793a\u4f8b"]):
+        for field in ("base_url", "api_key", "model"):
+            if field in combined.lower():
+                add_fact(facts, "config_fields", field, {"page_handle": page_handle_id, "source": "config_keyword"})
+        valuable.append(
+            {
+                "id": f"{page_handle_id}:fact:api_settings",
+                "page_handle": page_handle_id,
+                "type": "fact_cluster",
+                "state": "valuable_object",
+                "semantic_role": "api_settings",
+                "reason": "Text contains API client configuration fields or examples.",
+            }
+        )
+
+    controls = page.get("controls") or []
+    for index, control in enumerate(controls):
+        if isinstance(control, dict):
+            classified = classify_control_object(control, page_handle_id, index)
+            if classified.get("state") == "dangerous_object":
+                dangerous.append(classified)
+            elif classified.get("state") == "valuable_object":
+                valuable.append(classified)
+            else:
+                neutral.append(classified)
+
+    row_texts = []
+    row_texts.extend(flatten_text_fragments(page.get("rows") or [], limit=120))
+    for table in page.get("tables") or []:
+        row_texts.extend(flatten_text_fragments(table, limit=120))
+    for index, row in enumerate(row_texts):
+        row_text = compact_text(row, 800)
+        row_lower = row_text.lower()
+        if text_has_any(row_text, ["\u4ee4\u724c", "token", "api key", "\u5bc6\u94a5", "\u5df2\u542f\u7528", "\u65e0\u9650\u989d\u5ea6", "\u5206\u7ec4", "\u667a\u80fd\u8def\u7531"]):
+            add_fact(facts, "token_rows", row_text, {"page_handle": page_handle_id, "source": "row_text", "row_index": index})
+            valuable.append(
+                {
+                    "id": f"{page_handle_id}:row:{index}",
+                    "page_handle": page_handle_id,
+                    "type": "table_row",
+                    "state": "valuable_object",
+                    "semantic_role": "token_or_access_summary",
+                    "text": redact_secret_text(row_text),
+                    "reason": "Row appears to summarize token/access settings.",
+                }
+            )
+            if text_has_any(row_text, ["\u5bc6\u94a5", "token", "\u4ee4\u724c"]):
+                dangerous.append(
+                    {
+                        "id": f"{page_handle_id}:row:{index}:secret",
+                        "page_handle": page_handle_id,
+                        "type": "sensitive_row",
+                        "state": "dangerous_object",
+                        "danger_type": "secret_or_access_control",
+                        "text": redact_secret_text(row_text),
+                        "default_policy": "redact_secret_values_and_avoid_copy_export_actions",
+                    }
+                )
+        if "\u8d39\u7387" in row_text or re.search(r"\*\s*\d", row_text):
+            add_fact(facts, "model_group_rows", row_text, {"page_handle": page_handle_id, "source": "rate_or_group_row", "row_index": index})
+        if "\u989d\u5ea6" in row_text or "\u4f59\u989d" in row_text or "\u6d88\u8d39\u8bb0\u5f55" in row_text:
+            add_fact(facts, "quota_facts", row_text, {"page_handle": page_handle_id, "source": "quota_row_or_text", "row_index": index})
+        if any(secret_pattern.search(row_lower) for secret_pattern in SECRET_VALUE_PATTERNS):
+            dangerous.append(
+                {
+                    "id": f"{page_handle_id}:secret-pattern:{index}",
+                    "page_handle": page_handle_id,
+                    "type": "secret_pattern",
+                    "state": "dangerous_object",
+                    "danger_type": "secret_value",
+                    "text": redact_secret_text(row_text),
+                    "default_policy": "do_not_emit_raw_secret",
+                }
+            )
+
+    for index, fragment in enumerate(texts[:160]):
+        if text_has_any(fragment, ["\u989d\u5ea6\u67e5\u8be2", "\u4f59\u989d", "\u6d88\u8d39\u8bb0\u5f55", "\u65e0\u9700\u767b\u5f55", "\u67e5\u8be2\u5730\u5740"]):
+            add_fact(facts, "quota_facts", fragment, {"page_handle": page_handle_id, "source": "text_fragment", "fragment_index": index})
+        if text_has_any(fragment, ["\u6dfb\u52a0\u4ee4\u724c", "\u5bfc\u51fa\u5168\u90e8\u4ee4\u724c", "\u5220\u9664\u6240\u9009\u4ee4\u724c", "\u590d\u5236\u6240\u9009\u4ee4\u724c", "\u6279\u91cf\u4fee\u6539"]):
+            dangerous.append(
+                {
+                    "id": f"{page_handle_id}:dangerous-actions:{index}",
+                    "page_handle": page_handle_id,
+                    "type": "action_cluster",
+                    "state": "dangerous_object",
+                    "danger_type": "bulk_token_actions",
+                    "text": redact_secret_text(fragment[:300]),
+                    "default_policy": "requires_action_confirmation_before_click",
+                }
+            )
+
+    if combined and redacted_combined != compact_text(combined, limit=0):
+        evidence.append({"page_handle": page_handle_id, "event": "secret_redaction_applied"})
+    if not compact_text(combined) and not page.get("links") and not page.get("controls"):
+        add_fact(facts, "empty_content_pages", str(page.get("title") or page.get("label") or page.get("url") or page_handle_id), {"page_handle": page_handle_id, "source": "no_content"})
+
+    return facts, valuable, dangerous, neutral, evidence
+
+
+def merge_fact_sets(target, source):
+    for fact_type, items in source.items():
+        for item in items:
+            add_fact(target, fact_type, item.get("value"), item.get("evidence"))
+
+
+def summarize_fact_counts(facts):
+    return {key: len(value) for key, value in sorted(facts.items())}
+
+
+def dedupe_object_handles(handles):
+    deduped = []
+    seen = set()
+    for handle in handles:
+        key = str(handle.get("id") or json.dumps(handle, ensure_ascii=False, sort_keys=True))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(handle)
+    return deduped
+
+
+def action_guardian_extract_page_facts(args):
+    try:
+        level = normalize_authorization_level(args)
+        profile = copy.deepcopy(AUTHORIZATION_LEVELS[level])
+        privacy_mode = str(args.get("privacy_mode") or "redact_secrets").strip().lower()
+        if privacy_mode not in ("redact_secrets", "metadata_only"):
+            raise ValueError("privacy_mode must be redact_secrets or metadata_only")
+        intent = str(args.get("intent") or args.get("objective") or "general").strip().lower()
+        permissions = {str(item).strip().lower() for item in normalized_tags(args.get("declared_permissions"))}
+        records = page_fact_records(args)
+        page_handles = []
+        object_handles = []
+        valuable_objects = []
+        dangerous_objects = []
+        neutral_objects = []
+        evidence = []
+        facts = {}
+        radar_cards = []
+
+        for index, page in enumerate(records):
+            page_handle_id = f"page:{index}"
+            title = compact_text(page.get("title") or page.get("label") or "", 180)
+            url = compact_text(page.get("url") or "", 300)
+            text_fragments = page_text_corpus(page)
+            has_text = bool(text_fragments)
+            metrics_observed = bool(page.get("viewport") or page.get("documentSize") or page.get("document_size") or page.get("scrollables") or page.get("scroll_containers"))
+            radar_card = classify_page_observation(page, level, permissions)
+            radar_cards.append(radar_card)
+            page_handles.append(
+                {
+                    "id": page_handle_id,
+                    "type": "page",
+                    "title": title,
+                    "url": url,
+                    "source": page.get("source") or "unknown",
+                    "state": "page_measured" if metrics_observed or has_text else "metadata_only",
+                    "radar_state": radar_card.get("page_state"),
+                    "recommended_route": radar_card.get("recommended_route"),
+                    "text_fragment_count": len(text_fragments),
+                }
+            )
+            region_handles = build_content_region_handles(page, page_handle_id)
+            object_handles.extend(region_handles)
+            valuable_objects.extend([item for item in region_handles if item.get("state") == "valuable_object"])
+            page_facts, page_valuable, page_dangerous, page_neutral, page_evidence = extract_structured_page_facts(page, page_handle_id, intent)
+            merge_fact_sets(facts, page_facts)
+            valuable_objects.extend(page_valuable)
+            dangerous_objects.extend(page_dangerous)
+            neutral_objects.extend(page_neutral)
+            evidence.extend(page_evidence)
+
+        object_handles = dedupe_object_handles(object_handles + valuable_objects + dangerous_objects + neutral_objects[:20])
+        facts_extracted = any(facts.values())
+        secret_marked = bool(dangerous_objects) or any(item.get("event") == "secret_redaction_applied" for item in evidence)
+        states = ["unknown_target"]
+        if records:
+            states.append("target_indexed")
+        if any(handle.get("state") == "page_measured" for handle in page_handles):
+            states.append("page_measured")
+        if radar_cards:
+            states.append("radar_classified")
+        if any(item.get("type") in ("content_region", "scroll_container", "table_or_rows") for item in object_handles):
+            states.append("region_segmented")
+        if valuable_objects or dangerous_objects:
+            states.append("value_danger_classified")
+        if facts_extracted:
+            states.append("facts_extracted")
+        if secret_marked:
+            states.append("secret_fields_marked")
+        if facts_extracted and privacy_mode == "redact_secrets":
+            states.append("redacted_answer_ready")
+        current_state = states[-1]
+        conclusion = "Structured facts are ready with dangerous objects marked." if current_state == "redacted_answer_ready" else "More readonly page observations are needed before structured facts are ready."
+        if dangerous_objects and not facts_extracted:
+            conclusion = "Dangerous objects were marked, but answer-bearing structured facts were not found."
+
+        return write_json(
+            {
+                "ok": True,
+                "fact_extraction_performed": True,
+                "capture_performed": False,
+                "page_navigation_performed": False,
+                "secret_storage_read": False,
+                "database_or_registry_touched": False,
+                "network_request_performed": False,
+                "objective": str(args.get("objective") or ""),
+                "intent": intent,
+                "privacy_mode": privacy_mode,
+                "current_conclusion": conclusion,
+                "causal_grade": "structured extraction from caller-supplied readonly observations, not proof that the live page is complete",
+                "state_machine": {
+                    "current_state": current_state,
+                    "visited_states": states,
+                    "ideal_path": [
+                        "unknown_target",
+                        "target_indexed",
+                        "page_measured",
+                        "radar_classified",
+                        "region_segmented",
+                        "value_danger_classified",
+                        "facts_extracted",
+                        "secret_fields_marked",
+                        "redacted_answer_ready",
+                    ],
+                    "missing_states": [
+                        state
+                        for state in [
+                            "target_indexed",
+                            "page_measured",
+                            "radar_classified",
+                            "region_segmented",
+                            "value_danger_classified",
+                            "facts_extracted",
+                            "secret_fields_marked",
+                            "redacted_answer_ready",
+                        ]
+                        if state not in states
+                    ],
+                },
+                "authorization": {
+                    "level": level,
+                    "label": profile["label"],
+                    "declared_permissions": sorted(permissions),
+                    "performed_actions": [],
+                    "forbidden_actions": profile["forbidden_actions"],
+                },
+                "handles": {
+                    "pages": page_handles,
+                    "objects": object_handles[:120],
+                    "valuable_objects": valuable_objects[:80],
+                    "dangerous_objects": dangerous_objects[:80],
+                },
+                "facts": facts,
+                "fact_counts": summarize_fact_counts(facts),
+                "radar_cards": radar_cards,
+                "evidence": evidence[:80],
+                "next_probe_request": {
+                    "needed": not facts_extracted,
+                    "collect": ["main_article_text", "headings", "tables_or_rows", "controls", "links", "scrollables"],
+                    "forbidden": ["cookies", "localStorage", "sessionStorage", "passwords", "raw_api_keys", "form_submit", "copy_or_export_buttons"],
+                },
+                "privacy": "Fact extraction only. Uses caller-supplied readonly observations; no screenshot, navigation, browser storage read, database query, registry read, upload, model call, command, or background monitor was performed. Raw secret-like strings are redacted by default.",
             }
         )
     except Exception as exc:
@@ -6520,6 +7044,7 @@ def action_clear_cache(args):
 ACTIONS = {
     "guardian_check": action_guardian_check,
     "guardian_radar": action_guardian_radar,
+    "guardian_extract_page_facts": action_guardian_extract_page_facts,
     "guardian_capture_targets": action_guardian_capture_targets,
     "guardian_sniff_context": action_guardian_sniff_context,
     "guardian_perceive": action_guardian_perceive,

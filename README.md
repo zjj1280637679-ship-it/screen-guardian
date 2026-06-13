@@ -6,7 +6,7 @@ Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
-For Codex, start with `guardian_check`, `guardian_radar`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
+For Codex, start with `guardian_check`, `guardian_radar`, `guardian_extract_page_facts`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.
 
 For first use, treat it as a local capture fallback: check whether the adapter works, list displays or windows, and save one screenshot. Advanced workflow features are separated into experimental envelope tools that prepare local request files or configuration without forcing a background service.
 
@@ -32,6 +32,7 @@ Screen Guardian exposes a broad expert tool surface, but the default MCP surface
 | --- | --- | --- |
 | Check readiness | `guardian_check` | Summarizes runtime, adapters, cache path, capability flags, and the next recommended tool without capturing anything. |
 | Passive target/page radar | `guardian_radar` | Classifies capturable windows and caller-supplied browser page observations into concrete screenshot/page-state routes before capture. |
+| Object and fact map | `guardian_extract_page_facts` | Turns caller-supplied readonly page observations into valuable objects, dangerous objects, and redacted structured facts. |
 | See capture choices first | `guardian_capture_targets` | Lists displays, windows, and explicit webpage targets before capture, with recommended quiet/background arguments. |
 | Sniff the safest authorized route | `guardian_sniff_context` | Ranks visual, browser-session, nested-scroll, document-to-markdown, export/API, database, and registry routes from declared authorization without executing them. |
 | See or hold local visual context | `guardian_perceive` | Maps quick look, text screenshot, UI debugging, window capture, short change watch, and hold-file requests onto the existing safe capture tools. |
@@ -181,7 +182,7 @@ See [docs/MODELS.md](docs/MODELS.md) for the activation model in more detail.
 
 ## Tool layers
 
-New users and AI agents should start with `guardian_check`, `guardian_radar`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. By default, the MCP server exposes only the core tool surface so first use stays small. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full` before starting the MCP server to expose advanced workflow, media, and lab tools. The MCP `tools/list` result includes `toolSurface` with the active value: `core`, `advanced`, or `full`.
+New users and AI agents should start with `guardian_check`, `guardian_radar`, `guardian_extract_page_facts`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. By default, the MCP server exposes only the core tool surface so first use stays small. Set `SCREEN_GUARDIAN_TOOL_SURFACE=advanced` or `SCREEN_GUARDIAN_TOOL_SURFACE=full` before starting the MCP server to expose advanced workflow, media, and lab tools. The MCP `tools/list` result includes `toolSurface` with the active value: `core`, `advanced`, or `full`.
 
 ### Core tools
 
@@ -189,7 +190,7 @@ These are the first-use tools. They perform explicit local checks or captures an
 
 | Need | Tools |
 | --- | --- |
-| Use the default AI facade | `guardian_check`, `guardian_radar`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, `guardian_survey_windows` |
+| Use the default AI facade | `guardian_check`, `guardian_radar`, `guardian_extract_page_facts`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, `guardian_survey_windows` |
 | Check whether Screen Guardian can run | `check_dependencies`, `list_adapters` |
 | See available screens and windows | `list_displays`, `list_windows` |
 | Sniff authorized routes before acting | `guardian_sniff_context` |

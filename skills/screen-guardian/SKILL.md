@@ -55,6 +55,7 @@ Prefer the AI-first facade tools before the expert tool surface:
 
 - Use `guardian_check` when plugin health, runtime, adapters, cache path, or active capability flags are uncertain.
 - Use `guardian_radar` when the AI has browser tab metadata, current page measurements, or window candidates and needs the plugin to pre-judge whether to use normal full-page capture, browser-session nested scroll, strict window capture, or a narrower readonly probe.
+- Use `guardian_extract_page_facts` after radar when the AI has caller-supplied readonly page observations and needs valuable objects, dangerous objects, redacted API settings, token rows, quota URLs, model-group rows, and missing state-machine steps before answering.
 - Use `guardian_capture_targets` before capture when the AI should see all available display/window/page targets and choose a route without taking a screenshot.
 - Use `guardian_sniff_context` before acting when the user has granted a scoped authorization envelope and the AI must choose between visual capture, browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry routes. Treat it as route planning only: no screenshot, no browser secret storage read, no database/registry access, and no network request is performed.
 - Use `prepare_data_layer_request` after explicit user consent when the next step needs a database, registry, API, export, file, or app-storage route. Keep it prepare-only; mutating operations require separate mutation confirmation plus a backup or rollback plan.
@@ -80,6 +81,7 @@ AI-first tools:
 
 - `guardian_check`
 - `guardian_radar`
+- `guardian_extract_page_facts`
 - `guardian_capture_targets`
 - `guardian_sniff_context`
 - `guardian_perceive`
@@ -93,6 +95,7 @@ Core tools:
 
 - `guardian_check`
 - `guardian_radar`
+- `guardian_extract_page_facts`
 - `guardian_capture_targets`
 - `guardian_sniff_context`
 - `guardian_perceive`
