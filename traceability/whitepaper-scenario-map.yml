@@ -194,6 +194,58 @@ claims:
     failure_states:
       - prompt_injection_risk
       - low_confidence_text
+  - id: computer_use_information_gauntlet
+    whitepaper:
+      - docs/WHITEPAPER.md
+      - docs/whitepaper/03-design.md
+      - docs/whitepaper/04-verification.md
+      - docs/whitepaper/05-safety.md
+      - docs/COMPUTER_USE_INFORMATION_GAUNTLET.zh-CN.md
+    scenarios:
+      - scenario-cards/advanced/computer-use-information-gauntlet.md
+      - scenario-cards/advanced/edge-task-gauntlet.md
+      - scenario-cards/advanced/browser-session-nested-scroll-longshot.md
+      - scenario-cards/advanced/consented-data-layer-request.md
+      - scenario-cards/advanced/registered-command-and-break-glass.md
+    runtime:
+      - mcp/server.cjs
+      - scripts/screen_guardian_capture.py
+    validation:
+      - scripts/validate_contracts.py
+      - scripts/evaluate_runtime.py
+      - docs/VALIDATION.md
+    acceptance_conditions:
+      - "Hard computer-use tasks distinguish information acquisition success from structured decision, refusal, and prepare-only states."
+      - "Benchmark-inspired tasks do not treat visible pixels, browser sessions, data-layer access, and raw commands as interchangeable evidence routes."
+      - "Passing a task is recorded as scenario convergence, not as proof that every future desktop or webpage target can be acquired."
+    side_effects:
+      - "none for route sniffing and target indexing"
+      - "local evidence file writes for authorized captures"
+      - "local prepare-only envelope writes for scoped data-layer or workflow requests"
+    feature_flags:
+      - screen_capture
+      - window_capture
+      - webpage_capture
+      - data_layer_envelopes
+      - registered_commands
+    receipt_fields:
+      - saved
+      - path
+      - result_state
+      - issue_ids
+      - secret_storage_read
+      - database_or_registry_touched
+      - network_request_performed
+      - capture_deferred
+    failure_states:
+      - bbox_identity_mismatch
+      - window_client_low_information
+      - background_capture_unavailable
+      - webpage_too_tall
+      - scroll_container_too_tall
+      - blocked_by_authorization_level
+      - requires_explicit_scope
+      - decision_required
   - id: review_decomposition
     whitepaper:
       - docs/whitepaper/06-review-method.md

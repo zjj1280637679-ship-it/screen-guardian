@@ -43,5 +43,6 @@ Use [TEMPLATE.md](TEMPLATE.md) for new cards.
 - [advanced/unopened-app-page.md](advanced/unopened-app-page.md)
 - [advanced/consented-data-layer-request.md](advanced/consented-data-layer-request.md)
 - [advanced/registered-command-and-break-glass.md](advanced/registered-command-and-break-glass.md)
+- [advanced/computer-use-information-gauntlet.md](advanced/computer-use-information-gauntlet.md)
 - [user-types/beginner-user.md](user-types/beginner-user.md)
 - [user-types/high-intensity-user.md](user-types/high-intensity-user.md)

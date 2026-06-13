@@ -76,6 +76,7 @@ See [docs/CAPABILITY_RUNTIME.md](docs/CAPABILITY_RUNTIME.md) for the registered 
 See [docs/CAPTURE_GUARDS.md](docs/CAPTURE_GUARDS.md) for optional capture-quality checks and decision menus.
 See [docs/WEBPAGE_CAPTURE.md](docs/WEBPAGE_CAPTURE.md) for optional full-page webpage long screenshots through Playwright/CDP-style browser capture.
 See [docs/CAPTURE_ROUTES_AND_CHAINS.md](docs/CAPTURE_ROUTES_AND_CHAINS.md) for capture routes, desktop/application/webpage route selection, `nested_scroll` capture, quiet capture, and `prepare_capture_chain` guided plans.
+See [docs/COMPUTER_USE_INFORMATION_GAUNTLET.zh-CN.md](docs/COMPUTER_USE_INFORMATION_GAUNTLET.zh-CN.md) for hard computer-use information-acquisition tasks inspired by OSWorld, Windows Agent Arena, WebArena, WorkArena, and VisualWebArena.
 See [docs/RELATED_PROJECTS.md](docs/RELATED_PROJECTS.md) for related product/project research and borrowed design patterns.
 
 Screen Guardian is for authorized perception, accessibility, visibility auditing, debugging, and personal AI assistance. It is not designed or supported for bypassing authentication, paywalls, CAPTCHA, DRM, access controls, platform rules, privacy expectations, or other authorization boundaries. See [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md) for the project stance and disclaimer.
