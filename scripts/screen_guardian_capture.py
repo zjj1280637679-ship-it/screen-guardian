@@ -5212,6 +5212,21 @@ def add_fact(facts, fact_type, value, evidence=None):
     bucket.append(item)
 
 
+def page_has_explicit_empty_marker(page):
+    if any(bool(page.get(key)) for key in ("empty", "is_empty", "empty_content", "no_content")):
+        return True
+    for key in ("blocks", "bodyCandidates", "body_candidates", "sections", "articles"):
+        for item in page.get(key) or []:
+            if not isinstance(item, dict):
+                continue
+            if any(bool(item.get(marker)) for marker in ("empty", "is_empty", "empty_content", "no_content", "data_empty_content")):
+                return True
+            selector = str(item.get("selector") or item.get("selectorHint") or item.get("selector_hint") or "").lower()
+            if "empty" in selector and text_has_any(item.get("text"), ["no article body", "no content", "empty", "\u6682\u65e0\u5185\u5bb9", "\u65e0\u5185\u5bb9"]):
+                return True
+    return False
+
+
 def classify_control_object(control, page_handle_id, index):
     text = compact_text(control.get("text") or control.get("label") or control.get("ariaLabel") or control.get("placeholder") or control.get("value") or "", 160)
     tag = str(control.get("tag") or control.get("tagName") or "").lower()
@@ -5449,7 +5464,9 @@ def extract_structured_page_facts(page, page_handle_id, intent):
 
     if combined and redacted_combined != compact_text(combined, limit=0):
         evidence.append({"page_handle": page_handle_id, "event": "secret_redaction_applied"})
-    if not compact_text(combined) and not page.get("links") and not page.get("controls"):
+    if page_has_explicit_empty_marker(page):
+        add_fact(facts, "empty_content_pages", str(page.get("title") or page.get("label") or page.get("url") or page_handle_id), {"page_handle": page_handle_id, "source": "explicit_empty_marker"})
+    elif not compact_text(combined) and not page.get("links") and not page.get("controls"):
         add_fact(facts, "empty_content_pages", str(page.get("title") or page.get("label") or page.get("url") or page_handle_id), {"page_handle": page_handle_id, "source": "no_content"})
 
     return facts, valuable, dangerous, neutral, evidence
