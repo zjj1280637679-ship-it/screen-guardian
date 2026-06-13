@@ -11,9 +11,9 @@ The AI-first interface adds a small set of intent tools that should be tried bef
 | Sniff the safest authorized route before acting | `guardian_sniff_context` |
 | Look at the screen, text, UI, a window, or a short change | `guardian_perceive` |
 | Survey many program windows without flooding context | `guardian_survey_windows` |
-| Prepare a model, decision, or monitor envelope | `guardian_prepare_workflow` |
+| Prepare a model, decision, monitor, capture-chain, or data-layer envelope | `guardian_prepare_workflow` (advanced surface) |
 | Choose desktop/application/webpage capture routes | `list_capture_routes` |
-| Prepare conditional capture chains | `prepare_capture_chain` |
+| Prepare conditional capture chains | `prepare_capture_chain` (advanced surface) |
 
 These tools are wrappers. They do not remove or replace the existing tools, and they do not expand permission, runtime, feature-flag, upload, model-call, subagent, or background-monitor behavior.
 
@@ -45,7 +45,7 @@ Window capture is quiet-preferred by default. The plugin does not activate or ra
 
 Use `guardian_sniff_context` when the user grants a broader authorization envelope and the AI needs to decide whether screenshots, browser-session DOM reads, nested-scroll capture, document conversion, page export, readonly API access, or storage reads would be the right path. The sniffer is route-only: it reports `capture_performed=false`, does not read browser secret storage, does not touch databases or registries, and does not make network requests. Document-to-markdown recommendations, including MarkItDown-style adapters, are treated as explicit file-conversion routes rather than browser-session or credential routes.
 
-When the user explicitly consents to data-layer work, the next safe step is `prepare_data_layer_request`, not an implicit query. It requires a concrete scope and writes an audit envelope. Mutating operations require a separate mutation confirmation plus backup or rollback plan.
+When the user explicitly consents to data-layer work, the next safe step is `prepare_data_layer_request`, not an implicit query. It requires a concrete target in scope and writes an audit envelope. Fields, filters, and row limits constrain the target but do not authorize one by themselves. Mutating operations require a separate mutation confirmation plus backup or rollback plan.
 
 When occlusion-resistant background acquisition matters, call `guardian_capture_targets` first and then use the returned `capture_target.primary` arguments. They default to `background_mode="strict"`, which attempts direct HWND graphics without visible-screen bbox fallback. If direct HWND pixels are blank, protected, or GPU-only, the capture returns `background_capture_unavailable` as a decision state rather than saving visible desktop pixels. Switch to a `capture_webpage` URL route for browser pages when possible, or explicitly choose `background_mode="visible_fallback"` when visible-screen behavior is acceptable.
 

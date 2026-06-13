@@ -343,7 +343,7 @@ const captureChainProperties = {
       type: "object",
       additionalProperties: true,
     },
-    description: "Ordered declarative steps. Preparing a chain writes a local plan only; it does not execute the steps.",
+    description: "Ordered declarative steps. Preparing a chain writes a local plan only; it does not execute the steps. Runtime rejects steps outside capture, route-sniffing, preprocessing, and prepare-only envelope tools.",
   },
   quiet: {
     type: "boolean",
@@ -585,7 +585,11 @@ const tools = [
           default: true,
           description: "Sample topmost windows at target-window points to report possible occlusion risk without capturing an image.",
         },
-        background_mode: imageOutputProperties.background_mode,
+        background_mode: {
+          ...imageOutputProperties.background_mode,
+          default: "strict",
+          description: "Preferred background mode for returned window capture target args. Defaults to strict for occlusion-resistant HWND capture without visible-screen bbox fallback.",
+        },
         runtime_limits: imageOutputProperties.runtime_limits,
         feature_flags: imageOutputProperties.feature_flags,
       },
@@ -663,12 +667,16 @@ const tools = [
         data_layer_user_consented: {
           type: "boolean",
           default: false,
-          description: "When true, the sniffer may mark scoped data-layer routes as eligible for prepare_data_layer_request. It still does not touch data.",
+          description: "When true, the sniffer can consider scoped data-layer routes. Eligibility still requires data_layer_consent_text and a concrete scoped target.",
+        },
+        data_layer_consent_text: {
+          type: "string",
+          description: "Consent/audit text for data-layer route readiness. Without it, scoped routes remain scope-ready rather than eligible.",
         },
         data_layer_scope: {
           type: "object",
           additionalProperties: true,
-          description: "Explicit proposed data-layer scope used only for route status. Examples: endpoint, connection_ref, registry_key, tables, fields, row_limit.",
+          description: "Proposed data-layer scope used only for route status. Must include a concrete target such as endpoint, connection_ref, registry_key, export_name, file_path, app_id, or tables; row_limit/fields/where are constraints, not targets by themselves.",
         },
         runtime_limits: imageOutputProperties.runtime_limits,
         feature_flags: imageOutputProperties.feature_flags,
@@ -825,7 +833,7 @@ const tools = [
   },
   {
     name: "guardian_prepare_workflow",
-    description: "AI-first workflow facade that prepares local model, decision, or monitor envelopes without executing external routes.",
+    description: "AI-first workflow facade that prepares local model, decision, monitor, capture-chain, or consented data-layer envelopes without executing external routes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -884,7 +892,7 @@ const tools = [
         scope: {
           type: "object",
           additionalProperties: true,
-          description: "Explicit data-layer scope such as connection_ref, tables, registry_key, endpoint, fields, where, or row_limit.",
+          description: "Explicit data-layer scope. Must include a concrete target such as connection_ref, tables, registry_key, endpoint, export_name, file_path, or app_id; fields/where/row_limit only constrain that target.",
         },
         query: { type: "string" },
         action_plan: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -1054,6 +1062,7 @@ const tools = [
         runtime_limits: imageOutputProperties.runtime_limits,
         feature_flags: imageOutputProperties.feature_flags,
       },
+      required: ["user_confirmed"],
       additionalProperties: false,
     },
   },
@@ -1341,7 +1350,7 @@ const tools = [
         scope: {
           type: "object",
           additionalProperties: true,
-          description: "Explicit scope. Examples: connection_ref/tables/fields/where/row_limit, registry_key, api_endpoint, file_path, export_name, or app_id.",
+          description: "Explicit scope. Must include a concrete target such as connection_ref, tables, registry_key, api_endpoint, file_path, export_name, or app_id; fields/where/row_limit only constrain that target.",
         },
         query: {
           type: "string",

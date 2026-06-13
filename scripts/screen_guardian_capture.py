@@ -8,6 +8,7 @@ import json
 import locale
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 CONFIG_DIR = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "ScreenGuardian"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+_CONFIG_CACHE = None
+_CAPTURE_LIBS_CACHE = None
+_CAPTURE_LIBS_ERROR = None
 
 DEFAULT_LIMITS = {
     "watch_duration_seconds_max": 30,
@@ -436,6 +440,7 @@ CAPABILITY_COMMANDS = [
         "intent_tags": ["break_glass", "code", "prepare_only"],
         "execution_mode": "prepare_only",
         "maps_to": "guardian_prepare_exec",
+        "required_surface": "full",
         "required_features": [],
         "default_args": {"language": "python", "timeout_seconds": 30},
         "side_effects": ["local_envelope_write", "audit_log_write"],
@@ -449,6 +454,7 @@ CAPABILITY_COMMANDS = [
         "intent_tags": ["break_glass", "code", "raw_exec"],
         "execution_mode": "break_glass",
         "maps_to": "guardian_run_exec",
+        "required_surface": "full",
         "required_features": ["raw_local_exec"],
         "default_args": {"language": "python", "timeout_seconds": 30},
         "side_effects": ["local_code_execution", "audit_log_write"],
@@ -536,6 +542,9 @@ def write_json_file(path, data):
 
 
 def load_config():
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return copy.deepcopy(_CONFIG_CACHE)
     config = read_json_file(CONFIG_PATH, DEFAULT_CONFIG)
     mode = str(config.get("mode", "auto")).lower()
     if mode not in ("auto", "manual"):
@@ -556,12 +565,15 @@ def load_config():
         config["decision_policies"] = []
     if not isinstance(config.get("monitor_profiles"), list):
         config["monitor_profiles"] = []
+    _CONFIG_CACHE = copy.deepcopy(config)
     return config
 
 
 def save_config(config):
+    global _CONFIG_CACHE
     config["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     write_json_file(CONFIG_PATH, config)
+    _CONFIG_CACHE = copy.deepcopy(config)
 
 
 def parse_unbounded_number(value):
@@ -781,11 +793,14 @@ def manifest_display_profile():
 
 
 def import_capture_libs():
+    global _CAPTURE_LIBS_CACHE, _CAPTURE_LIBS_ERROR
+    if _CAPTURE_LIBS_CACHE is not None or _CAPTURE_LIBS_ERROR is not None:
+        return _CAPTURE_LIBS_CACHE, _CAPTURE_LIBS_ERROR
     try:
         import mss
         from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageGrab, ImageOps, ImageStat
 
-        return {
+        _CAPTURE_LIBS_CACHE = {
             "mss": mss,
             "Image": Image,
             "ImageChops": ImageChops,
@@ -794,9 +809,13 @@ def import_capture_libs():
             "ImageGrab": ImageGrab,
             "ImageOps": ImageOps,
             "ImageStat": ImageStat,
-        }, None
+        }
+        _CAPTURE_LIBS_ERROR = None
+        return _CAPTURE_LIBS_CACHE, None
     except Exception as exc:
-        return None, str(exc)
+        _CAPTURE_LIBS_CACHE = None
+        _CAPTURE_LIBS_ERROR = str(exc)
+        return None, _CAPTURE_LIBS_ERROR
 
 
 def mss_adapter_status():
@@ -1374,7 +1393,7 @@ def process_name_for_pid(pid):
     return ""
 
 
-def window_info_for_hwnd(hwnd):
+def window_info_for_hwnd(hwnd, process_name_cache=None):
     if os.name != "nt":
         return None
     hwnd = int(hwnd)
@@ -1386,11 +1405,18 @@ def window_info_for_hwnd(hwnd):
         return None
     pid = ctypes.wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    pid_value = int(pid.value)
+    if process_name_cache is not None:
+        if pid_value not in process_name_cache:
+            process_name_cache[pid_value] = process_name_for_pid(pid_value)
+        process_name = process_name_cache[pid_value]
+    else:
+        process_name = process_name_for_pid(pid_value)
     return {
         "hwnd": hwnd,
         "title": window_text(hwnd),
-        "pid": int(pid.value),
-        "process_name": process_name_for_pid(pid.value),
+        "pid": pid_value,
+        "process_name": process_name,
         "rect": rect,
         "client_rect": window_client_rect(hwnd) or {},
         "is_minimized": bool(user32.IsIconic(hwnd)),
@@ -1404,11 +1430,12 @@ def enum_windows(args=None):
     args = args or {}
     user32 = ctypes.windll.user32
     windows = []
+    process_name_cache = {}
 
     EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
 
     def callback(hwnd, _lparam):
-        info = window_info_for_hwnd(hwnd)
+        info = window_info_for_hwnd(hwnd, process_name_cache)
         if not info or not info.get("is_visible"):
             return True
         if not info.get("title"):
@@ -3343,6 +3370,28 @@ def action_list_capture_routes(args):
     )
 
 
+CAPTURE_CHAIN_ALLOWED_STEP_TOOLS = {
+    "guardian_capture_targets",
+    "guardian_sniff_context",
+    "guardian_perceive",
+    "guardian_survey_windows",
+    "list_capture_routes",
+    "capture_screen",
+    "capture_region",
+    "capture_window",
+    "watch_screen",
+    "prepare_webpage_capture",
+    "capture_webpage",
+    "analyze_image",
+    "preprocess_image",
+    "prepare_capture_chain",
+    "prepare_model_request",
+    "prepare_decision_request",
+    "prepare_monitor_tick",
+    "prepare_data_layer_request",
+}
+
+
 def action_prepare_capture_chain(args):
     try:
         require_feature("capture_chains", args)
@@ -3378,10 +3427,19 @@ def action_prepare_capture_chain(args):
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
             return error("each step must be an object", step_index=index)
+        tool = str(step.get("tool") or step.get("action") or "").strip()
+        if tool not in CAPTURE_CHAIN_ALLOWED_STEP_TOOLS:
+            return error(
+                "capture-chain step tool is not allowed in a prepare-only capture envelope",
+                step_index=index,
+                tool=tool,
+                allowed_tools=sorted(CAPTURE_CHAIN_ALLOWED_STEP_TOOLS),
+            )
         normalized_steps.append(
             {
                 "index": index,
-                "tool": str(step.get("tool") or step.get("action") or "").strip(),
+                "tool": tool,
+                "step_safety_class": "capture_or_prepare_only",
                 "args": step.get("args") if isinstance(step.get("args"), dict) else {},
                 "condition": step.get("condition") if isinstance(step.get("condition"), dict) else {},
                 "on_failure": str(step.get("on_failure") or "return_decision").strip(),
@@ -3614,6 +3672,10 @@ DATA_LAYER_OPERATIONS = ("inspect_schema", "read", "query", "export", "write", "
 DATA_LAYER_MUTATION_OPERATIONS = {"write", "update", "delete", "migrate", "permission_change"}
 DATA_LAYER_SECRET_KEYS = {"password", "passwd", "pwd", "token", "secret", "api_key", "apikey", "cookie", "localstorage", "sessionstorage", "credential"}
 DATA_LAYER_SECRET_ENV_KEYS = {"api_key_env", "secret_env", "token_env", "connection_secret_env", "credential_env"}
+DATA_LAYER_INLINE_SECRET_PATTERNS = [
+    re.compile(r"\b(password|passwd|pwd|token|secret|api[_-]?key|cookie|credential)\b\s*[:=]\s*['\"]?[^'\"\s,;]{6,}", re.IGNORECASE),
+    re.compile(r"\b(bearer)\s+[A-Za-z0-9._~+/-]{12,}", re.IGNORECASE),
+]
 DATA_LAYER_SCOPE_TARGET_KEYS = {
     "database": {"connection_ref", "database", "schema", "tables", "table", "query_id"},
     "registry": {"registry_key", "key", "hive", "path"},
@@ -3622,6 +3684,25 @@ DATA_LAYER_SCOPE_TARGET_KEYS = {
     "file": {"file_path", "file_paths", "path"},
     "app_storage": {"app_id", "storage_path", "profile", "database_path", "cache_path"},
 }
+
+
+TOOL_SURFACE_RANKS = {"core": 0, "advanced": 1, "full": 2}
+
+
+def current_tool_surface():
+    raw = str(os.environ.get("SCREEN_GUARDIAN_TOOL_SURFACE") or "core").strip().lower()
+    if raw in ("full", "all", "lab", "dev"):
+        return "full"
+    if raw in ("advanced", "expert"):
+        return "advanced"
+    return "core"
+
+
+def surface_allows(required_surface):
+    required = str(required_surface or "advanced").strip().lower()
+    if required not in TOOL_SURFACE_RANKS:
+        required = "advanced"
+    return TOOL_SURFACE_RANKS[current_tool_surface()] >= TOOL_SURFACE_RANKS[required]
 
 
 def contains_inline_secret_key(value):
@@ -3640,6 +3721,11 @@ def contains_inline_secret_key(value):
             found, found_key = contains_inline_secret_key(item)
             if found:
                 return True, found_key
+    elif isinstance(value, str):
+        for pattern in DATA_LAYER_INLINE_SECRET_PATTERNS:
+            match = pattern.search(value)
+            if match:
+                return True, str(match.group(1)).strip().lower()
     return False, ""
 
 
@@ -3675,6 +3761,22 @@ def scope_has_explicit_target(scope, source_type=""):
         if str(key).strip().lower() in target_keys:
             return True
     return False
+
+
+def data_layer_scope_readiness(user_consented, scope, consent_text=""):
+    consented = bool(user_consented)
+    has_consent_text = bool(str(consent_text or "").strip())
+    normalized_scope = scope if isinstance(scope, dict) else {}
+    readiness = {}
+    for source_type in ("page_export", "api", "database", "registry"):
+        has_target = scope_has_explicit_target(normalized_scope, source_type)
+        readiness[source_type] = {
+            "user_consented": consented,
+            "has_consent_text": has_consent_text,
+            "has_explicit_target": has_target,
+            "eligible_for_prepare_data_layer_request": consented and has_consent_text and has_target,
+        }
+    return readiness
 
 
 def action_prepare_data_layer_request(args):
@@ -4118,7 +4220,8 @@ def action_guardian_check(args):
         "extra_output_dirs": serialize_paths(mirrors),
         "key_capabilities": key_capability_summary(flags),
         "recommended_next": recommended_next,
-        "ai_first_tools": ["guardian_check", "guardian_capture_targets", "guardian_perceive", "guardian_survey_windows", "guardian_prepare_workflow"],
+        "ai_first_tools": ["guardian_check", "guardian_capture_targets", "guardian_sniff_context", "guardian_perceive", "guardian_survey_windows"],
+        "advanced_ai_first_tools": ["guardian_prepare_workflow", "guardian_list_commands", "guardian_run_command", "list_capture_routes", "prepare_capture_chain"],
         "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
     }
     if detail == "full":
@@ -4464,11 +4567,19 @@ def sniff_route_candidates(args, level, permissions):
     has_url = bool(args.get("url") or args.get("urls") or target.get("url"))
     has_selector = bool(target.get("selector"))
     data_layer_consented = bool(args.get("data_layer_user_consented", False))
+    data_layer_consent_text = str(args.get("data_layer_consent_text") or args.get("consent_text") or "").strip()
     data_layer_scope = args.get("data_layer_scope") if isinstance(args.get("data_layer_scope"), dict) else {}
-    data_layer_scope_ready = {
-        source_type: data_layer_consented and scope_has_explicit_target(data_layer_scope, source_type)
-        for source_type in ("page_export", "api", "database", "registry")
-    }
+    data_layer_scope_ready = data_layer_scope_readiness(data_layer_consented, data_layer_scope, data_layer_consent_text)
+
+    def data_layer_route_status(source_type, minimum_rank, ready_status, missing_scope_status):
+        if rank < minimum_rank:
+            return "blocked_by_authorization_level"
+        readiness = data_layer_scope_ready[source_type]
+        if readiness["eligible_for_prepare_data_layer_request"]:
+            return ready_status
+        if readiness["user_consented"] and readiness["has_explicit_target"] and not readiness["has_consent_text"]:
+            return "scope_ready_requires_consent_text"
+        return missing_scope_status
     wants_export = "export_download" in permissions
     wants_api = "api_readonly" in permissions or target_kind == "api"
     wants_database = "database_readonly" in permissions or target_kind == "database"
@@ -4566,7 +4677,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "authorized_export_download",
                     "priority": 12,
                     "authorization_required": "L3_sensitive_action_confirmed",
-                    "status": "eligible_for_prepare_data_layer_request" if rank >= 3 and data_layer_scope_ready["page_export"] else "requires_action_confirmation" if rank >= 3 else "blocked_by_authorization_level",
+                    "status": data_layer_route_status("page_export", 3, "eligible_for_prepare_data_layer_request", "requires_action_confirmation"),
                     "side_effects": ["download", "possible_sensitive_data_file"],
                     "note": "Efficient when the page provides an export button, but requires action-time confirmation.",
                 },
@@ -4575,7 +4686,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "api_readonly",
                     "priority": 14,
                     "authorization_required": "L3_sensitive_action_confirmed",
-                    "status": "eligible_for_prepare_data_layer_request" if rank >= 3 and data_layer_scope_ready["api"] else "requires_explicit_endpoint_and_scope" if rank >= 3 else "blocked_by_authorization_level",
+                    "status": data_layer_route_status("api", 3, "eligible_for_prepare_data_layer_request", "requires_explicit_endpoint_and_scope"),
                     "side_effects": ["network_request_when_executed"],
                     "note": "Only use with explicit API endpoint, scope, and user confirmation.",
                 },
@@ -4589,7 +4700,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "database_readonly",
                     "priority": 16,
                     "authorization_required": "L4_sensitive_storage_or_data_access",
-                    "status": "eligible_for_prepare_data_layer_request" if rank >= 4 and data_layer_scope_ready["database"] else "blocked_until_explicit_connection_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "status": data_layer_route_status("database", 4, "eligible_for_prepare_data_layer_request", "blocked_until_explicit_connection_scope"),
                     "side_effects": ["database_query_when_executed"],
                     "note": "Must be explicit readonly scope. Never infer database access from page visibility alone.",
                 },
@@ -4598,7 +4709,7 @@ def sniff_route_candidates(args, level, permissions):
                     "route": "registry_readonly",
                     "priority": 60,
                     "authorization_required": "L4_sensitive_storage_or_data_access",
-                    "status": "eligible_for_prepare_data_layer_request" if rank >= 4 and data_layer_scope_ready["registry"] else "blocked_until_explicit_key_scope" if rank >= 4 else "blocked_by_authorization_level",
+                    "status": data_layer_route_status("registry", 4, "eligible_for_prepare_data_layer_request", "blocked_until_explicit_key_scope"),
                     "side_effects": ["registry_read_when_executed"],
                     "note": "Registry reads are not a normal webpage/file perception route.",
                 },
@@ -4630,6 +4741,11 @@ def action_guardian_sniff_context(args):
             capture_index = guardian_capture_targets_payload(capture_args)
 
         candidates = sniff_route_candidates(args, level, permissions)
+        data_layer_scope_status = data_layer_scope_readiness(
+            bool(args.get("data_layer_user_consented", False)),
+            args.get("data_layer_scope") if isinstance(args.get("data_layer_scope"), dict) else {},
+            str(args.get("data_layer_consent_text") or args.get("consent_text") or "").strip(),
+        )
         return write_json(
             {
                 "ok": True,
@@ -4653,13 +4769,14 @@ def action_guardian_sniff_context(args):
                 "route_candidates": candidates,
                 "file_routes": file_routes,
                 "capture_targets": capture_index,
+                "data_layer_scope_status": data_layer_scope_status,
                 "recommended_order": [item["id"] for item in candidates[:5]],
                 "sensitive_boundaries": {
                     "never_by_default": ["cookie_read", "localStorage_read", "sessionStorage_read", "password_store_read", "credential_printing", "secret_exfiltration"],
                     "requires_explicit_scope": ["api_readonly", "database_readonly", "registry_readonly", "export_download"],
                     "markitdown_style_route": "Allowed only for user-authorized local files or downloads; it is a converter route, not a credential or browser-session route.",
                     "file_metadata_probe": "Local path metadata may be checked for supplied file_paths. Potential network paths are skipped unless allow_network_file_metadata_probe=true.",
-                    "data_layer_consent": "With data_layer_user_consented=true and explicit data_layer_scope, the sniffer may recommend prepare_data_layer_request. It still does not query, export, mutate, or read the data layer.",
+                    "data_layer_consent": "With data_layer_user_consented=true, data_layer_consent_text, and explicit data_layer_scope, the sniffer may recommend prepare_data_layer_request. It still does not query, export, mutate, or read the data layer.",
                 },
                 "metadata_contract": {
                     "authorization_level": level,
@@ -5228,17 +5345,25 @@ def command_by_id(command_id):
 def command_is_active(command, args=None):
     flags = feature_flags(args or {})
     required = command.get("required_features") or []
-    return all(bool(flags.get(feature, False)) for feature in required)
+    return surface_allows(command.get("required_surface", "advanced")) and all(bool(flags.get(feature, False)) for feature in required)
 
 
 def decorated_command(command, args=None):
     decorated = copy.deepcopy(command)
     required = decorated.get("required_features") or []
     flags = feature_flags(args or {})
-    decorated["active"] = all(bool(flags.get(feature, False)) for feature in required)
+    required_surface = str(decorated.get("required_surface") or "advanced")
+    decorated["surface"] = {
+        "required": required_surface,
+        "current": current_tool_surface(),
+        "allowed": surface_allows(required_surface),
+    }
+    decorated["active"] = decorated["surface"]["allowed"] and all(bool(flags.get(feature, False)) for feature in required)
     decorated["inactive_reasons"] = [
         f"Feature '{feature}' is inactive." for feature in required if not bool(flags.get(feature, False))
     ]
+    if not decorated["surface"]["allowed"]:
+        decorated["inactive_reasons"].append(f"Command requires SCREEN_GUARDIAN_TOOL_SURFACE={required_surface}.")
     return decorated
 
 
@@ -5250,6 +5375,8 @@ def action_guardian_list_commands(args):
         if category and command.get("category") != category:
             continue
         decorated = decorated_command(command, args)
+        if category != "emergency" and not decorated["surface"]["allowed"]:
+            continue
         if not include_disabled and not decorated["active"]:
             continue
         commands.append(decorated)
@@ -5275,7 +5402,7 @@ def action_guardian_run_command(args):
         return error("Unknown command_id", command_id=command_id, available=[item["id"] for item in CAPABILITY_COMMANDS])
     if not command_is_active(command, args):
         return error(
-            "Command required feature flags are inactive.",
+            "Command required feature flags or tool surface are inactive.",
             command=decorated_command(command, args),
         )
     provided_args = args.get("args") if isinstance(args.get("args"), dict) else {}

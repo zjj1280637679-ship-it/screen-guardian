@@ -45,7 +45,7 @@ Use this skill when the user asks to:
 - Treat registered extension routes as configuration only unless a future adapter explicitly handles execution.
 - Treat decision policies as configuration/envelope preparation only. Do not execute function routes, APIs, local commands, or subagents unless a future adapter or caller explicitly handles execution.
 - Treat monitor profiles as declarative project/workflow plans. Setting a monitor profile does not start monitoring; do not start background monitoring unless the user clearly asks for an explicit scheduler or bounded foreground watch.
-- Treat data-layer access as consented envelope preparation first. Use `prepare_data_layer_request` only with `user_consented=true`, consent text, and explicit scope; it writes a local request file and does not query, export, mutate, upload, read browser secret storage, or touch databases/registries by itself.
+- Treat data-layer access as consented envelope preparation first. Use `prepare_data_layer_request` only with `user_consented=true`, consent text, and a concrete target in scope; filters and row limits only constrain that target. It writes a local request file and does not query, export, mutate, upload, read browser secret storage, or touch databases/registries by itself.
 - Ordinary captures should avoid image analysis unless the user asks for it, passes `analyze: true`, or uses `preprocess: auto`.
 - Do not record audio unless the user asks for it. Prefer listing audio adapter/device status first.
 

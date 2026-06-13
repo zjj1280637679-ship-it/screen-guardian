@@ -212,6 +212,10 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 "PYTHONUSERBASE": os.environ.get("PYTHONUSERBASE") or CURRENT_PYTHON_USERBASE,
                 "SCREEN_GUARDIAN_PYTHON": sys.executable,
             }
+            advanced_surface_env = {
+                **default_surface_env,
+                "SCREEN_GUARDIAN_TOOL_SURFACE": "advanced",
+            }
             default_tools_result = list_tools(default_surface_env)
             timings["tools.list.default_surface"] = default_tools_result
             default_tool_names = {tool.get("name") for tool in default_tools_result.get("tools", [])}
@@ -230,6 +234,33 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 and "available_surfaces" in hidden_payload,
                 payload_text(hidden_payload)[:500],
             )
+            advanced_commands_result = timed_tool("guardian_list_commands", {}, advanced_surface_env)
+            timings["guardian_list_commands.advanced_surface"] = advanced_commands_result
+            advanced_commands_payload = advanced_commands_result["payload"]
+            advanced_command_ids = {command.get("id") for command in advanced_commands_payload.get("commands") or []}
+            add_check(
+                checks,
+                "advanced command catalog hides emergency commands by default",
+                ok_transport(advanced_commands_result)
+                and "emergency.exec.prepare" not in advanced_command_ids
+                and "emergency.exec.run" not in advanced_command_ids,
+                payload_text(advanced_commands_payload)[:500],
+            )
+            advanced_emergency_result = timed_tool(
+                "guardian_run_command",
+                {"command_id": "emergency.exec.prepare", "args": {"code": "print('nope')"}},
+                advanced_surface_env,
+            )
+            timings["guardian_run_command.emergency_on_advanced_surface"] = advanced_emergency_result
+            advanced_emergency_payload = advanced_emergency_result["payload"]
+            add_check(
+                checks,
+                "advanced command runner cannot bypass full surface",
+                advanced_emergency_payload.get("ok") is False
+                and "tool surface" in payload_text(advanced_emergency_payload).lower()
+                and ((advanced_emergency_payload.get("command") or {}).get("surface") or {}).get("required") == "full",
+                payload_text(advanced_emergency_payload)[:500],
+            )
 
             tools_result = list_tools(env)
             timings["tools.list"] = tools_result
@@ -245,6 +276,14 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "guardian_check returns without capture", ok_transport(guardian_check) and guardian_payload.get("ok") is True, payload_text(guardian_payload)[:500])
             add_check(checks, "guardian_check recommends an explicit next step", bool(guardian_payload.get("recommended_next")), payload_text(guardian_payload)[:500])
             add_check(checks, "guardian_check exposes local cache path", bool(guardian_payload.get("active_cache_dir")), payload_text(guardian_payload)[:500])
+            add_check(
+                checks,
+                "guardian_check separates core and advanced AI-first tools",
+                "guardian_sniff_context" in set(guardian_payload.get("ai_first_tools") or [])
+                and "guardian_prepare_workflow" not in set(guardian_payload.get("ai_first_tools") or [])
+                and "guardian_prepare_workflow" in set(guardian_payload.get("advanced_ai_first_tools") or []),
+                payload_text(guardian_payload)[:500],
+            )
 
             sniff_result = timed_tool(
                 "guardian_sniff_context",
@@ -305,6 +344,27 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(checks, "capture-chain tool prepares a local envelope", ok_transport(chain_result) and chain_payload.get("ok") is True and chain_path.exists(), payload_text(chain_payload)[:500])
             add_check(checks, "capture-chain tool remains prepare-only", "does not execute screenshots" in payload_text(chain_payload).lower(), payload_text(chain_payload)[:500])
 
+            unsafe_chain_result = timed_tool(
+                "prepare_capture_chain",
+                {
+                    "objective": "Verify unsafe capture-chain steps are rejected.",
+                    "route": "application",
+                    "steps": [{"tool": "guardian_run_exec", "args": {"code": "print('nope')"}}],
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["prepare_capture_chain.unsafe_step"] = unsafe_chain_result
+            unsafe_chain_payload = unsafe_chain_result["payload"]
+            add_check(
+                checks,
+                "capture-chain rejects unsafe step tools",
+                unsafe_chain_payload.get("ok") is False
+                and "not allowed" in payload_text(unsafe_chain_payload).lower()
+                and unsafe_chain_payload.get("tool") == "guardian_run_exec",
+                payload_text(unsafe_chain_payload)[:500],
+            )
+
             data_layer_result = timed_tool(
                 "prepare_data_layer_request",
                 {
@@ -330,6 +390,102 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 and data_layer_payload.get("data_layer_touched") is False
                 and data_layer_path.exists(),
                 payload_text(data_layer_payload)[:500],
+            )
+
+            data_layer_no_target_result = timed_tool(
+                "prepare_data_layer_request",
+                {
+                    "source_type": "database",
+                    "operation": "query",
+                    "user_consented": True,
+                    "consent_text": "Evaluation consent with constraints but no concrete data target.",
+                    "scope": {"row_limit": 10},
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["prepare_data_layer_request.no_concrete_target"] = data_layer_no_target_result
+            data_layer_no_target_payload = data_layer_no_target_result["payload"]
+            add_check(
+                checks,
+                "data-layer scope requires a concrete target",
+                data_layer_no_target_payload.get("ok") is False
+                and "concrete target" in payload_text(data_layer_no_target_payload).lower(),
+                payload_text(data_layer_no_target_payload)[:500],
+            )
+
+            data_layer_inline_secret_result = timed_tool(
+                "prepare_data_layer_request",
+                {
+                    "source_type": "database",
+                    "operation": "query",
+                    "user_consented": True,
+                    "consent_text": "Evaluation consent for inline-secret rejection.",
+                    "scope": {"connection_ref": "example.analytics", "tables": ["events"], "row_limit": 10},
+                    "query": "select * from events where api_key='abcdef123456'",
+                    "output_dir": str(output_dir),
+                },
+                env,
+            )
+            timings["prepare_data_layer_request.inline_secret_value"] = data_layer_inline_secret_result
+            data_layer_inline_secret_payload = data_layer_inline_secret_result["payload"]
+            add_check(
+                checks,
+                "data-layer rejects inline secret values",
+                data_layer_inline_secret_payload.get("ok") is False
+                and "inline secrets" in payload_text(data_layer_inline_secret_payload).lower(),
+                payload_text(data_layer_inline_secret_payload)[:500],
+            )
+
+            data_scope_sniff_result = timed_tool(
+                "guardian_sniff_context",
+                {
+                    "authorization_level": "L4_sensitive_storage_or_data_access",
+                    "include_sensitive_routes": True,
+                    "data_layer_user_consented": True,
+                    "data_layer_consent_text": "Evaluation consent for database route preparation only.",
+                    "data_layer_scope": {"connection_ref": "example.analytics", "tables": ["events"], "row_limit": 10},
+                    "target": {"kind": "database"},
+                },
+                env,
+            )
+            timings["guardian_sniff_context.data_layer_scope"] = data_scope_sniff_result
+            data_scope_payload = data_scope_sniff_result["payload"]
+            data_scope_routes = {route.get("id"): route.get("status") for route in data_scope_payload.get("route_candidates") or []}
+            data_scope_status = data_scope_payload.get("data_layer_scope_status") or {}
+            add_check(
+                checks,
+                "sniff data-layer scope is source-specific",
+                ok_transport(data_scope_sniff_result)
+                and data_scope_routes.get("database_readonly") == "eligible_for_prepare_data_layer_request"
+                and data_scope_routes.get("api_readonly") == "requires_explicit_endpoint_and_scope"
+                and data_scope_routes.get("registry_readonly") == "blocked_until_explicit_key_scope"
+                and ((data_scope_status.get("database") or {}).get("eligible_for_prepare_data_layer_request") is True)
+                and ((data_scope_status.get("api") or {}).get("eligible_for_prepare_data_layer_request") is False),
+                payload_text(data_scope_payload)[:500],
+            )
+
+            data_scope_missing_text_result = timed_tool(
+                "guardian_sniff_context",
+                {
+                    "authorization_level": "L4_sensitive_storage_or_data_access",
+                    "include_sensitive_routes": True,
+                    "data_layer_user_consented": True,
+                    "data_layer_scope": {"connection_ref": "example.analytics", "tables": ["events"], "row_limit": 10},
+                    "target": {"kind": "database"},
+                },
+                env,
+            )
+            timings["guardian_sniff_context.data_layer_missing_consent_text"] = data_scope_missing_text_result
+            missing_text_payload = data_scope_missing_text_result["payload"]
+            missing_text_routes = {route.get("id"): route.get("status") for route in missing_text_payload.get("route_candidates") or []}
+            add_check(
+                checks,
+                "sniff data-layer readiness requires consent text",
+                ok_transport(data_scope_missing_text_result)
+                and missing_text_routes.get("database_readonly") == "scope_ready_requires_consent_text"
+                and ((missing_text_payload.get("data_layer_scope_status") or {}).get("database") or {}).get("has_consent_text") is False,
+                payload_text(missing_text_payload)[:500],
             )
 
             readiness_result = timed_tool("guardian_run_command", {"command_id": "diagnostic.readiness"}, env)

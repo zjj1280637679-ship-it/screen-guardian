@@ -51,7 +51,7 @@
 - `recommended_order` 只代表排序，不代表授权已经充分
 - `authorization.allowed_actions` / `recommendable_actions` 只代表后续工具可考虑的动作
 - `authorization.performed_actions=[]` 表示本次嗅探没有执行截图、滚动、导出、API、数据库或注册表动作
-- 当 `data_layer_user_consented=true` 且 `data_layer_scope` 明确时，匹配该范围的数据源路线可以标记为 `eligible_for_prepare_data_layer_request`，但仍不代表已经执行数据访问。
+- 当 `data_layer_user_consented=true`、`data_layer_consent_text` 存在且 `data_layer_scope` 明确时，匹配该范围的数据源路线可以标记为 `eligible_for_prepare_data_layer_request`，但仍不代表已经执行数据访问。
 
 ## 示例
 
@@ -76,6 +76,8 @@
 如果传入 `file_paths`，嗅探层只做路径字符串、扩展名和本地元数据分类，不读取文件内容。潜在网络路径，例如 UNC 或 `file://` 路径，默认跳过元数据探测；只有显式设置 `allow_network_file_metadata_probe=true` 才允许后续实现考虑探测。
 
 如果用户明确同意数据层访问，下一步仍应优先调用 `prepare_data_layer_request` 生成本地 JSON 信封。该信封必须包含 `user_consented=true`、`consent_text` 和明确 `scope`；写入、更新、删除、迁移或权限变更还必须包含 `mutation_confirmed=true` 与 `backup_plan` 或 `rollback_plan`。内联密钥、cookie、localStorage、sessionStorage、密码或 token 不允许写入信封，应改用后续执行器可解析的环境变量引用。
+
+`scope` 必须包含具体目标，例如 `connection_ref`、`tables`、`registry_key`、`api_endpoint`、`file_path`、`export_name` 或 `app_id`。`fields`、`where`、`row_limit` 只能限制目标，不单独构成数据源授权。
 
 ## 因果降级
 

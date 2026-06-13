@@ -51,7 +51,7 @@ Minimal sniff example:
 
 For this tool, `authorization_level` ranks possible routes, `declared_permissions` records the user's scoped permission words, `include_sensitive_routes` shows blocked-or-confirmation-required data routes, and `include_capture_targets` embeds the normal no-screenshot target index.
 
-After consent, use `prepare_data_layer_request` to write a scoped local envelope for database, registry, API, export, file, or app-storage work. It requires `user_consented=true`, `consent_text`, and explicit `scope`; mutating operations also require `mutation_confirmed=true` plus `backup_plan` or `rollback_plan`. The tool does not execute the data-layer action.
+After consent, use `prepare_data_layer_request` to write a scoped local envelope for database, registry, API, export, file, or app-storage work. It requires `user_consented=true`, `consent_text`, and a concrete target in `scope`; filters and row limits only constrain that target. The route sniffer likewise needs `data_layer_consent_text` before marking a scoped data route eligible. Mutating operations also require `mutation_confirmed=true` plus `backup_plan` or `rollback_plan`. The tool does not execute the data-layer action.
 
 `guardian_perceive` defaults to fast direct capture. When the user or AI wants a non-default strategy, pass stackable `capture_modes`: `delay` for delayed screenshots, `wait_render` for render-complete retry, `wait_buffer` for visual-stability/buffer settling before the final screenshot, and `wait_error` for capturing after an explicit error-window signal. These modes can be combined, for example `["delay","wait_render","wait_buffer"]`.
 

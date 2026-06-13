@@ -18,7 +18,8 @@ First call `guardian_sniff_context` with:
 - `authorization_level="L4_sensitive_storage_or_data_access"` for database or registry candidates.
 - `include_sensitive_routes=true`.
 - `data_layer_user_consented=true` only when the user has explicitly agreed.
-- `data_layer_scope` with a concrete target such as `connection_ref`, `registry_key`, `api_endpoint`, `file_path`, `tables`, `fields`, `where`, or `row_limit`.
+- `data_layer_consent_text` with the user-facing consent statement for audit readiness.
+- `data_layer_scope` with a concrete target such as `connection_ref`, `registry_key`, `api_endpoint`, `file_path`, `export_name`, `app_id`, or `tables`; `fields`, `where`, and `row_limit` only constrain that target.
 
 Then call `prepare_data_layer_request` to write a local audit envelope. A later scoped executor can consume that envelope after confirming the same scope again.
 
@@ -51,7 +52,8 @@ Fallbacks:
 
 ## Acceptance Checks
 
-- The sniff output may mark a matching sensitive route as `eligible_for_prepare_data_layer_request` only when consent and explicit scope are both present.
+- The sniff output may mark a matching sensitive route as `eligible_for_prepare_data_layer_request` only when consent, consent text, and explicit scope are all present.
+- `row_limit`, `fields`, or `where` alone do not count as explicit scope.
 - `prepare_data_layer_request` writes exactly one local JSON envelope.
 - The output states that no database query, registry read, API request, export, upload, download, file-content read, or mutation occurred.
 - The envelope contains consent text, scope, operation, safety flags, and execution fields showing `data_layer_touched=false`.

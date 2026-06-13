@@ -62,6 +62,8 @@ This is intentionally an escape hatch. It is useful for emergency repair, local 
 
 Because confirmed raw execution is still arbitrary local execution, it stays off the default MCP surface. It appears only on the `full` tool surface, remains disabled until `raw_local_exec=true`, requires `user_confirmed=true` on every call, writes an audit record, and should not be exposed as a routine hidden automation path.
 
+Registered `emergency.*` commands also require the `full` tool surface. `guardian_run_command` is available on the advanced surface for normal registered workflows, but it must not be used as an indirect path to break-glass execution.
+
 ## Boundary
 
 The runtime does not pretend that code execution is impossible. It makes execution explicit, visible, bounded, and auditable.

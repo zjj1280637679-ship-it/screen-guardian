@@ -35,7 +35,7 @@ Persistent feature flags are also the safety boundary. Per-call `feature_flags` 
 
 `raw_local_exec` is the break-glass local execution flag. It defaults to disabled and must be enabled persistently before `guardian_run_exec` can run Python, PowerShell, or Node code. The execution call must still include `user_confirmed=true`.
 
-`data_layer_envelopes` controls consented data-layer request preparation. It writes a local JSON envelope only. The request must include `user_consented=true`, `consent_text`, and an explicit `scope`; mutating operations such as `write`, `update`, `delete`, `migrate`, or `permission_change` also require `mutation_confirmed=true` and either a `backup_plan` or `rollback_plan`. Inline secrets are rejected; use environment-variable references for later executors.
+`data_layer_envelopes` controls consented data-layer request preparation. It writes a local JSON envelope only. The request must include `user_consented=true`, `consent_text`, and a concrete target in `scope`; fields, filters, and row limits only constrain that target. Mutating operations such as `write`, `update`, `delete`, `migrate`, or `permission_change` also require `mutation_confirmed=true` and either a `backup_plan` or `rollback_plan`. Inline secrets are rejected; use environment-variable references for later executors.
 
 ## Local Cache
 
