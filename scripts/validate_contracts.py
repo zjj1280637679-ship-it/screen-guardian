@@ -34,6 +34,7 @@ CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 
 REQUIRED_TOOLS = [
     "guardian_check",
+    "guardian_radar",
     "guardian_capture_targets",
     "guardian_sniff_context",
     "guardian_perceive",
@@ -123,7 +124,7 @@ REQUIRED_TRACEABILITY_FIELDS = [
 
 
 DESIGN_COVERAGE = {
-    "ai-first interface": ["ai-first", "guardian_check", "guardian_capture_targets", "guardian_perceive"],
+    "ai-first interface": ["ai-first", "guardian_check", "guardian_radar", "guardian_capture_targets", "guardian_perceive"],
     "anti-abuse stance": ["anti-abuse", "not designed or supported for bypassing"],
     "advisory context signals": ["advisory", "regex", "hard moral blockers"],
     "capability runtime": ["capability runtime", "registered commands", "break-glass"],
@@ -379,6 +380,7 @@ def check_static_contracts() -> CheckSet:
 
     guardian_terms = {
         "guardian_check reports status without capture": ["action_guardian_check", "no screenshot", "recommended_next"],
+        "guardian_radar pre-judges page and window state without capture": ["action_guardian_radar", "radar_performed", "scroll_container_required", "tab_metadata_only", "browser_session_nested_scroll"],
         "guardian_capture_targets indexes targets before capture": ["action_guardian_capture_targets", "target_index_ready", "capture_performed", "background_mode"],
         "guardian_sniff_context is authorization scoped route sniffing": ["action_guardian_sniff_context", "AUTHORIZATION_LEVELS", "secret_storage_read", "markitdown_style_optional", "database_or_registry_touched", "allow_network_file_metadata_probe", "blocked_by_authorization_level"],
         "consented data layer requests are prepare-only": ["action_prepare_data_layer_request", "data_layer_envelopes", "user_consented=true", "data_layer_touched", "mutation_confirmed=true", "Inline secrets are not accepted", "DATA_LAYER_INLINE_SECRET_PATTERNS"],

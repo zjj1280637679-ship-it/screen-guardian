@@ -7,6 +7,7 @@ The AI-first interface adds a small set of intent tools that should be tried bef
 | Intent | Start with |
 | --- | --- |
 | Check whether the plugin can run | `guardian_check` |
+| Pre-judge capturable targets and page state | `guardian_radar` |
 | See what can be captured before taking a screenshot | `guardian_capture_targets` |
 | Sniff the safest authorized route before acting | `guardian_sniff_context` |
 | Look at the screen, text, UI, a window, or a short change | `guardian_perceive` |
@@ -21,6 +22,7 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 
 | Scenario | AI-first call | What it maps to |
 | --- | --- | --- |
+| Passive target/page radar | `guardian_radar` | A no-capture route card set for windows, current tabs, page observations, ordinary full-page screenshots, nested scroll containers, and metadata-only tabs |
 | Choose a capture target before screenshot | `guardian_capture_targets` | A local target index for displays, application windows, and explicit webpage URLs; no capture is performed |
 | Choose an authorized high-efficiency route | `guardian_sniff_context` | A route plan across visual capture, browser-session readonly DOM, nested scroll, document-to-markdown conversion, export/API, database, and registry options; no route is executed |
 | Quick look | `guardian_perceive` with `task="quick_look"` | A normal local screen or region capture |
@@ -42,6 +44,8 @@ These tools are wrappers. They do not remove or replace the existing tools, and 
 | Prepare consented data-layer access | `prepare_data_layer_request` | Write a scoped local consent envelope for a future database, registry, API, export, file, or app-storage executor; no data is touched |
 
 Window capture is quiet-preferred by default. The plugin does not activate or raise the target window. If a window capture needs visible-screen bbox fallback, it probes whether sampled visible pixels appear to belong to the requested HWND. If another topmost window appears to cover the bbox, saving is deferred so the caller can retry with HWND/exact title, bring the window forward, or explicitly set `allow_unverified_bbox_fallback=true` as a last resort.
+
+Use `guardian_radar` before heavy browser or screenshot work when the caller can supply current tab metadata or one bounded readonly page observation. It classifies whether the page is a normal document long screenshot, an application scroll container, a metadata-only tab needing a probe, or a browser window that should be routed through the browser session instead of visible pixels. It performs no screenshot, navigation, storage read, database read, registry read, upload, model call, command, or background monitor.
 
 Use `guardian_sniff_context` when the user grants a broader authorization envelope and the AI needs to decide whether screenshots, browser-session DOM reads, nested-scroll capture, document conversion, page export, readonly API access, or storage reads would be the right path. The sniffer is route-only: it reports `capture_performed=false`, does not read browser secret storage, does not touch databases or registries, and does not make network requests. Document-to-markdown recommendations, including MarkItDown-style adapters, are treated as explicit file-conversion routes rather than browser-session or credential routes.
 

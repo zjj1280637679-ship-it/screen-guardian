@@ -523,6 +523,126 @@ const tools = [
     },
   },
   {
+    name: "guardian_radar",
+    description: "AI-first passive perception radar. Classifies capturable windows and caller-supplied browser page observations into concrete screenshot/page-state routes before any capture, navigation, storage read, or data-layer access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        objective: {
+          type: "string",
+          description: "What the user wants to learn. Used only for route ranking; no capture or external action is performed.",
+        },
+        authorization_level: {
+          type: "string",
+          enum: ["L0_visual_only", "L1_current_page_readonly", "L2_page_interaction", "L3_sensitive_action_confirmed", "L4_sensitive_storage_or_data_access"],
+          default: "L0_visual_only",
+        },
+        declared_permissions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional scoped permission words such as screenshot, dom_measure, container_scroll, file_convert, export_download, api_readonly, database_readonly, or registry_readonly.",
+        },
+        target: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["unknown", "screen", "window", "browser_tab", "webpage", "file", "folder", "api", "database", "registry"] },
+            title: { type: "string" },
+            url: { type: "string" },
+            selector: { type: "string" },
+            frame_selector: { type: "string" },
+            path: { type: "string" },
+          },
+          additionalProperties: false,
+          description: "Optional target hint. Hints are classified, not treated as authorization or proof of state.",
+        },
+        current_pages: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              title: { type: "string" },
+              url: { type: "string" },
+              source: { type: "string" },
+              viewport: { type: "object", additionalProperties: true },
+              documentSize: { type: "object", additionalProperties: true },
+              scrollables: { type: "array", items: { type: "object", additionalProperties: true } },
+              iframe_count: { type: "integer" },
+              table_count: { type: "integer" },
+              pagination: { type: "object", additionalProperties: true },
+              requires_session: { type: "boolean" },
+            },
+          },
+          description: "Readonly page observations from a browser connector: title/url, viewport/document size, scrollable containers, iframe/table/pagination hints. Do not include cookies, localStorage, sessionStorage, passwords, or secrets.",
+        },
+        page_observations: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Alias for current_pages.",
+        },
+        open_tabs: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          description: "Optional browser open-tab metadata. Title/URL-only tabs are marked as needing one readonly DOM measurement before route selection.",
+        },
+        url: {
+          type: "string",
+          description: "Optional explicit webpage URL to include in page target planning.",
+        },
+        urls: {
+          type: "array",
+          items: { type: "string" },
+        },
+        pages: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              url: { type: "string" },
+              label: { type: "string" },
+              mode: { type: "string", enum: ["full_page", "viewport", "element", "scroll_container"] },
+              selector: { type: "string" },
+              frame_selector: { type: "string" },
+            },
+            required: ["url"],
+            additionalProperties: true,
+          },
+        },
+        include_capture_targets: {
+          type: "boolean",
+          default: true,
+          description: "Include the no-screenshot display/window/page target index.",
+        },
+        include_displays: {
+          type: "boolean",
+          default: true,
+        },
+        include_windows: {
+          type: "boolean",
+          default: true,
+        },
+        include_pages: {
+          type: "boolean",
+          default: true,
+        },
+        include_visibility_probe: {
+          type: "boolean",
+          default: true,
+          description: "Sample topmost windows at target-window points to classify possible occlusion without capturing pixels.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+        },
+        runtime_limits: imageOutputProperties.runtime_limits,
+        feature_flags: imageOutputProperties.feature_flags,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "guardian_capture_targets",
     description: "AI-first pre-capture target index. Lists displays, capturable application windows, and optional webpage capture targets with recommended quiet/background capture arguments before any screenshot is taken.",
     inputSchema: {
@@ -2031,6 +2151,7 @@ const tools = [
 
 const CORE_TOOL_NAMES = new Set([
   "guardian_check",
+  "guardian_radar",
   "guardian_capture_targets",
   "guardian_sniff_context",
   "guardian_perceive",
@@ -2772,6 +2893,9 @@ function runPython(action, args) {
 async function callTool(name, args) {
   if (name === "guardian_check") {
     return runPython("guardian_check", args);
+  }
+  if (name === "guardian_radar") {
+    return runPython("guardian_radar", args);
   }
   if (name === "guardian_capture_targets") {
     return runPython("guardian_capture_targets", args);

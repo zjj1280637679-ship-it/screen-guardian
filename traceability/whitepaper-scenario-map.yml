@@ -17,6 +17,7 @@ claims:
       - docs/VALIDATION.md
     acceptance_conditions:
       - "The AI can inspect target metadata before choosing an expensive capture route."
+      - "The passive radar can classify page and window state into route cards before screenshots or sensitive reads."
       - "Large surveys expose counts and truncation instead of implying complete coverage."
     side_effects:
       - "none for status-only index"
@@ -24,6 +25,8 @@ claims:
       - screen_capture
       - window_capture
     receipt_fields:
+      - radar_performed
+      - radar_cards
       - ok
       - saved
       - result_state

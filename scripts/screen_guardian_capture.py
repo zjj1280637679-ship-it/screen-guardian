@@ -4220,7 +4220,7 @@ def action_guardian_check(args):
         "extra_output_dirs": serialize_paths(mirrors),
         "key_capabilities": key_capability_summary(flags),
         "recommended_next": recommended_next,
-        "ai_first_tools": ["guardian_check", "guardian_capture_targets", "guardian_sniff_context", "guardian_perceive", "guardian_survey_windows"],
+        "ai_first_tools": ["guardian_check", "guardian_radar", "guardian_capture_targets", "guardian_sniff_context", "guardian_perceive", "guardian_survey_windows"],
         "advanced_ai_first_tools": ["guardian_prepare_workflow", "guardian_list_commands", "guardian_run_command", "list_capture_routes", "prepare_capture_chain"],
         "privacy": "Local status check only; no screenshot, audio recording, upload, model call, or configuration change.",
     }
@@ -4716,6 +4716,350 @@ def sniff_route_candidates(args, level, permissions):
             ]
         )
     return sorted(candidates, key=lambda item: int(item.get("priority", 100)))
+
+
+def first_number(*values, default=0):
+    for value in values:
+        try:
+            if value is None or value == "":
+                continue
+            return float(value)
+        except Exception:
+            continue
+    return default
+
+
+def nested_number(data, container_names, field_names, default=0):
+    if not isinstance(data, dict):
+        return default
+    for container_name in container_names:
+        container = data.get(container_name)
+        if isinstance(container, dict):
+            for field_name in field_names:
+                value = first_number(container.get(field_name), default=None)
+                if value is not None:
+                    return value
+    for field_name in field_names:
+        value = first_number(data.get(field_name), default=None)
+        if value is not None:
+            return value
+    return default
+
+
+def page_observation_records(args):
+    records = []
+    for key in ("current_pages", "page_observations", "browser_pages"):
+        for page in args.get(key) or []:
+            if isinstance(page, dict):
+                merged = dict(page)
+                merged.setdefault("source", key)
+                records.append(merged)
+    for tab in args.get("open_tabs") or []:
+        if isinstance(tab, dict):
+            records.append(
+                {
+                    "source": "browser_open_tab",
+                    "state_observed": False,
+                    "title": tab.get("title"),
+                    "url": tab.get("url"),
+                    "tab_id": tab.get("id"),
+                    "tab_group": tab.get("tabGroup") or tab.get("tab_group"),
+                    "last_opened": tab.get("lastOpened") or tab.get("last_opened"),
+                }
+            )
+    target = args.get("target") if isinstance(args.get("target"), dict) else {}
+    if str(target.get("kind") or "").lower() in ("browser_tab", "webpage") and (target.get("url") or target.get("title") or target.get("selector")):
+        records.append(
+            {
+                "source": "target_hint",
+                "state_observed": False,
+                "title": target.get("title"),
+                "url": target.get("url"),
+                "selector": target.get("selector"),
+                "frame_selector": target.get("frame_selector"),
+            }
+        )
+    for page in args.get("pages") or []:
+        if isinstance(page, dict):
+            records.append({"source": "explicit_page", **page})
+    if args.get("url"):
+        records.append({"source": "explicit_url", "url": args.get("url"), "state_observed": False})
+    for url in args.get("urls") or []:
+        records.append({"source": "explicit_url", "url": url, "state_observed": False})
+
+    deduped = []
+    seen = set()
+    for record in records:
+        url = str(record.get("url") or "")
+        title = str(record.get("title") or "")
+        selector = str(record.get("selector") or record.get("selectorHint") or record.get("selector_hint") or "")
+        key = (url, title, selector, str(record.get("source") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def page_scrollable_records(page):
+    scrollables = []
+    for raw in page.get("scrollables") or page.get("scroll_containers") or []:
+        if not isinstance(raw, dict):
+            continue
+        client_height = first_number(raw.get("clientHeight"), raw.get("client_height"), default=0)
+        scroll_height = first_number(raw.get("scrollHeight"), raw.get("scroll_height"), default=0)
+        client_width = first_number(raw.get("clientWidth"), raw.get("client_width"), default=0)
+        scroll_width = first_number(raw.get("scrollWidth"), raw.get("scroll_width"), default=0)
+        vertical_hidden = scroll_height > client_height + 20
+        horizontal_hidden = scroll_width > client_width + 20
+        significant_vertical = vertical_hidden and client_height >= 180 and (scroll_height - client_height) >= max(120, client_height * 0.25)
+        significant_horizontal = horizontal_hidden and client_width >= 500 and (scroll_width - client_width) >= max(160, client_width * 0.2)
+        selector = str(raw.get("selector") or raw.get("selectorHint") or raw.get("selector_hint") or "").strip()
+        if not selector:
+            tag = str(raw.get("tag") or raw.get("tagName") or "element").strip().lower()
+            class_name = str(raw.get("className") or raw.get("class") or "").strip()
+            if class_name:
+                selector = f"{tag}." + ".".join(class_name.split()[:4])
+            else:
+                selector = tag
+        scrollables.append(
+            {
+                "selector": selector,
+                "frame_selector": str(raw.get("frame_selector") or raw.get("frameSelector") or ""),
+                "client_height": int(client_height),
+                "scroll_height": int(scroll_height),
+                "client_width": int(client_width),
+                "scroll_width": int(scroll_width),
+                "vertical_hidden": bool(vertical_hidden),
+                "horizontal_hidden": bool(horizontal_hidden),
+                "significant": bool(significant_vertical or significant_horizontal),
+                "text_preview": str(raw.get("textPreview") or raw.get("text_preview") or "")[:240],
+                "rect": raw.get("rect") or {},
+            }
+        )
+    return scrollables
+
+
+def page_session_bound(page):
+    source = str(page.get("source") or "").lower()
+    url = str(page.get("url") or "").lower()
+    return bool(
+        page.get("requires_session")
+        or page.get("session_bound")
+        or page.get("authenticated")
+        or page.get("active") is not None
+        or page.get("tab_id")
+        or source in ("current_pages", "page_observations", "browser_pages", "browser_open_tab")
+        or "console." in url
+    )
+
+
+def classify_page_observation(page, level, permissions):
+    title = str(page.get("title") or "")
+    url = str(page.get("url") or "")
+    source = str(page.get("source") or "unknown")
+    viewport_height = int(nested_number(page, ("viewport", "viewportSize", "viewport_size"), ("height", "viewportHeight", "viewport_height"), default=0))
+    viewport_width = int(nested_number(page, ("viewport", "viewportSize", "viewport_size"), ("width", "viewportWidth", "viewport_width"), default=0))
+    document_height = int(nested_number(page, ("documentSize", "document_size", "document"), ("scrollHeight", "scroll_height", "bodyScrollHeight", "body_scroll_height"), default=0))
+    document_width = int(nested_number(page, ("documentSize", "document_size", "document"), ("scrollWidth", "scroll_width", "bodyScrollWidth", "body_scroll_width"), default=0))
+    scrollables = page_scrollable_records(page)
+    significant_scrollables = [item for item in scrollables if item.get("significant")]
+    best_scrollable = None
+    if significant_scrollables:
+        best_scrollable = sorted(significant_scrollables, key=lambda item: (item.get("scroll_height", 0) * item.get("scroll_width", 0)), reverse=True)[0]
+    has_metrics = bool(viewport_height or document_height or scrollables or page.get("headings") or page.get("links"))
+    session_bound = page_session_bound(page)
+    if best_scrollable:
+        if session_bound:
+            route = "browser_session_nested_scroll"
+        else:
+            route = "capture_webpage_scroll_container"
+        client_height = max(1, int(best_scrollable.get("client_height") or viewport_height or 900))
+        scroll_height = max(client_height, int(best_scrollable.get("scroll_height") or client_height))
+        step = max(1, int(client_height * 0.82))
+        segment_estimate = int(math.ceil(max(0, scroll_height - client_height) / step) + 1)
+        state = "scroll_container_required"
+        reason = "A significant inner scroll container has more content than its visible client area."
+        next_action = {
+            "tool": route,
+            "intent": "capture_scroll_container_segments",
+            "selector": best_scrollable.get("selector"),
+            "frame_selector": best_scrollable.get("frame_selector"),
+            "estimated_segments": segment_estimate,
+            "restore_scroll_required": True,
+        }
+    elif has_metrics and viewport_height and document_height > viewport_height + 120:
+        route = "browser_session_full_page" if session_bound else "capture_webpage_full_page"
+        state = "ordinary_full_page"
+        segment_estimate = 1
+        reason = "The main document is taller than the viewport and no significant inner scroll container was reported."
+        next_action = {
+            "tool": "browser_session_screenshot" if session_bound else "capture_webpage",
+            "mode": "full_page",
+            "restore_scroll_required": False,
+        }
+    elif has_metrics:
+        route = "browser_session_viewport" if session_bound else "capture_webpage_viewport"
+        state = "viewport_sufficient"
+        segment_estimate = 1
+        reason = "Measured page content appears to fit the viewport or lacks hidden scroll extent."
+        next_action = {
+            "tool": "browser_session_screenshot" if session_bound else "capture_webpage",
+            "mode": "viewport",
+            "restore_scroll_required": False,
+        }
+    else:
+        route = "browser_state_probe_required" if title or url else "unknown_page_probe_required"
+        state = "tab_metadata_only"
+        segment_estimate = 0
+        reason = "Only tab or target metadata is available; a bounded DOM measurement is needed before choosing screenshot route."
+        next_action = {
+            "tool": "browser_connector_current_tab",
+            "intent": "readonly_dom_measure",
+            "measure": ["viewport", "documentSize", "significant_scrollables", "iframes", "tables", "pagination"],
+            "restore_scroll_required": False,
+        }
+
+    pagination = page.get("pagination") if isinstance(page.get("pagination"), dict) else {}
+    if pagination:
+        reason += " Pagination metadata is present, so the current screenshot may cover only one logical page."
+    return {
+        "type": "page",
+        "title": title,
+        "url": url,
+        "source": source,
+        "state_quality": "measured" if has_metrics else "metadata_only",
+        "page_state": state,
+        "recommended_route": route,
+        "reason": reason,
+        "session_bound": session_bound,
+        "document_size": {"width": document_width, "height": document_height},
+        "viewport": {"width": viewport_width, "height": viewport_height},
+        "significant_scrollable": best_scrollable,
+        "scrollable_count": len(scrollables),
+        "significant_scrollable_count": len(significant_scrollables),
+        "table_count": int(first_number(page.get("table_count"), page.get("tableCount"), default=0)),
+        "iframe_count": int(first_number(page.get("iframe_count"), page.get("iframeCount"), default=0)),
+        "pagination": pagination,
+        "estimated_segments": segment_estimate,
+        "next_action": next_action,
+        "forbidden_actions": ["cookie_read", "localStorage_read", "sessionStorage_read", "password_store_read", "form_submit"],
+    }
+
+
+def classify_window_target_for_radar(window):
+    states = set(window.get("states") or [])
+    title = str(window.get("title") or "")
+    process_name = str(window.get("process_name") or "")
+    process_lower = process_name.lower()
+    visibility_probe = window.get("visibility_probe") if isinstance(window.get("visibility_probe"), dict) else {}
+    identity_verified = bool(visibility_probe.get("identity_verified"))
+    if "minimized" in states or "offscreen" in states:
+        state = "decision_before_capture"
+        route = "strict_window_capture_or_user_restore"
+        reason = "Window is minimized or offscreen; do not treat a blank or tiny capture as success."
+        priority = 70
+    elif "possibly_occluded" in states or visibility_probe and not identity_verified:
+        state = "occluded_or_identity_uncertain"
+        route = "capture_window_strict"
+        reason = "Visible-screen pixels may belong to another window. Use strict HWND capture or return a decision."
+        priority = 40
+    elif "chrome" in process_lower or "edge" in process_lower or "browser" in process_lower:
+        state = "browser_window_needs_page_state"
+        route = "browser_connector_current_tab"
+        reason = "Browser content should be acquired from page/session state when possible, not from visible desktop pixels."
+        priority = 20
+    else:
+        state = "strict_capture_ready"
+        route = "capture_window_strict"
+        reason = "Window appears visible enough for strict HWND capture, with guard checks still required."
+        priority = 35
+    return {
+        "type": "window",
+        "id": window.get("id"),
+        "hwnd": window.get("hwnd"),
+        "title": title,
+        "process_name": process_name,
+        "states": sorted(states),
+        "radar_state": state,
+        "recommended_route": route,
+        "reason": reason,
+        "priority": priority,
+        "next_action": window.get("capture_target", {}).get("primary") if route == "capture_window_strict" else {"tool": route, "intent": "collect_page_state_before_capture"},
+        "forbidden_actions": ["visible_bbox_fallback_without_identity", "foreground_activation_without_user_request"],
+    }
+
+
+def action_guardian_radar(args):
+    try:
+        level = normalize_authorization_level(args)
+        profile = copy.deepcopy(AUTHORIZATION_LEVELS[level])
+        permissions = {str(item).strip().lower() for item in normalized_tags(args.get("declared_permissions"))}
+        include_capture_targets = bool(args.get("include_capture_targets", True))
+        capture_index = None
+        if include_capture_targets:
+            capture_args = {
+                **args,
+                "include_displays": bool(args.get("include_displays", True)),
+                "include_windows": bool(args.get("include_windows", True)),
+                "include_pages": bool(args.get("include_pages", True)),
+            }
+            capture_index = guardian_capture_targets_payload(capture_args)
+        page_cards = [classify_page_observation(page, level, permissions) for page in page_observation_records(args)]
+        window_cards = []
+        if capture_index:
+            for window in ((capture_index.get("windows") or {}).get("targets") or []):
+                window_cards.append(classify_window_target_for_radar(window))
+        route_candidates = sniff_route_candidates(args, level, permissions)
+        cards = sorted(page_cards + window_cards, key=lambda item: int(item.get("priority", 10 if item.get("type") == "page" else 50)))
+        best_card = cards[0] if cards else None
+        if best_card:
+            conclusion = f"Prefer {best_card.get('recommended_route')} for {best_card.get('type')} state {best_card.get('page_state') or best_card.get('radar_state')}."
+        else:
+            conclusion = "No concrete page or window target was observed; collect tab/window target metadata first."
+        needs_probe = [card for card in page_cards if card.get("state_quality") == "metadata_only"]
+        return write_json(
+            {
+                "ok": True,
+                "radar_performed": True,
+                "capture_performed": False,
+                "page_navigation_performed": False,
+                "secret_storage_read": False,
+                "database_or_registry_touched": False,
+                "network_request_performed": False,
+                "objective": str(args.get("objective") or ""),
+                "current_conclusion": conclusion,
+                "causal_grade": "route recommendation from target/page state, not proof of capture success",
+                "authorization": {
+                    "level": level,
+                    "label": profile["label"],
+                    "declared_permissions": sorted(permissions),
+                    "allowed_actions": profile["allowed_actions"],
+                    "performed_actions": [],
+                    "forbidden_actions": profile["forbidden_actions"],
+                },
+                "radar_cards": cards,
+                "pages": {"observed": len(page_cards), "cards": page_cards},
+                "windows": {"observed": len(window_cards), "cards": window_cards},
+                "capture_targets": capture_index,
+                "route_candidates": route_candidates,
+                "recommended_order": [card.get("recommended_route") for card in cards[:5]] or [item["id"] for item in route_candidates[:5]],
+                "connector_probe_request": {
+                    "needed": bool(needs_probe),
+                    "reason": "Some browser tabs only have title/URL metadata; run one readonly DOM measurement before screenshot routing." if needs_probe else "",
+                    "collect": ["title", "url", "viewport", "documentSize", "significant_scrollables", "iframes", "tables", "pagination", "headings"],
+                    "forbidden": ["cookies", "localStorage", "sessionStorage", "passwords", "form_submit", "downloads"],
+                },
+                "metadata_contract": {
+                    "restored_state_required_for_scroll": True,
+                    "do_not_mislabel": ["browser_session_capture_as_headless_url_capture", "visible_bbox_as_strict_background_capture", "metadata_only_as_measured_page_state"],
+                    "success_requires": ["supported_answer", "saved_evidence_or_structured_metadata", "forbidden_side_effects_false"],
+                },
+                "privacy": "Passive radar only. No screenshot, page navigation, browser storage read, database query, registry read, upload, model call, command, or background monitor was performed.",
+            }
+        )
+    except Exception as exc:
+        return error(str(exc))
 
 
 def action_guardian_sniff_context(args):
@@ -6175,6 +6519,7 @@ def action_clear_cache(args):
 
 ACTIONS = {
     "guardian_check": action_guardian_check,
+    "guardian_radar": action_guardian_radar,
     "guardian_capture_targets": action_guardian_capture_targets,
     "guardian_sniff_context": action_guardian_sniff_context,
     "guardian_perceive": action_guardian_perceive,

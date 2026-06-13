@@ -15,6 +15,7 @@ Runtime evaluation is not a replacement for validation. It is a lightweight prod
 `scripts/evaluate_runtime.py` runs the MCP server through newline-delimited JSON-RPC and records:
 
 - whether the AI-first tools are present
+- whether `guardian_radar` can pre-judge a measured page as nested-scroll without acting
 - whether the capability-runtime tools are present
 - whether the default MCP surface reports `toolSurface="core"`, exactly matches the core whitelist, and returns a clear enable hint when a hidden tool is called
 - whether capture route tools are present

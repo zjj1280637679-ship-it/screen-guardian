@@ -2,7 +2,9 @@
 
 Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
 
-For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
+For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_radar`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
+
+Use `guardian_radar` when the AI already has browser tab metadata, a bounded DOM measurement, or a window target index and needs a one-shot route decision. It turns page facts such as `documentSize`, viewport size, significant `scrollables`, iframe/table/pagination hints, and window states into route cards like `ordinary_full_page`, `scroll_container_required`, `tab_metadata_only`, `occluded_or_identity_uncertain`, or `decision_before_capture`. This avoids making the main AI repeatedly infer whether a page needs normal full-page capture, browser-session nested scroll, strict HWND capture, or a preliminary readonly page probe.
 
 Use `guardian_sniff_context` when the next step might be faster as browser-session readonly DOM, nested-scroll capture, document-to-markdown conversion, export/API, database, or registry access. It only ranks routes from declared authorization; it does not capture, navigate, read browser secret storage, query databases, read the registry, upload files, or call models. When the user explicitly consents to a scoped data-layer route, use `prepare_data_layer_request` to write a local audit envelope before any executor touches that layer.
 

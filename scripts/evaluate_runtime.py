@@ -26,6 +26,7 @@ SERVER_PATH = ROOT / "mcp" / "server.cjs"
 CURRENT_PYTHON_USERBASE = getattr(site, "USER_BASE", "") or ""
 EXPECTED_AI_FIRST_TOOLS = {
     "guardian_check",
+    "guardian_radar",
     "guardian_capture_targets",
     "guardian_sniff_context",
     "guardian_perceive",
@@ -34,6 +35,7 @@ EXPECTED_AI_FIRST_TOOLS = {
 }
 EXPECTED_CORE_TOOLS = {
     "guardian_check",
+    "guardian_radar",
     "guardian_capture_targets",
     "guardian_sniff_context",
     "guardian_perceive",
@@ -279,10 +281,55 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             add_check(
                 checks,
                 "guardian_check separates core and advanced AI-first tools",
-                "guardian_sniff_context" in set(guardian_payload.get("ai_first_tools") or [])
+                "guardian_radar" in set(guardian_payload.get("ai_first_tools") or [])
+                and "guardian_sniff_context" in set(guardian_payload.get("ai_first_tools") or [])
                 and "guardian_prepare_workflow" not in set(guardian_payload.get("ai_first_tools") or [])
                 and "guardian_prepare_workflow" in set(guardian_payload.get("advanced_ai_first_tools") or []),
                 payload_text(guardian_payload)[:500],
+            )
+
+            radar_result = timed_tool(
+                "guardian_radar",
+                {
+                    "authorization_level": "L1_current_page_readonly",
+                    "declared_permissions": ["dom_measure", "container_scroll", "screenshot"],
+                    "current_pages": [
+                        {
+                            "title": "引言 - 速云api",
+                            "url": "https://syapi.apifox.cn/",
+                            "source": "browser_pages",
+                            "viewport": {"width": 1920, "height": 863},
+                            "documentSize": {"scrollWidth": 1920, "scrollHeight": 863},
+                            "scrollables": [
+                                {
+                                    "selectorHint": "div.relative.h-full.w-full.overflow-y-auto",
+                                    "clientWidth": 1910,
+                                    "clientHeight": 863,
+                                    "scrollWidth": 1910,
+                                    "scrollHeight": 2125,
+                                }
+                            ],
+                        }
+                    ],
+                    "include_capture_targets": False,
+                },
+                env,
+            )
+            timings["guardian_radar"] = radar_result
+            radar_payload = radar_result["payload"]
+            radar_pages = ((radar_payload.get("pages") or {}).get("cards") or [])
+            add_check(
+                checks,
+                "guardian_radar pre-judges nested scroll page without acting",
+                ok_transport(radar_result)
+                and radar_payload.get("ok") is True
+                and radar_payload.get("radar_performed") is True
+                and radar_payload.get("capture_performed") is False
+                and radar_payload.get("secret_storage_read") is False
+                and radar_pages
+                and radar_pages[0].get("page_state") == "scroll_container_required"
+                and radar_pages[0].get("recommended_route") == "browser_session_nested_scroll",
+                payload_text(radar_payload)[:500],
             )
 
             sniff_result = timed_tool(
