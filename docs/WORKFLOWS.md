@@ -30,6 +30,7 @@ The workflow surface is split so first-time users do not need to understand ever
 | Capability runtime tools | Registered command catalog, command runner, and break-glass execution envelopes | No arbitrary code through `guardian_run_command`; raw execution requires `raw_local_exec` and per-call confirmation |
 | Optional browser tools | Full-page, viewport, element, or nested scroll-container webpage capture through Playwright when enabled | No browser launch, page navigation, or long screenshot unless `webpage_capture` is enabled and `capture_webpage` is called |
 | Consented data-layer envelopes | Scoped database, registry, API, export, file, or app-storage requests after user consent | No query, mutation, export, upload, browser secret read, or registry/database access by itself |
+| Sandbox route envelopes | Hidden-desktop real-machine validation plans that a separate caller may run | No sandbox program launch, scheduler, or background lifecycle management by Screen Guardian itself |
 
 When onboarding a new user, start with `check_dependencies`, `list_displays`, and one capture tool. Add local control options only when the user needs storage, compression, preprocessing, metadata, or audio diagnostics. Use experimental envelope tools only when the user is designing a workflow that another bridge, scheduler, adapter, or subagent will consume.
 
@@ -222,6 +223,9 @@ Actions can describe:
 - `capture_region`
 - `capture_window`
 - `watch_screen`
+- `prepare_sandbox_session`
+- `screen_organ.sandbox_launch`
+- `screen_organ.sandbox_list`
 - `record_audio`
 - `analyze_audio`
 - `extract_audio_track`
@@ -231,6 +235,13 @@ Actions can describe:
 Use `prepare_monitor_tick` to write one local tick envelope. A scheduler, caller, future adapter, or subagent can read the profile, current observations, detected features, and candidate actions, then choose what to do. Screen Guardian does not silently install a background scheduler.
 
 `set_monitor_profile` only stores configuration. It does not start polling, screenshots, recording, API calls, subagent work, or a background service.
+
+For hidden-desktop real-machine validation, use `prepare_sandbox_session`
+instead of a loose action list. It writes a caller-owned session plan plus a
+`screen-guardian-sandbox-ledger/v1` template. The external caller owns launch,
+window listing, bounded capture, cleanup, and ledger writing. Screen Guardian
+does not start a sandbox daemon, synthesize sandbox input, or silently clean up
+processes behind the caller's back.
 
 ## Audio Capture And Extraction
 
@@ -259,7 +270,7 @@ These defaults catch short UI changes while preserving the no-background-service
 
 ## Render Timing And Delayed Capture
 
-`guardian_perceive` defaults to fast direct capture. Use stackable `capture_modes` only when the user or AI wants a non-default condition before saving:
+`guardian_perceive` defaults to fast capture, meaning it does not add an extra facade-level strategy wait. It still preserves each route's defaults: screen and region capture stay direct, while window capture keeps the lower-level blank-frame retry and guard-warning behavior. Use stackable `capture_modes` only when the user or AI wants a non-default condition before saving:
 
 - `fast`: direct screenshot; this is the default when `capture_modes` is omitted.
 - `delay`: wait first, using `delay_seconds` or a default one-second delay.

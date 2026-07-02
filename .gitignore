@@ -16,6 +16,7 @@ bin/screen-guardian-helper.exe
 
 # Local capture output
 ScreenGuardian/
+.tmp/
 ArkRuns/
 ark-runs/
 screen-guardian-*.png

@@ -18,6 +18,7 @@ For misuse boundaries, see [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md). In short, S
 | Registered capability commands | `guardian_list_commands`, `guardian_run_command` | Enabled, registry-only | Depends on mapped command |
 | Break-glass execution envelopes | `guardian_prepare_exec` | Enabled as local files only | Same local cache path |
 | Break-glass raw local execution | `guardian_run_exec` | Disabled by feature flag | Local stdout/stderr response plus audit JSONL |
+| Sandbox session envelopes and ledgers | `prepare_sandbox_session`, `write_sandbox_ledger`, or `prepare_capture_chain` with `route="sandbox"` | Enabled as local files only; sandbox session and ledger tools are visible on the default core surface | Same local cache path |
 | External API experiments | `scripts/volcengine_ark_runner.py` | Not part of MCP default execution | `~/Pictures/ScreenGuardian/ArkRuns` |
 
 ## Trigger Boundaries
@@ -25,6 +26,9 @@ For misuse boundaries, see [docs/ANTI_ABUSE.md](docs/ANTI_ABUSE.md). In short, S
 - The plugin does not start a background scheduler.
 - Monitor profiles are declarative. They do not poll, capture, record, call APIs, or invoke subagents until an explicit caller consumes them.
 - Decision policies are declarative. They do not execute arbitrary functions, local commands, APIs, or subagents in the ultra-light core.
+- Sandbox routes are declarative. Screen Guardian does not launch hidden desktop programs, keep sandbox state alive, or clean up sandbox processes unless an explicit external caller performs those actions.
+- Sandbox sessions must be accounted. A `prepare_sandbox_session` plan requires launch, list, capture, stop, and ledger phases. The `screen-guardian-sandbox-ledger/v1` record must include cleanup fields such as `stop_attempted`, `stop_ok`, and `leftover_processes`.
+- Sandbox window captures must use caller-provided `window_record` data when the hidden HWND is not visible to the main desktop enumerator. Sandbox context disables visible main-desktop bbox fallback so foreground pixels are not mistaken for hidden-desktop evidence.
 - Bounded watch only runs when `watch_screen` is explicitly called and is capped by runtime limits.
 - Audio capture and FFmpeg extraction require persistent feature-flag enablement.
 - External API use is handled by a separate runner script that must be run intentionally with an environment-provided API key.

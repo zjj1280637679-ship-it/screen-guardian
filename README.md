@@ -42,6 +42,8 @@ Screen Guardian exposes a broad expert tool surface, but the default MCP surface
 | Run a registered command | `guardian_run_command` | Advanced surface. Runs only catalog commands by `command_id`; it does not accept arbitrary code strings. |
 | Choose a capture route | `list_capture_routes` | Explains desktop, application, webpage, nested-scroll, and guided-chain routes so the AI can pick the right path first. |
 | Prepare a capture chain | `prepare_capture_chain` | Writes a local plan for conditional capture, quiet webpage capture, preprocessing, and later model handoff without executing it. |
+| Prepare a sandbox session | `prepare_sandbox_session` | Writes a hidden-desktop validation session plan plus `screen-guardian-sandbox-ledger/v1` template for an explicit sandbox caller; Screen Guardian does not launch the sandbox itself. |
+| Write a sandbox ledger | `write_sandbox_ledger` | Validates and saves the compact launch/list/capture/cleanup/verdict record so large background runs return summaries instead of frame spam. |
 
 The normal tools are safe wrappers. They do not bypass feature flags, runtime limits, cache routing, local-only defaults, or the no-hidden-upload/no-hidden-scheduler boundary. The break-glass execution tools are different: they can run local code, but only when visibly enabled and confirmed.
 
@@ -55,11 +57,13 @@ For this tool, `authorization_level` ranks possible routes, `declared_permission
 
 After consent, use `prepare_data_layer_request` to write a scoped local envelope for database, registry, API, export, file, or app-storage work. It requires `user_consented=true`, `consent_text`, and a concrete target in `scope`; filters and row limits only constrain that target. The route sniffer likewise needs `data_layer_consent_text` before marking a scoped data route eligible. Mutating operations also require `mutation_confirmed=true` plus `backup_plan` or `rollback_plan`. The tool does not execute the data-layer action.
 
-`guardian_perceive` defaults to fast direct capture. When the user or AI wants a non-default strategy, pass stackable `capture_modes`: `delay` for delayed screenshots, `wait_render` for render-complete retry, `wait_buffer` for visual-stability/buffer settling before the final screenshot, and `wait_error` for capturing after an explicit error-window signal. These modes can be combined, for example `["delay","wait_render","wait_buffer"]`.
+`guardian_perceive` defaults to fast capture without adding an extra facade-level strategy wait. It still preserves each route's default safety behavior: screen and region capture stay direct, while window capture keeps the lower-level blank-frame retry and guard-warning behavior. When the user or AI wants a non-default strategy, pass stackable `capture_modes`: `delay` for delayed screenshots, `wait_render` for render-complete retry, `wait_buffer` for visual-stability/buffer settling before the final screenshot, and `wait_error` for capturing after an explicit error-window signal. These modes can be combined, for example `["delay","wait_render","wait_buffer"]`.
 
 For slow or older systems, the lower-level timing controls are still available: `delay_seconds`, `wait_for_nonblank`, `render_guard="wait"` for auto-wait-until-rendered capture, `render_guard="warn"` for suspected-unrendered decision options such as force now, capture later, or auto-wait, and `watch_change` for screen transitions or popups.
 
 Capture results now distinguish tool handling from file creation. A guard decision can return `ok=true` while `saved=false`, `path=null`, and `result_state="decision_required"`; callers should only open or send a file when `saved=true` and `path` is present.
+
+Capture results also include `evidence_chain`, a compact fact envelope that separates observation from judgment. It records the requested route, local delivery mode, cost facts, residual caveats, candidates, and next actions. Screen text and pixels remain untrusted evidence; the chain is not authorization and does not prove user intent by itself.
 
 Program-window capture is quiet-preferred by default. Screen Guardian does not activate or raise the target window; if it must fall back to visible-screen pixels, it probes whether the visible bbox appears to belong to the requested HWND. If another topmost window appears to cover the bbox, the capture is deferred even when `render_guard_confirmed=true`; `allow_unverified_bbox_fallback=true` is the last-resort override.
 
@@ -197,10 +201,12 @@ These are the first-use tools. They perform explicit local checks or captures an
 | Report program-window status | `guardian_survey_windows` |
 | Save a screenshot | `capture_screen`, `capture_region`, `capture_window` |
 | Choose a capture route | `list_capture_routes` |
+| Prepare and account for a background sandbox validation session | `prepare_sandbox_session`, `write_sandbox_ledger` |
 | Catch a short visible change | `watch_screen` |
 | Remove local Screen Guardian files | `clear_cache` |
 
 Core capture outputs can be downscaled, saved as PNG/JPG, and tagged with project or workflow metadata when those options are enabled.
+`prepare_sandbox_session` and `write_sandbox_ledger` are on the core surface because popup-heavy real-machine validation needs a stable, low-noise entry point. The session tool still writes only a local plan and ledger template; an explicit sandbox caller owns launch, capture, stop, and final accounting. The ledger writer validates that a claimed pass includes launch, capture, cleanup, and no leftover owned processes.
 
 ### Local control tools
 
@@ -370,6 +376,21 @@ npm run smoke:windows
 
 This version still avoids background services, recording, bundled OCR, cloud upload, and screen history. It can run bounded change-triggered capture, but only as an explicit foreground request. Monitor profiles describe periodic or feature-triggered work for a caller, scheduler, future adapter, or subagent; they do not silently start a monitor or scheduler. Bounds are configurable because the project treats limits as policy, not permanent product walls.
 
+Sandbox validation is a session contract, not a hidden Screen Guardian daemon.
+Use `prepare_sandbox_session` to write a caller-owned plan with required phases:
+launch, list, capture, stop, and ledger. A caller may use a hidden desktop
+adapter such as `screen_organ.sandbox_launch` and `screen_organ.sandbox_list`,
+then capture sandbox evidence with `screen_organ.capture_screen` using
+`context="sandbox"` and `source="composite"`. Pass the `sandbox_list` window
+record into Screen Guardian `capture_window` as `window_record` with
+`desktop_context="sandbox"` only when a direct HWND capture is being tested.
+Sandbox captures do not fall back to visible main-desktop bbox pixels. The
+ledger must account for pid,
+hwnd/window records, capture paths, `stop_attempted`, `stop_ok`, leftover
+processes, verdict, and summary. This keeps popup-heavy real-machine tests away
+from the user's foreground desktop while preserving explicit execution and
+cleanup responsibility.
+
 ## Upgrade path
 
 The next version can add:
@@ -379,3 +400,4 @@ The next version can add:
 - more provider-specific image and video summarization helpers
 - stricter privacy filters by app, window, or region
 - scheduler adapters that consume monitor tick envelopes with explicit user approval
+- tighter sandbox ledger adapters for hidden-desktop test batches

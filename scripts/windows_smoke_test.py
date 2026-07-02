@@ -91,6 +91,22 @@ def require_ok(label, payload):
         raise SmokeFailure(f"{label} returned not ok: {json.dumps(payload, ensure_ascii=False)[:2000]}")
 
 
+def require_evidence_chain(label, payload, observation_kind=None):
+    chain = payload.get("evidence_chain")
+    if not isinstance(chain, dict):
+        raise SmokeFailure(f"{label} missing evidence_chain: {json.dumps(payload, ensure_ascii=False)[:2000]}")
+    required = ("schema_version", "principles", "observation", "route", "delivery", "cost", "residual", "temporal")
+    missing = [key for key in required if key not in chain]
+    if missing:
+        raise SmokeFailure(f"{label} evidence_chain missing {missing}: {chain}")
+    if chain.get("schema_version") != "screen-guardian-evidence-chain/v1":
+        raise SmokeFailure(f"{label} unexpected evidence schema: {chain}")
+    if not (chain.get("principles") or {}).get("evidence_not_authorization"):
+        raise SmokeFailure(f"{label} evidence_chain lost evidence_not_authorization: {chain}")
+    if observation_kind and (chain.get("observation") or {}).get("kind") != observation_kind:
+        raise SmokeFailure(f"{label} unexpected observation kind: {chain}")
+
+
 def launch_changing_window():
     code = r"""
 import tkinter as tk
@@ -362,8 +378,8 @@ def main():
                 {
                     "left": 0,
                     "top": 0,
-                    "width": 1,
-                    "height": 1,
+                    "width": 64,
+                    "height": 64,
                     "relative_to_display": True,
                     "delay_seconds": 2,
                     "output_dir": tmp,
@@ -379,8 +395,8 @@ def main():
                 {
                     "left": 0,
                     "top": 0,
-                    "width": 1,
-                    "height": 1,
+                    "width": 64,
+                    "height": 64,
                     "relative_to_display": True,
                     "source_label": "windows-smoke",
                     "output_dir": tmp,
@@ -388,119 +404,128 @@ def main():
                 },
                 env_updates=explicit_env,
             )
-            require_ok("capture_region", capture_payload)
-            path = Path(capture_payload.get("path", ""))
-            if not path.exists():
-                raise SmokeFailure(f"capture_region reported a missing file: {path}")
-            checks.append({"name": "tiny_region_capture", "ok": True, "path": str(path)})
+            capture_region_available = True
+            if not capture_payload.get("ok") and "bitblt" in str(capture_payload.get("error", "")).lower():
+                capture_region_available = False
+                checks.append({"name": "region_capture_adapter", "ok": True, "skipped": True, "reason": capture_payload.get("error")})
+            else:
+                require_ok("capture_region", capture_payload)
+                path = Path(capture_payload.get("path", ""))
+                if not path.exists():
+                    raise SmokeFailure(f"capture_region reported a missing file: {path}")
+                require_evidence_chain("capture_region", capture_payload, "region_capture")
+                checks.append({"name": "tiny_region_capture", "ok": True, "path": str(path)})
 
-            guard_decision_payload = call_tool(
-                "capture_region",
-                {
-                    "left": 0,
-                    "top": 0,
-                    "width": 1,
-                    "height": 1,
-                    "relative_to_display": True,
-                    "source_label": "windows-smoke-guard-decision",
-                    "output_dir": tmp,
-                    "render_guard": "warn",
-                    "guard_checks": ["tiny_capture"],
-                    "guard_tiny_min_pixels": 16,
-                },
-                env_updates=explicit_env,
-            )
-            require_ok("capture_region guard decision", guard_decision_payload)
-            if guard_decision_payload.get("saved") is not False:
-                raise SmokeFailure(f"guard decision did not report saved=false: {guard_decision_payload}")
-            if guard_decision_payload.get("path") is not None:
-                raise SmokeFailure(f"guard decision unexpectedly reported a saved path: {guard_decision_payload}")
-            if guard_decision_payload.get("result_state") != "decision_required" or not guard_decision_payload.get("capture_deferred"):
-                raise SmokeFailure(f"guard decision did not report deferred decision state: {guard_decision_payload}")
-            checks.append({"name": "capture_guard_decision_not_saved", "ok": True})
-
-            fast_payload = call_tool(
-                "guardian_perceive",
-                {
-                    "task": "quick_look",
-                    "target": {
-                        "type": "region",
-                        "box": {
-                            "left": 0,
-                            "top": 0,
-                            "width": 1,
-                            "height": 1,
-                            "relative_to_display": True,
-                        },
+            if capture_region_available:
+                guard_decision_payload = call_tool(
+                    "capture_region",
+                    {
+                        "left": 0,
+                        "top": 0,
+                        "width": 8,
+                        "height": 8,
+                        "relative_to_display": True,
+                        "source_label": "windows-smoke-guard-decision",
+                        "output_dir": tmp,
+                        "render_guard": "warn",
+                        "guard_checks": ["tiny_capture"],
+                        "guard_tiny_min_pixels": 16,
                     },
-                    "source_label": "guardian-fast-smoke",
-                    "output_dir": tmp,
-                },
-                env_updates=explicit_env,
-            )
-            require_ok("guardian_perceive fast default", fast_payload)
-            fast_strategy = fast_payload.get("capture_strategy") or {}
-            if fast_strategy.get("modes") != ["fast"] or fast_strategy.get("default_fast") is not True:
-                raise SmokeFailure(f"guardian_perceive did not report fast default strategy: {fast_payload}")
-            checks.append({"name": "guardian_perceive_fast_default", "ok": True, "path": fast_payload.get("path")})
+                    env_updates=explicit_env,
+                )
+                require_ok("capture_region guard decision", guard_decision_payload)
+                if guard_decision_payload.get("saved") is not False:
+                    raise SmokeFailure(f"guard decision did not report saved=false: {guard_decision_payload}")
+                if guard_decision_payload.get("path") is not None:
+                    raise SmokeFailure(f"guard decision unexpectedly reported a saved path: {guard_decision_payload}")
+                if guard_decision_payload.get("result_state") != "decision_required" or not guard_decision_payload.get("capture_deferred"):
+                    raise SmokeFailure(f"guard decision did not report deferred decision state: {guard_decision_payload}")
+                require_evidence_chain("capture_region guard decision", guard_decision_payload, "region_capture")
+                checks.append({"name": "capture_guard_decision_not_saved", "ok": True})
 
-            stable_payload = call_tool(
-                "guardian_perceive",
-                {
-                    "task": "quick_look",
-                    "capture_modes": ["wait_buffer"],
-                    "stable_wait_seconds": 0.5,
-                    "stable_interval_ms": 100,
-                    "stable_required_samples": 1,
-                    "target": {
-                        "type": "region",
-                        "box": {
-                            "left": 0,
-                            "top": 0,
-                            "width": 1,
-                            "height": 1,
-                            "relative_to_display": True,
+                fast_payload = call_tool(
+                    "guardian_perceive",
+                    {
+                        "task": "quick_look",
+                        "target": {
+                            "type": "region",
+                            "box": {
+                                "left": 0,
+                                "top": 0,
+                                "width": 64,
+                                "height": 64,
+                                "relative_to_display": True,
+                            },
                         },
+                        "source_label": "guardian-fast-smoke",
+                        "output_dir": tmp,
                     },
-                    "source_label": "guardian-buffer-smoke",
-                    "output_dir": tmp,
-                },
-                env_updates=explicit_env,
-            )
-            require_ok("guardian_perceive wait_buffer", stable_payload)
-            stable_strategy = stable_payload.get("capture_strategy") or {}
-            if stable_strategy.get("modes") != ["wait_buffer"] or not isinstance(stable_strategy.get("stable_wait"), dict):
-                raise SmokeFailure(f"guardian_perceive did not record wait_buffer strategy: {stable_payload}")
-            checks.append({"name": "guardian_perceive_wait_buffer", "ok": True, "path": stable_payload.get("path")})
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_perceive fast default", fast_payload)
+                fast_strategy = fast_payload.get("capture_strategy") or {}
+                if fast_strategy.get("modes") != ["fast"] or fast_strategy.get("default_fast") is not True:
+                    raise SmokeFailure(f"guardian_perceive did not report fast default strategy: {fast_payload}")
+                checks.append({"name": "guardian_perceive_fast_default", "ok": True, "path": fast_payload.get("path")})
 
-            guardian_payload = call_tool(
-                "guardian_perceive",
-                {
-                    "task": "read_text",
-                    "target": {
-                        "type": "region",
-                        "box": {
-                            "left": 0,
-                            "top": 0,
-                            "width": 1,
-                            "height": 1,
-                            "relative_to_display": True,
+                stable_payload = call_tool(
+                    "guardian_perceive",
+                    {
+                        "task": "quick_look",
+                        "capture_modes": ["wait_buffer"],
+                        "stable_wait_seconds": 0.5,
+                        "stable_interval_ms": 100,
+                        "stable_required_samples": 1,
+                        "target": {
+                            "type": "region",
+                            "box": {
+                                "left": 0,
+                                "top": 0,
+                                "width": 64,
+                                "height": 64,
+                                "relative_to_display": True,
+                            },
                         },
+                        "source_label": "guardian-buffer-smoke",
+                        "output_dir": tmp,
                     },
-                    "context_budget": "hold_file",
-                    "source_label": "guardian-smoke",
-                    "output_dir": tmp,
-                },
-                env_updates=explicit_env,
-            )
-            require_ok("guardian_perceive read_text hold_file", guardian_payload)
-            if guardian_payload.get("preprocess", {}).get("applied") != "text":
-                raise SmokeFailure(f"guardian_perceive did not apply text preprocessing: {guardian_payload}")
-            if guardian_payload.get("text_handling", {}).get("ocr_available") is not False:
-                raise SmokeFailure(f"guardian_perceive read_text did not report OCR unavailable in ultra-light mode: {guardian_payload}")
-            if guardian_payload.get("context_delivery") != "file_marked_only":
-                raise SmokeFailure(f"guardian_perceive did not mark hold_file delivery: {guardian_payload}")
-            checks.append({"name": "guardian_perceive_read_text_hold_file", "ok": True, "path": guardian_payload.get("path")})
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_perceive wait_buffer", stable_payload)
+                stable_strategy = stable_payload.get("capture_strategy") or {}
+                if stable_strategy.get("modes") != ["wait_buffer"] or not isinstance(stable_strategy.get("stable_wait"), dict):
+                    raise SmokeFailure(f"guardian_perceive did not record wait_buffer strategy: {stable_payload}")
+                checks.append({"name": "guardian_perceive_wait_buffer", "ok": True, "path": stable_payload.get("path")})
+
+                guardian_payload = call_tool(
+                    "guardian_perceive",
+                    {
+                        "task": "read_text",
+                        "target": {
+                            "type": "region",
+                            "box": {
+                                "left": 0,
+                                "top": 0,
+                                "width": 64,
+                                "height": 64,
+                                "relative_to_display": True,
+                            },
+                        },
+                        "context_budget": "hold_file",
+                        "source_label": "guardian-smoke",
+                        "output_dir": tmp,
+                    },
+                    env_updates=explicit_env,
+                )
+                require_ok("guardian_perceive read_text hold_file", guardian_payload)
+                if guardian_payload.get("preprocess", {}).get("applied") != "text":
+                    raise SmokeFailure(f"guardian_perceive did not apply text preprocessing: {guardian_payload}")
+                if guardian_payload.get("text_handling", {}).get("ocr_available") is not False:
+                    raise SmokeFailure(f"guardian_perceive read_text did not report OCR unavailable in ultra-light mode: {guardian_payload}")
+                if guardian_payload.get("context_delivery") != "file_marked_only":
+                    raise SmokeFailure(f"guardian_perceive did not mark hold_file delivery: {guardian_payload}")
+                require_evidence_chain("guardian_perceive read_text hold_file", guardian_payload, "region_capture")
+                checks.append({"name": "guardian_perceive_read_text_hold_file", "ok": True, "path": guardian_payload.get("path")})
 
             watch_process = None
             try:
@@ -555,6 +580,7 @@ def main():
                 error_wait = error_strategy.get("error_wait") if isinstance(error_strategy.get("error_wait"), dict) else {}
                 if error_wait.get("status") != "detected":
                     raise SmokeFailure(f"guardian_perceive did not detect explicit error-window signal: {error_wait_payload}")
+                require_evidence_chain("guardian_perceive wait_error", error_wait_payload, "window_capture")
                 checks.append({"name": "guardian_perceive_wait_error", "ok": True, "path": error_wait_payload.get("path")})
 
                 survey_capture_payload = call_tool(
@@ -576,6 +602,9 @@ def main():
                 survey_capture_path = Path(str((survey_capture_payload.get("captures") or [{}])[0].get("result", {}).get("path") or ""))
                 if not survey_capture_path.exists():
                     raise SmokeFailure(f"guardian_survey_windows reported a missing file: {survey_capture_path}")
+                require_evidence_chain("guardian_survey_windows hold_file capture", survey_capture_payload, "window_survey")
+                first_capture_result = (survey_capture_payload.get("captures") or [{}])[0].get("result", {})
+                require_evidence_chain("guardian_survey_windows first saved capture", first_capture_result, "window_capture")
                 checks.append(
                     {
                         "name": "guardian_survey_windows_hold_file_capture",

@@ -221,6 +221,17 @@ const windowTargetProperties = {
     default: false,
     description: "When true, use the first matching window if a filter is ambiguous. Prefer hwnd from list_windows for repeatable captures.",
   },
+  desktop_context: {
+    type: "string",
+    enum: ["default", "sandbox"],
+    default: "default",
+    description: "Window desktop context. Use sandbox with a window_record returned by an explicit hidden-desktop caller such as screen_organ.sandbox_list.",
+  },
+  window_record: {
+    type: "object",
+    description: "Optional caller-provided window record. Use this for hidden-desktop sandbox HWNDs that the main desktop window enumerator cannot see.",
+    additionalProperties: true,
+  },
 };
 
 const webpageCaptureProperties = {
@@ -328,9 +339,9 @@ const captureChainProperties = {
   },
   route: {
     type: "string",
-    enum: ["auto", "desktop", "application", "webpage", "nested_scroll", "mixed"],
+    enum: ["auto", "desktop", "application", "webpage", "nested_scroll", "sandbox", "mixed"],
     default: "auto",
-    description: "Preferred capture route. Use desktop for visible pixels, application for a program window, webpage for browser-rendered pages, and nested_scroll for scrollable panels or iframes.",
+    description: "Preferred capture route. Use desktop for visible pixels, application for a program window, webpage for browser-rendered pages, nested_scroll for scrollable panels or iframes, and sandbox for hidden-desktop real-machine validation through an explicit external caller.",
   },
   trigger: {
     type: "object",
@@ -370,6 +381,80 @@ const captureChainProperties = {
   source_label: imageOutputProperties.source_label,
   runtime_limits: imageOutputProperties.runtime_limits,
   feature_flags: imageOutputProperties.feature_flags,
+};
+
+const sandboxSessionProperties = {
+  objective: {
+    type: "string",
+    description: "What the hidden desktop sandbox validation session is trying to prove.",
+  },
+  program: {
+    type: "string",
+    description: "Program path for the external sandbox caller to launch. Preparing the session does not launch it.",
+  },
+  cwd: {
+    type: "string",
+    description: "Optional working directory for the external sandbox launcher.",
+  },
+  program_args: {
+    type: "string",
+    description: "Optional command-line arguments for the external sandbox launcher.",
+  },
+  session_id: {
+    type: "string",
+    description: "Optional stable session/run id. If omitted, Screen Guardian generates one.",
+  },
+  caller: {
+    type: "string",
+    default: "external-caller",
+    description: "External caller expected to own launch, capture, cleanup, and ledger writing.",
+  },
+  ttl_seconds: {
+    type: "integer",
+    minimum: 1,
+    default: 300,
+    description: "Recommended maximum lifetime for the external sandbox caller.",
+  },
+  max_captures: {
+    type: "integer",
+    minimum: 1,
+    default: 8,
+    description: "Recommended maximum hold-file captures before the caller must summarize and clean up.",
+  },
+  capture_args: {
+    type: "object",
+    additionalProperties: true,
+    description: "Optional capture_window arguments merged over hold-file, marked-file, render-wait defaults.",
+  },
+  cleanup: {
+    type: "object",
+    additionalProperties: true,
+    description: "Optional cleanup adapter hint. If omitted, the ledger records external_caller_stop_required.",
+  },
+  cleanup_tool: {
+    type: "string",
+    description: "Optional cleanup tool name for the external caller.",
+  },
+  output_dir: imageOutputProperties.output_dir,
+  project_id: imageOutputProperties.project_id,
+  workflow_id: imageOutputProperties.workflow_id,
+  tags: imageOutputProperties.tags,
+  note: imageOutputProperties.note,
+  context_policy: imageOutputProperties.context_policy,
+  marked_file_only: imageOutputProperties.marked_file_only,
+  write_metadata: imageOutputProperties.write_metadata,
+  source_label: imageOutputProperties.source_label,
+  runtime_limits: imageOutputProperties.runtime_limits,
+  feature_flags: imageOutputProperties.feature_flags,
+};
+
+const sandboxLedgerProperties = {
+  ledger: {
+    type: "object",
+    description: "Complete screen-guardian-sandbox-ledger/v1 object to validate and write.",
+    additionalProperties: true,
+  },
+  output_dir: imageOutputProperties.output_dir,
 };
 
 const captureModeProperties = {
@@ -904,7 +989,7 @@ const tools = [
   },
   {
     name: "guardian_perceive",
-    description: "AI-first perception facade for quick screen looks, text/UI captures, window capture, bounded watch, or hold-file context control.",
+    description: "AI-first perception facade for quick screen looks, text/UI captures, window capture, bounded watch, or hold-file context control. Responses include an evidence_chain that separates observation facts, route, delivery, cost facts, residual caveats, and next actions from caller judgment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -969,7 +1054,7 @@ const tools = [
   },
   {
     name: "guardian_survey_windows",
-    description: "AI-first multi-window survey. Lists visible program-window status and can save a bounded set of quiet local window captures for selective review.",
+    description: "AI-first multi-window survey. Lists visible program-window status and can save a bounded set of quiet local window captures for selective review. Responses include evidence_chain records for the survey, per-window status, and saved captures.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1057,7 +1142,7 @@ const tools = [
       properties: {
         workflow_type: {
           type: "string",
-          enum: ["model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request"],
+          enum: ["model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request", "sandbox_session"],
         },
         source_path: {
           type: "string",
@@ -1144,6 +1229,16 @@ const tools = [
         fields: { type: "array", items: { type: "string" } },
         where: { type: "string" },
         row_limit: { type: "integer", minimum: 1 },
+        program: sandboxSessionProperties.program,
+        cwd: sandboxSessionProperties.cwd,
+        program_args: sandboxSessionProperties.program_args,
+        session_id: sandboxSessionProperties.session_id,
+        caller: sandboxSessionProperties.caller,
+        ttl_seconds: sandboxSessionProperties.ttl_seconds,
+        max_captures: sandboxSessionProperties.max_captures,
+        capture_args: sandboxSessionProperties.capture_args,
+        cleanup: sandboxSessionProperties.cleanup,
+        cleanup_tool: sandboxSessionProperties.cleanup_tool,
       },
       required: ["workflow_type"],
       additionalProperties: false,
@@ -1286,7 +1381,7 @@ const tools = [
   },
   {
     name: "list_capture_routes",
-    description: "List the desktop, application, webpage, nested-scroll, and guided-chain capture routes with quiet-capture guidance.",
+    description: "List the desktop, application, webpage, nested-scroll, sandbox, and guided-chain capture routes with quiet-capture guidance.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1306,6 +1401,26 @@ const tools = [
       type: "object",
       properties: captureChainProperties,
       required: ["objective"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_sandbox_session",
+    description: "Prepare a local hidden-desktop sandbox session envelope and ledger template for an explicit external caller; does not launch or stop programs.",
+    inputSchema: {
+      type: "object",
+      properties: sandboxSessionProperties,
+      required: ["objective", "program"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "write_sandbox_ledger",
+    description: "Validate and write a compact hidden-desktop sandbox ledger after an explicit external caller launches, captures, and cleans up.",
+    inputSchema: {
+      type: "object",
+      properties: sandboxLedgerProperties,
+      required: ["ledger"],
       additionalProperties: false,
     },
   },
@@ -2260,6 +2375,8 @@ const CORE_TOOL_NAMES = new Set([
   "list_displays",
   "list_windows",
   "list_capture_routes",
+  "prepare_sandbox_session",
+  "write_sandbox_ledger",
   "capture_screen",
   "capture_region",
   "capture_window",
@@ -3028,6 +3145,12 @@ async function callTool(name, args) {
   }
   if (name === "list_capture_routes") {
     return runPython("list_capture_routes", args);
+  }
+  if (name === "prepare_sandbox_session") {
+    return runPython("prepare_sandbox_session", args);
+  }
+  if (name === "write_sandbox_ledger") {
+    return runPython("write_sandbox_ledger", args);
   }
   if (name === "prepare_capture_chain") {
     return runPython("prepare_capture_chain", args);

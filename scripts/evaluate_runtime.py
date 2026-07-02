@@ -47,6 +47,8 @@ EXPECTED_CORE_TOOLS = {
     "list_displays",
     "list_windows",
     "list_capture_routes",
+    "prepare_sandbox_session",
+    "write_sandbox_ledger",
     "capture_screen",
     "capture_region",
     "capture_window",
@@ -76,9 +78,30 @@ EXPECTED_COMMAND_IDS = {
     "workflow.decision.prepare",
     "workflow.data_layer.prepare",
     "workflow.capture_chain.prepare",
+    "workflow.sandbox_session.prepare",
     "emergency.exec.prepare",
     "emergency.exec.run",
 }
+
+
+def has_evidence_chain(payload: dict[str, Any], *, observation_kind: str | None = None) -> bool:
+    chain = payload.get("evidence_chain")
+    if not isinstance(chain, dict):
+        return False
+    required = ("schema_version", "principles", "observation", "route", "delivery", "cost", "residual", "temporal")
+    if not all(key in chain for key in required):
+        return False
+    if chain.get("schema_version") != "screen-guardian-evidence-chain/v1":
+        return False
+    if not (chain.get("principles") or {}).get("evidence_not_authorization"):
+        return False
+    if observation_kind and (chain.get("observation") or {}).get("kind") != observation_kind:
+        return False
+    return True
+
+
+def is_bitblt_failure(payload: dict[str, Any]) -> bool:
+    return payload.get("ok") is False and "bitblt" in str(payload.get("error") or "").lower()
 
 
 def mcp_request(request_id: int, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -191,6 +214,38 @@ def payload_text(payload: dict[str, Any]) -> str:
 
 def summarize_latency(results: dict[str, dict[str, Any]]) -> dict[str, float]:
     return {name: result["elapsed_ms"] for name, result in results.items()}
+
+
+EVAL_WINDOW_TITLE = "Screen Guardian Eval Capture"
+
+
+def launch_eval_capture_window() -> subprocess.Popen[Any]:
+    code = r"""
+import tkinter as tk
+
+root = tk.Tk()
+root.title("Screen Guardian Eval Capture")
+root.geometry("260x160+80+80")
+root.attributes("-topmost", True)
+frame = tk.Frame(root, bg="#ebe7ff")
+frame.pack(fill="both", expand=True)
+label = tk.Label(frame, text="eval-capture", bg="#ebe7ff", fg="#2f2a58", font=("Arial", 22))
+label.pack(fill="both", expand=True)
+root.after(8000, root.destroy)
+root.mainloop()
+"""
+    return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def wait_for_window_title(title: str, env_updates: dict[str, str], timeout_seconds: float = 5.0) -> dict[str, Any] | None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        result = timed_tool("list_windows", {"title_contains": title, "limit": 5}, env_updates)
+        payload = result["payload"]
+        if ok_transport(result) and payload.get("ok") and payload.get("windows"):
+            return payload["windows"][0]
+        time.sleep(0.2)
+    return None
 
 
 def evaluate(include_capture: bool, output: Path | None) -> int:
@@ -437,7 +492,7 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             route_payload = route_result["payload"]
             route_names = set((route_payload.get("routes") or {}).keys())
             add_check(checks, "capture routes are readable", ok_transport(route_result) and route_payload.get("ok") is True, payload_text(route_payload)[:500])
-            add_check(checks, "desktop application webpage and nested routes are listed", {"desktop", "application", "webpage", "nested_scroll"} <= route_names, ", ".join(sorted(route_names)))
+            add_check(checks, "desktop application webpage nested and sandbox routes are listed", {"desktop", "application", "webpage", "nested_scroll", "sandbox"} <= route_names, ", ".join(sorted(route_names)))
 
             chain_result = timed_tool(
                 "prepare_capture_chain",
@@ -740,6 +795,79 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
             )
             add_check(checks, "confirmed raw local exec writes an audit path", bool(raw_confirmed_payload.get("audit_path")), payload_text(raw_confirmed_payload)[:500])
 
+            raw_tight_limits = timed_tool(
+                "set_runtime_limits",
+                {"limits": {"raw_exec_timeout_seconds_max": 0.1, "raw_exec_output_chars_max": 1000}},
+                env,
+            )
+            timings["set_runtime_limits.raw_exec_tight"] = raw_tight_limits
+            raw_tight_payload = raw_tight_limits["payload"]
+            add_check(
+                checks,
+                "raw local exec limits are explicit runtime policy",
+                ok_transport(raw_tight_limits)
+                and raw_tight_payload.get("ok") is True
+                and raw_tight_payload.get("runtime_limits", {}).get("raw_exec_timeout_seconds_max") == 0.1
+                and raw_tight_payload.get("runtime_limits", {}).get("raw_exec_output_chars_max") == 1000,
+                payload_text(raw_tight_payload)[:500],
+            )
+
+            raw_timeout_result = timed_tool(
+                "guardian_run_exec",
+                {
+                    "language": "python",
+                    "code": "print('should not run')",
+                    "timeout_seconds": 1,
+                    "user_confirmed": True,
+                },
+                env,
+            )
+            timings["guardian_run_exec.timeout_bound"] = raw_timeout_result
+            raw_timeout_payload = raw_timeout_result["payload"]
+            add_check(
+                checks,
+                "raw local exec timeout cannot exceed persistent bound",
+                raw_timeout_payload.get("ok") is False and "no more than 0.1" in payload_text(raw_timeout_payload),
+                payload_text(raw_timeout_payload)[:500],
+            )
+
+            raw_output_limits = timed_tool(
+                "set_runtime_limits",
+                {"limits": {"raw_exec_timeout_seconds_max": 5, "raw_exec_output_chars_max": 1000}},
+                env,
+            )
+            timings["set_runtime_limits.raw_exec_output"] = raw_output_limits
+            raw_output_limit_payload = raw_output_limits["payload"]
+            add_check(
+                checks,
+                "raw local exec output limit can be tightened",
+                ok_transport(raw_output_limits)
+                and raw_output_limit_payload.get("ok") is True
+                and raw_output_limit_payload.get("runtime_limits", {}).get("raw_exec_output_chars_max") == 1000,
+                payload_text(raw_output_limit_payload)[:500],
+            )
+
+            raw_output_result = timed_tool(
+                "guardian_run_exec",
+                {
+                    "language": "python",
+                    "code": "import sys; sys.stdout.write('x' * 5000)",
+                    "timeout_seconds": 5,
+                    "user_confirmed": True,
+                },
+                env,
+            )
+            timings["guardian_run_exec.output_bound"] = raw_output_result
+            raw_output_payload = raw_output_result["payload"]
+            add_check(
+                checks,
+                "raw local exec output is truncated by persistent bound",
+                ok_transport(raw_output_result)
+                and raw_output_payload.get("ok") is True
+                and raw_output_payload.get("stdout_truncated") is True,
+                payload_text(raw_output_payload)[:500],
+            )
+
             if include_capture:
                 capture_result = timed_tool(
                     "guardian_perceive",
@@ -760,7 +888,91 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 timings["guardian_perceive.include_capture"] = capture_result
                 capture_payload = capture_result["payload"]
                 capture_path = Path(str(capture_payload.get("path") or ""))
-                add_check(checks, "optional tiny capture succeeds", ok_transport(capture_result) and capture_payload.get("ok") is True and capture_path.exists(), payload_text(capture_payload)[:500])
+                capture_ok = ok_transport(capture_result) and capture_payload.get("ok") is True and capture_path.exists()
+                evidence_ok = (
+                    has_evidence_chain(capture_payload, observation_kind="region_capture")
+                    and ((capture_payload.get("evidence_chain") or {}).get("delivery") or {}).get("context_delivery") == "file_marked_only"
+                )
+                saved_ok = (
+                    capture_payload.get("saved") is True
+                    and capture_payload.get("result_state") == "saved"
+                    and capture_payload.get("context_delivery") == "file_marked_only"
+                    and ((capture_payload.get("context") or {}).get("context_policy") == "hold_file")
+                    and capture_path.exists()
+                )
+                capture_detail = payload_text(capture_payload)[:500]
+                if not capture_ok and is_bitblt_failure(capture_payload):
+                    fallback_result = timed_tool(
+                        "guardian_survey_windows",
+                        {
+                            "capture_mode": "hold_file",
+                            "limit": 8,
+                            "capture_limit": 1,
+                            "context_budget": "hold_file",
+                            "render_guard": "save",
+                            "output_dir": str(output_dir),
+                        },
+                        env,
+                        timeout=45,
+                    )
+                    timings["guardian_survey_windows.include_capture_fallback"] = fallback_result
+                    fallback_payload = fallback_result["payload"]
+                    first_capture = (fallback_payload.get("captures") or [{}])[0]
+                    first_result = first_capture.get("result") if isinstance(first_capture.get("result"), dict) else {}
+                    fallback_path = Path(str(first_result.get("path") or ""))
+                    fallback_ok = (
+                        ok_transport(fallback_result)
+                        and fallback_payload.get("ok") is True
+                        and int(fallback_payload.get("saved_count") or 0) >= 1
+                        and fallback_path.exists()
+                    )
+                    fallback_evidence_ok = has_evidence_chain(fallback_payload, observation_kind="window_survey") and has_evidence_chain(first_result, observation_kind="window_capture")
+                    capture_detail = f"region BitBlt unavailable; window-survey fallback: {payload_text(fallback_payload)[:500]}"
+                    if not fallback_ok:
+                        window_process: subprocess.Popen[Any] | None = None
+                        try:
+                            window_process = launch_eval_capture_window()
+                            window = wait_for_window_title(EVAL_WINDOW_TITLE, env)
+                            if window:
+                                window_result = timed_tool(
+                                    "guardian_perceive",
+                                    {
+                                        "task": "capture_window",
+                                        "target": {"type": "window", "hwnd": int(window["hwnd"])},
+                                        "context_budget": "hold_file",
+                                        "render_guard": "save",
+                                        "output_dir": str(output_dir),
+                                        "source_label": "evaluation-window-fallback",
+                                    },
+                                    env,
+                                    timeout=45,
+                                )
+                                timings["guardian_perceive.include_capture_window_fallback"] = window_result
+                                window_payload = window_result["payload"]
+                                window_path = Path(str(window_payload.get("path") or ""))
+                                fallback_ok = ok_transport(window_result) and window_payload.get("ok") is True and window_path.exists()
+                                fallback_evidence_ok = (
+                                    has_evidence_chain(window_payload, observation_kind="window_capture")
+                                    and ((window_payload.get("evidence_chain") or {}).get("delivery") or {}).get("context_delivery") == "file_marked_only"
+                                )
+                                first_result = window_payload
+                                fallback_path = window_path
+                                capture_detail = f"region BitBlt unavailable; controlled-window fallback: {payload_text(window_payload)[:500]}"
+                            else:
+                                capture_detail = f"region BitBlt unavailable; controlled-window fallback was not listed after generic survey failed: {payload_text(fallback_payload)[:500]}"
+                        finally:
+                            if window_process and window_process.poll() is None:
+                                window_process.terminate()
+                                try:
+                                    window_process.wait(timeout=2)
+                                except subprocess.TimeoutExpired:
+                                    window_process.kill()
+                    capture_ok = fallback_ok
+                    saved_ok = fallback_ok and first_result.get("saved") is True and fallback_path.exists()
+                    evidence_ok = fallback_evidence_ok
+                add_check(checks, "optional real capture succeeds", capture_ok, capture_detail)
+                add_check(checks, "can-it-work capture instance saved local hold-file evidence", saved_ok, capture_detail)
+                add_check(checks, "capture instance returns evidence chain", evidence_ok, capture_detail)
 
             artifacts = {
                 "json": len(list(output_dir.glob("*.json"))),
@@ -780,9 +992,24 @@ def evaluate(include_capture: bool, output: Path | None) -> int:
                 "artifact_count": artifacts,
                 "capture_ready": bool(guardian_payload.get("capture_ready")),
                 "include_capture": include_capture,
+                "can_it_work_instance": "proven" if include_capture and all(check["passed"] for check in checks) else "not_proven_without_capture" if not include_capture else "failed",
             }
             report = {
                 "ok": all(check["passed"] for check in checks),
+                "validation_instance": {
+                    "name": "screen-guardian-can-it-work",
+                    "claim": "State space is too large to predict exhaustively; this run proves the bounded local perception protocol works only under the recorded runtime conditions.",
+                    "conditions": {
+                        "default_surface": "core",
+                        "config_isolated": True,
+                        "external_apis": False,
+                        "subagents": False,
+                        "audio_recording": False,
+                        "screen_capture_required_for_proof": True,
+                        "screen_capture_executed": bool(include_capture),
+                    },
+                    "oracle": "All checks pass and, when include_capture=true, Screen Guardian saves a local hold-file capture with saved=true and an evidence_chain through guardian_perceive or the window-survey fallback.",
+                },
                 "scope": {
                     "external_apis": False,
                     "subagents": False,

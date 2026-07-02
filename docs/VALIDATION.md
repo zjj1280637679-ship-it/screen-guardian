@@ -61,6 +61,8 @@ The stress test also calls `guardian_check`, `guardian_prepare_workflow`, `list_
 
 It also calls `guardian_list_commands`, `guardian_run_command`, and `guardian_prepare_exec`. Stress does not run raw local code.
 
+Static validation also checks that the AI-first evidence-chain contract is present in the capture helper, returned result payloads, metadata sidecars, render-guard decision payloads, window-candidate failures, and multi-window survey responses.
+
 ## Runtime Evaluation
 
 Run:
@@ -76,6 +78,10 @@ The evaluator uses a temporary `APPDATA` directory and temporary output director
 ```powershell
 python scripts/evaluate_runtime.py --include-capture
 ```
+
+Use `--include-capture` for the can-it-work validation instance. Because the visual state space is too large to predict exhaustively, this instance does not claim universal screen correctness. It proves a narrower condition: under the recorded local runtime, the AI-first facade can save one bounded local hold-file capture while advanced, external, and raw-execution paths remain explicit and gated.
+
+With `--include-capture`, the evaluator also asserts that the real `guardian_perceive` hold-file result includes `evidence_chain` with the required schema, observation, route, delivery, cost, residual, and temporal fields.
 
 For a machine-readable report:
 
@@ -111,6 +117,7 @@ The smoke test uses the MCP server, so it exercises Python runtime discovery ins
 - `list_displays`
 - `list_windows`
 - `guardian_survey_windows` status-only reporting, runtime-limit enforcement, and bounded hold-file capture
+- `evidence_chain` on real `guardian_perceive` hold-file captures, real `guardian_survey_windows` batch responses, and the first saved survey capture
 - a tiny `capture_region` when the screen adapter is available
 - `guardian_perceive` fast default plus `wait_buffer` stability mode and `wait_error` explicit error-window mode
 - `guardian_perceive` `watch_change` against a real temporary window whose pixels change

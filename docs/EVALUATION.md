@@ -10,6 +10,22 @@ Screen Guardian now has three complementary test layers:
 
 Runtime evaluation is not a replacement for validation. It is a lightweight product-health check for the question: "Does this plugin reduce the main AI's burden while keeping powerful paths explicit and bounded?"
 
+## Can-It-Work Validation Instance
+
+Screen Guardian is a practical validation target for protocolized programming. The Windows visual state space is too large to predict exhaustively: OS version, display topology, driver behavior, GPU windows, focus, occlusion, optional dependencies, and user privacy settings all change the result. The useful claim is therefore conditional and empirical:
+
+> Under recorded local conditions, can the AI use the plugin to get bounded visual evidence while powerful paths remain explicit, local, gated, and non-background?
+
+This is not proof that every future adapter or screen state works. It is evidence that the protocol is reasonable when the implemented program can satisfy its own demand/condition/strategy/purpose tuple.
+
+Use this gate when a real local perception proof is needed:
+
+```powershell
+python scripts/evaluate_runtime.py --include-capture --output "$env:TEMP\screen-guardian-can-it-work.json"
+```
+
+The instance is proven only when all checks pass and the optional capture check saves a local hold-file artifact with `saved=true`, `result_state="saved"`, `context.context_policy="hold_file"`, and `context_delivery="file_marked_only"`. A default run without `--include-capture` remains useful product-health evidence, but it reports the can-it-work instance as not proven because no real screen pixels were captured.
+
 ## What The Evaluator Measures
 
 `scripts/evaluate_runtime.py` runs the MCP server through newline-delimited JSON-RPC and records:
@@ -30,6 +46,8 @@ Runtime evaluation is not a replacement for validation. It is a lightweight prod
 - whether `guardian_run_exec` stays disabled by default
 - whether `guardian_run_exec` still requires `user_confirmed=true` after persistent enablement
 - whether a confirmed harmless Python snippet can run inside an isolated config
+- whether raw local execution obeys configured timeout and output-size bounds
+- when `--include-capture` is set, whether `guardian_perceive` can save one tiny local hold-file capture as the can-it-work perception proof
 - per-call latency in milliseconds
 - local artifact counts
 
@@ -73,7 +91,7 @@ To save a machine-readable report:
 python scripts/evaluate_runtime.py --output .tmp/evaluation-report.json
 ```
 
-The JSON report includes pass/fail checks, latency metrics, tool counts, command counts, artifact counts, and whether optional capture was enabled.
+The JSON report includes pass/fail checks, latency metrics, tool counts, command counts, artifact counts, whether optional capture was enabled, and a `validation_instance` section that states the exact can-it-work conditions and oracle.
 
 ## Reading Results
 
@@ -84,6 +102,8 @@ A passing runtime evaluation means:
 - desktop/application/webpage/nested-scroll route selection is available
 - envelope workflows are local-only
 - raw local execution is still gated by persistent enablement and per-call confirmation
+- raw local execution stays inside configured timeout and output limits
 - the plugin can produce a compact measurement report without external services
+- with `--include-capture`, the can-it-work instance has real local hold-file evidence rather than only interface checks
 
 It does not prove every optional adapter is installed or that every future visual model route works. External model, video narration, and high-volume visual tests should use separate experiment scripts so their quota, privacy, and failure modes are visible.

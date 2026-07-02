@@ -50,6 +50,8 @@ REQUIRED_TOOLS = [
     "guardian_run_exec",
     "list_capture_routes",
     "prepare_capture_chain",
+    "prepare_sandbox_session",
+    "write_sandbox_ledger",
     "check_dependencies",
     "get_runtime_settings",
     "set_cache_path",
@@ -407,13 +409,18 @@ def check_static_contracts() -> CheckSet:
         "guardian_perceive defaults fast and supports stackable modes": ["apply_guardian_capture_modes", "default_fast", "wait_buffer", "wait_error"],
         "guardian_survey_windows has bounded status and capture modes": ["action_guardian_survey_windows", "window_survey_window_count_max", "window_survey_capture_count_max", "capture_mode"],
         "guardian_prepare_workflow writes envelopes only": ["action_guardian_prepare_workflow", "action_prepare_model_request", "action_prepare_decision_request", "action_prepare_monitor_tick", "action_prepare_capture_chain"],
-        "capture routes distinguish desktop application webpage": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"'],
+        "capture routes distinguish desktop application webpage sandbox": ["CAPTURE_ROUTE_CATALOG", '"desktop"', '"application"', '"webpage"', '"nested_scroll"', '"sandbox"'],
         "quiet window capture is default strategy": ["quiet_capture_preferred", "no_foreground_activation", "quiet_preferred_default", "visible-screen bbox fallback"],
         "default MCP surface is core-sized": ["CORE_TOOL_NAMES", "SCREEN_GUARDIAN_TOOL_SURFACE", "visibleTools"],
         "CLI supports stdin JSON": ["--stdin", "sys.stdin.read", "Invalid JSON request"],
         "window matching returns candidates": ["WindowMatchError", "candidate_windows", "approximate_matches"],
         "stress uses isolated config": ["screen-guardian-stress", '"APPDATA"', "SCREEN_GUARDIAN_TOOL_SURFACE"],
         "capture chain is prepare only": ["action_prepare_capture_chain", "capture_chain_request", "does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers", "CAPTURE_CHAIN_ALLOWED_STEP_TOOLS"],
+        "sandbox route is explicit caller only": ['"sandbox"', "hidden_desktop_sandbox", "screen_organ.sandbox_launch", "does not launch sandbox programs by itself"],
+        "sandbox session has lifecycle and ledger": ["action_prepare_sandbox_session", "sandbox_session_request", "sandbox_lifecycle_contract", "screen-guardian-sandbox-ledger/v1", '"required_phases": ["launch", "list", "capture", "stop", "ledger"]'],
+        "sandbox ledger can be written and validated": ["action_write_sandbox_ledger", "sandbox_ledger_validation", "context_delivery", "ledger_summary_only"],
+        "sandbox cleanup is accounted": ["cleanup_required", "external_caller_stop_required", "stop_attempted", "stop_ok", "leftover_processes"],
+        "sandbox hwnd capture accepts caller records": ["caller_window_record", "desktop_context", "sandbox_visible_bbox_fallback_disabled", "visible-screen bbox fallback is disabled"],
         "nested scroll container capture is optional": ["scroll_container", "frame_selector", "capture_scroll_container"],
         "render timing has bounded delay and retry": ["capture_settle_delay_ms_max", "capture_render_retry_count_max", "capture_render_retry_interval_ms_max"],
         "render guard returns decision actions before saving suspected blank output": ["render_guard_warning_payload", "suspected_unrendered", "available_actions", "force_capture_now", "capture_later", "auto_detect_render_then_capture"],
@@ -423,6 +430,10 @@ def check_static_contracts() -> CheckSet:
         "direct hwnd grab failure returns a decision": ["CaptureDecision", "background_capture_unavailable_payload", "direct_hwnd_grab_failed", "pillow-imagegrab-window-direct-error"],
         "bbox fallback identity guard": ["bbox_identity_probe", "bbox_identity_mismatch", "allow_unverified_bbox_fallback"],
         "guardian facade forwards fallback controls": ["guardian_base_context", '"quiet_preferred"', '"render_guard_confirmed"', '"allow_unverified_bbox_fallback"'],
+        "evidence chain separates observation from judgment": ["EVIDENCE_CHAIN_SCHEMA_VERSION", "build_evidence_chain", "observation_not_judgment", "evidence_not_authorization", "capability_not_policy"],
+        "capture outputs carry evidence chain": ['metadata["evidence_chain"]', 'result["evidence_chain"]', "render_guard_warning_payload", 'payload["evidence_chain"]'],
+        "guardian facades forward evidence intent": ['"_guardian_tool"', '"guardian_perceive"', '"guardian_survey_windows"', '"_guardian_intent"', '"_guardian_target_type"'],
+        "survey and candidate outputs carry evidence chain": ["window_survey_status", 'record["evidence_chain"]', 'payload["evidence_chain"]', "window_match_payload"],
         "mcp child timeout bounds hung scripts": ["childTimeoutMs", "SCREEN_GUARDIAN_MCP_CHILD_TIMEOUT_MS", "Screen Guardian runtime timed out"],
         "mcp runtime reports active root and blocks mixed state writes": ["active_script_root", "mixed_runtime", "MIXED_ROOT_BLOCKED_ACTIONS", "runtime_file_sha256"],
         "mcp child output is bounded and framed": ["SCREEN_GUARDIAN_MCP_STDOUT_BYTES_MAX", "SCREEN_GUARDIAN_MCP_STDERR_BYTES_MAX", "parseRuntimeJson", "killProcessTree"],
@@ -443,6 +454,28 @@ def check_static_contracts() -> CheckSet:
     combined_source = (server + "\n" + py_source + "\n" + validator_source).lower()
     for label, terms in guardian_terms.items():
         checks.check(all(term.lower() in combined_source for term in terms), f"ai-first contract: {label}")
+
+    capture_modes_match = re.search(
+        r"def apply_guardian_capture_modes\(.*?\):\n(.*?)(?=\n\ndef |\n\n[A-Z_][A-Z0-9_]*\s*=|\Z)",
+        py_source,
+        re.S,
+    )
+    capture_modes_body = capture_modes_match.group(1) if capture_modes_match else ""
+    checks.check(bool(capture_modes_match), "guardian_perceive capture mode helper exists")
+    checks.check(
+        'forwarded.setdefault("render_guard", "save")' not in capture_modes_body
+        and 'forwarded.setdefault("wait_for_nonblank", False)' not in capture_modes_body
+        and "route_defaults_preserved" in capture_modes_body,
+        "guardian_perceive fast mode preserves route render defaults",
+    )
+
+    core_tools_match = re.search(r"const CORE_TOOL_NAMES = new Set\(\[(.*?)\]\);", server, re.S)
+    advanced_tools_match = re.search(r"const ADVANCED_TOOL_NAMES = new Set\(\[(.*?)\]\);", server, re.S)
+    core_tools_block = core_tools_match.group(1) if core_tools_match else ""
+    advanced_tools_block = advanced_tools_match.group(1) if advanced_tools_match else ""
+    checks.check('"prepare_sandbox_session"' in core_tools_block, "sandbox session is visible on the core MCP surface")
+    checks.check('"prepare_sandbox_session"' not in advanced_tools_block, "sandbox session is not hidden behind advanced MCP surface")
+    checks.check('"write_sandbox_ledger"' in core_tools_block, "sandbox ledger writer is visible on the core MCP surface")
 
     if TEXT_ENCODING_PATH.exists():
         completed = subprocess.run(

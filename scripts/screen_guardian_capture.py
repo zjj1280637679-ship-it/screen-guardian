@@ -106,6 +106,18 @@ CAPTURE_ROUTE_CATALOG = {
         "best_for": ["tables inside admin pages", "embedded iframes", "scrollable panels within a page"],
         "limits": ["requires selector/frame_selector", "stitches multiple scroll segments"],
     },
+    "sandbox": {
+        "title": "Hidden desktop sandbox capture",
+        "tools": ["prepare_sandbox_session", "screen_organ.sandbox_launch", "screen_organ.sandbox_list", "screen_organ.capture_screen", "capture_window", "write_sandbox_ledger"],
+        "quiet": True,
+        "status": "external_caller_required",
+        "best_for": ["background real-machine UI experiments", "popup-heavy validation", "isolated program windows that should not disturb the user's foreground desktop"],
+        "limits": [
+            "external caller required",
+            "cleanup ledger required",
+            "Screen Guardian prepares routes and ledger context but does not launch hidden desktop programs by itself",
+        ],
+    },
     "chain": {
         "title": "Guided capture chain",
         "tools": ["prepare_capture_chain", "prepare_monitor_tick", "prepare_decision_request"],
@@ -434,6 +446,19 @@ CAPABILITY_COMMANDS = [
         "safety_note": "Writes a local chain plan only; no screenshot, browser navigation, scheduler, API, subagent, or script execution.",
     },
     {
+        "id": "workflow.sandbox_session.prepare",
+        "category": "workflow",
+        "title": "Prepare a hidden desktop sandbox session",
+        "intent_tags": ["sandbox", "hidden_desktop", "ledger", "prepare_only"],
+        "execution_mode": "prepare_only",
+        "maps_to": "prepare_sandbox_session",
+        "required_features": ["capture_chains"],
+        "default_args": {"caller": "external-caller", "max_captures": 8, "ttl_seconds": 300},
+        "side_effects": ["local_envelope_write", "local_ledger_template_write"],
+        "context_strategy": "return_path",
+        "safety_note": "Writes a caller-owned sandbox session plan and ledger template only; no launch, input synthesis, scheduler, or cleanup execution.",
+    },
+    {
         "id": "emergency.exec.prepare",
         "category": "emergency",
         "title": "Prepare a break-glass local execution envelope",
@@ -507,6 +532,156 @@ def error(message, **extra):
     result.update(extra)
     write_json(result)
     return 1
+
+
+EVIDENCE_CHAIN_SCHEMA_VERSION = "screen-guardian-evidence-chain/v1"
+
+
+def capture_observation_kind(args, source=None):
+    source = source if isinstance(source, dict) else {}
+    if args.get("task") == "watch_change":
+        return "temporal_capture"
+    if source.get("type") == "window" or any(args.get(key) for key in ("hwnd", "title_contains", "exact_title", "process_name")):
+        return "window_capture"
+    if args.get("region"):
+        return "region_capture"
+    return "screen_capture"
+
+
+def route_from_source(args, source=None):
+    source = source if isinstance(source, dict) else {}
+    target = {
+        "kind": capture_observation_kind(args, source),
+        "display_index": args.get("display_index", args.get("monitor")),
+        "hwnd": args.get("hwnd") or source.get("hwnd"),
+        "title_contains": args.get("title_contains"),
+        "exact_title": args.get("exact_title"),
+        "process_name": args.get("process_name"),
+    }
+    return {
+        "requested_target": {k: v for k, v in target.items() if v not in (None, "", [])},
+        "substrate": "pixels",
+        "adapter": source.get("adapter"),
+        "method": source.get("capture_method") or source.get("type") or source.get("adapter"),
+        "fallback": source.get("fallback") or source.get("fallback_used") or None,
+        "source_type": source.get("type"),
+    }
+
+
+def delivery_from_result(result, args):
+    result = result if isinstance(result, dict) else {}
+    return {
+        "context_policy": args.get("context_policy", "return_path"),
+        "context_delivery": result.get("context_delivery") or ("file_marked_only" if bool(args.get("marked_file_only", False)) else "saved_path"),
+        "saved": bool(result.get("saved", result.get("path"))),
+        "path_returned": bool(result.get("path")),
+        "marked_file_only": bool(args.get("marked_file_only", False)),
+        "inline_media_returned": False,
+    }
+
+
+def cost_facts_from_result(result, args):
+    result = result if isinstance(result, dict) else {}
+    original = result.get("original_size") if isinstance(result.get("original_size"), dict) else {}
+    saved = result.get("saved_size") if isinstance(result.get("saved_size"), dict) else {}
+
+    def pixels(size):
+        try:
+            return int(size.get("width") or 0) * int(size.get("height") or 0)
+        except Exception:
+            return 0
+
+    return {
+        "cost_model": "fact_fields_only",
+        "image_inline_tokens_estimated": False,
+        "original_pixels": pixels(original),
+        "saved_pixels": pixels(saved),
+        "format": result.get("format") or args.get("format", "png"),
+        "analysis_requested": bool(args.get("analyze", False)),
+        "preprocess": result.get("preprocess") or {"requested": str(args.get("preprocess", "none"))},
+    }
+
+
+def residual_from_result(result, args):
+    result = result if isinstance(result, dict) else {}
+    render_guard = result.get("render_guard") if isinstance(result.get("render_guard"), dict) else {}
+    issue_ids = list(result.get("issue_ids") or render_guard.get("issue_ids") or [])
+    available_actions = result.get("available_actions") if isinstance(result.get("available_actions"), dict) else {}
+    activation_required = []
+    if result.get("requires_decision"):
+        activation_required.append("decision_required")
+    if result.get("requires_confirmation"):
+        activation_required.append("confirmation_required")
+    if result.get("capture_deferred"):
+        activation_required.append("retry_or_force_capture")
+    next_actions = list(available_actions.keys())
+    if result.get("recommended_next"):
+        next_actions.append(result.get("recommended_next"))
+    return {
+        "result_state": result.get("result_state") or ("saved" if result.get("path") else "unknown"),
+        "content_available": bool(result.get("path")),
+        "filtered": issue_ids,
+        "activation_required": activation_required,
+        "meta": {
+            "guard_mode": render_guard.get("mode"),
+            "known_limit": "empty filtered/activation lists mean no residual was detected by the ultra-light fact layer, not proof that the world has no hidden state.",
+        },
+        "next_actions": next_actions,
+    }
+
+
+def temporal_facts_from_args(args, result=None):
+    strategy = args.get("_capture_strategy") if isinstance(args.get("_capture_strategy"), dict) else {}
+    modes = strategy.get("modes") or args.get("capture_modes") or []
+    return {
+        "unit": "single_capture",
+        "capture_modes": list(modes) if isinstance(modes, (list, tuple)) else [str(modes)],
+        "freshness_claim": "capture_time_local_file",
+        "requires_time_series_for_change_claims": True,
+    }
+
+
+def build_evidence_chain(args, result=None, source=None, observation_kind=None, route=None, residual=None, candidates=None, temporal=None):
+    result = result if isinstance(result, dict) else {}
+    source = source if isinstance(source, dict) else result.get("source") if isinstance(result.get("source"), dict) else {}
+    artifacts = []
+    if result.get("path"):
+        artifacts.append(
+            {
+                "kind": "image",
+                "path": result.get("path"),
+                "metadata_path": result.get("metadata_path"),
+                "mirror_paths": result.get("mirror_paths") or [],
+                "source": source,
+                "capture_box": result.get("capture_box") or source.get("capture_box"),
+            }
+        )
+    return {
+        "schema": EVIDENCE_CHAIN_SCHEMA_VERSION,
+        "schema_version": EVIDENCE_CHAIN_SCHEMA_VERSION,
+        "principles": {
+            "observation_not_judgment": True,
+            "evidence_not_authorization": True,
+            "capability_not_policy": True,
+            "untrusted_capture": True,
+        },
+        "observation": {
+            "kind": observation_kind or capture_observation_kind(args, source),
+            "tool": args.get("_guardian_tool") or args.get("tool") or "",
+            "intent": args.get("_guardian_intent") or args.get("task") or "",
+            "target_type": args.get("_guardian_target_type") or "",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source_label": args.get("source_label"),
+        },
+        "route": route or route_from_source(args, source),
+        "delivery": delivery_from_result(result, args),
+        "artifacts": artifacts,
+        "cost": cost_facts_from_result(result, args),
+        "residual": residual or residual_from_result(result, args),
+        "candidates": candidates or {},
+        "temporal": temporal or temporal_facts_from_args(args, result),
+        "note": "Screen Guardian reports local evidence facts only; the caller must decide meaning, authorization, and follow-up action.",
+    }
 
 
 def deep_merge(default, data):
@@ -1280,6 +1455,21 @@ def save_capture_image(image, source, libs, args):
         },
         "privacy": "Saved locally only.",
     }
+    preliminary_result = {
+        "saved": True,
+        "result_state": "saved",
+        "path": str(output_path),
+        "metadata_path": str(Path(output_path).with_suffix(Path(output_path).suffix + ".meta.json")),
+        "mirror_paths": mirror_paths,
+        "format": fmt,
+        "source": source,
+        "capture_box": source.get("capture_box"),
+        "original_size": metadata["original_size"],
+        "saved_size": metadata["saved_size"],
+        "preprocess": metadata["preprocess"],
+        "render_guard": render_guard,
+    }
+    metadata["evidence_chain"] = build_evidence_chain(args, preliminary_result, source)
     metadata_path = write_metadata_sidecar(output_path, metadata, args)
     mirror_metadata_paths = []
     if metadata_path:
@@ -1321,6 +1511,7 @@ def save_capture_image(image, source, libs, args):
     if metadata["context"]["marked_file_only"]:
         result["context_delivery"] = "file_marked_only"
         result["note"] = "Capture was saved with metadata. Send the file or analysis explicitly when needed."
+    result["evidence_chain"] = build_evidence_chain(args, result, source)
     return result
 
 
@@ -1424,6 +1615,66 @@ def window_info_for_hwnd(hwnd, process_name_cache=None):
     }
 
 
+def normalize_rect_record(rect):
+    if isinstance(rect, (list, tuple)) and len(rect) >= 4:
+        left = int(rect[0])
+        top = int(rect[1])
+        right = int(rect[2])
+        bottom = int(rect[3])
+    elif isinstance(rect, dict):
+        left = int(rect.get("left", 0))
+        top = int(rect.get("top", 0))
+        if "right" in rect and "bottom" in rect:
+            right = int(rect.get("right", left))
+            bottom = int(rect.get("bottom", top))
+        else:
+            right = left + int(rect.get("width", 0))
+            bottom = top + int(rect.get("height", 0))
+    else:
+        return None
+    width = int(right - left)
+    height = int(bottom - top)
+    if width <= 0 or height <= 0:
+        return None
+    return {
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+        "width": width,
+        "height": height,
+    }
+
+
+def caller_window_record(args):
+    record = args.get("window_record")
+    if not isinstance(record, dict):
+        return None
+    hwnd = record.get("hwnd") or args.get("hwnd")
+    if not hwnd:
+        return None
+    rect = normalize_rect_record(record.get("rect") or record.get("capture_box"))
+    if rect is None:
+        rect = window_rect(int(hwnd)) if os.name == "nt" else None
+    if rect is None:
+        return None
+    desktop_context = str(args.get("desktop_context") or record.get("desktop_context") or "default").strip().lower()
+    if desktop_context not in ("default", "sandbox"):
+        desktop_context = "default"
+    return {
+        "hwnd": int(hwnd),
+        "title": str(record.get("title") or ""),
+        "pid": int(record.get("pid") or 0),
+        "process_name": str(record.get("process_name") or ""),
+        "rect": rect,
+        "client_rect": normalize_rect_record(record.get("client_rect") or {}) or {},
+        "is_minimized": bool(record.get("minimized", record.get("is_minimized", False))),
+        "is_visible": bool(record.get("is_visible", True)),
+        "desktop_context": desktop_context,
+        "record_source": "caller_window_record",
+    }
+
+
 def enum_windows(args=None):
     if os.name != "nt":
         return []
@@ -1517,7 +1768,7 @@ def window_match_payload(args, reason, windows=None):
     approximate = [item for item in scored if item.get("match_score", 0) >= 0.25][:10]
     if not approximate:
         approximate = scored[:10]
-    return {
+    payload = {
         "reason": reason,
         "requested": {
             "hwnd": args.get("hwnd"),
@@ -1532,6 +1783,32 @@ def window_match_payload(args, reason, windows=None):
         "approximate_matches": summarize_windows(approximate, 10),
         "recommended_next": "Call list_windows, then retry capture_window with a specific hwnd or exact_title.",
     }
+    payload["evidence_chain"] = build_evidence_chain(
+        args,
+        {"result_state": "decision_required", "requires_decision": True, "recommended_next": payload["recommended_next"]},
+        {},
+        observation_kind="candidate_resolution",
+        route={
+            "requested_target": payload["requested"],
+            "substrate": "window_metadata",
+            "method": "enum_windows",
+            "source_type": "window_candidates",
+        },
+        residual={
+            "result_state": "decision_required",
+            "content_available": False,
+            "filtered": [reason],
+            "activation_required": ["target_disambiguation"],
+            "meta": {"candidate_count": len(all_windows)},
+            "next_actions": [payload["recommended_next"]],
+        },
+        candidates={
+            "candidate_count": len(all_windows),
+            "candidate_windows": payload["candidate_windows"],
+            "approximate_matches": payload["approximate_matches"],
+        },
+    )
+    return payload
 
 
 def root_window(hwnd):
@@ -1622,6 +1899,9 @@ def find_window(args):
         info = window_info_for_hwnd(int(hwnd))
         if info:
             return info
+        record = caller_window_record(args)
+        if record:
+            return record
     windows = enum_windows(args)
     exact_title = str(args.get("exact_title") or "").lower()
     if exact_title:
@@ -2328,6 +2608,7 @@ def render_guard_warning_payload(source, args):
         payload["requires_confirmation"] = False
         payload["requires_decision"] = False
         payload["recommended_next"] = "Use render_guard='warn' or render_guard='wait' if the caller should receive decision options instead of a strict failure."
+    payload["evidence_chain"] = build_evidence_chain(args, payload, source)
     return payload
 
 
@@ -2797,7 +3078,9 @@ def background_capture_unavailable_payload(args, window, status, direct_hwnd_err
 def grab_window_once(args, status, libs, window):
     hwnd = int(window["hwnd"])
     background_mode = normalize_background_mode(args)
-    fallback_allowed = visible_window_fallback_allowed(args)
+    desktop_context = str(window.get("desktop_context") or args.get("desktop_context") or "default").strip().lower()
+    sandbox_context = desktop_context == "sandbox"
+    fallback_allowed = visible_window_fallback_allowed(args) and not sandbox_context
     capture_method = "pillow-imagegrab-window"
     direct_content_status = {}
     direct_black = False
@@ -2816,6 +3099,25 @@ def grab_window_once(args, status, libs, window):
                     bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
                     all_screens=True,
                 )
+        elif (direct_black or direct_client_low_info) and sandbox_context:
+            capture_method = "pillow-imagegrab-window-sandbox-direct-low-info"
+    except TypeError as exc:
+        direct_hwnd_error = str(exc)
+        if sandbox_context:
+            raise RuntimeError("Direct HWND capture failed for sandbox window; visible-screen bbox fallback is disabled for sandbox context.")
+        rect = window.get("rect") or {}
+        if not fallback_allowed:
+            raise CaptureDecision(
+                "Strict background window capture is unavailable because direct HWND capture failed.",
+                background_capture_unavailable_payload(args, window, status, direct_hwnd_error),
+            )
+        if not rect:
+            raise
+        capture_method = "pillow-imagegrab-bbox-fallback-after-direct-hwnd-error"
+        image = libs["ImageGrab"].grab(
+            bbox=(rect["left"], rect["top"], rect["right"], rect["bottom"]),
+            all_screens=True,
+        )
     except Exception as exc:
         direct_hwnd_error = str(exc)
         rect = window.get("rect") or {}
@@ -2848,6 +3150,7 @@ def grab_window_once(args, status, libs, window):
             "occlusion_risk_check_applicable": visible_fallback_used,
             "bbox_identity_check_applicable": visible_fallback_used,
             "direct_hwnd_guard_note": "occlusion_risk and bbox_identity_mismatch apply only after visible-screen bbox fallback; direct HWND capture uses client-content quality checks instead.",
+            "sandbox_visible_bbox_fallback_disabled": sandbox_context,
         },
         "background_capture": {
             "mode": background_mode,
@@ -2860,11 +3163,12 @@ def grab_window_once(args, status, libs, window):
             "strict_unavailable": strict_background_unavailable,
             "note": "Strict mode is a graphics/window acquisition attempt, not a visible desktop screenshot. It does not raise the target window and does not save a visible-screen bbox fallback.",
         },
+        "desktop_context": desktop_context,
         "window": window,
         "virtual_screen": virtual_screen_rect(),
         "capture_box": window.get("rect"),
         "direct_window_content": direct_content_status,
-        "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Strict background mode avoids visible-screen fallback but may return a decision when the app exposes only blank, stale, protected, or GPU-rendered client pixels.",
+        "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Strict background mode avoids visible-screen fallback but may return a decision when the app exposes only blank, stale, protected, or GPU-rendered client pixels. Sandbox context disables visible-screen bbox fallback because main-desktop pixels are not sandbox truth.",
     }
     if visible_fallback_used:
         source["visible_screen_identity"] = bbox_identity_probe(window)
@@ -3337,6 +3641,16 @@ def action_list_capture_routes(args):
             "tool": "capture_webpage",
             "args": {"url": "https://example.com/admin", "mode": "scroll_container", "selector": ".table-scroll"},
         }
+        routes["sandbox"]["example"] = {
+            "tool": "prepare_sandbox_session",
+            "args": {
+                "objective": "Launch the app in a hidden desktop sandbox, capture bounded evidence, and return only a ledger summary.",
+                "program": "target.exe",
+                "cwd": "C:/path/to/app",
+                "max_captures": 6,
+                "ttl_seconds": 300,
+            },
+        }
         routes["chain"]["example"] = {
             "tool": "prepare_capture_chain",
             "args": {
@@ -3355,11 +3669,13 @@ def action_list_capture_routes(args):
                 "application": "Use for a specific Windows program/window without treating it as a browser page.",
                 "webpage": "Use browser-rendered capture for full scrollable pages or DOM-targeted elements.",
                 "nested_scroll": "Use browser-rendered scroll-container stitching for embedded tables, panels, and iframes.",
+                "sandbox": "Use a hidden desktop caller for popup-heavy real-machine validation without disturbing the user's foreground desktop.",
             },
             "quiet_capture": {
                 "desktop": "not quiet; captures visible desktop pixels",
                 "application": "quiet-preferred by default through HWND/window adapter; visible-screen bbox fallback returns a decision warning before saving",
                 "webpage": "quiet through headless browser when webpage_capture is enabled",
+                "sandbox": "quiet by isolation; requires an explicit external hidden-desktop caller, cleanup accounting, hold-file evidence, and a compact ledger",
             },
             "feature_flags": {
                 "webpage_capture": bool(flags.get("webpage_capture")),
@@ -3392,6 +3708,256 @@ CAPTURE_CHAIN_ALLOWED_STEP_TOOLS = {
 }
 
 
+def sandbox_lifecycle_contract():
+    return {
+        "route": "sandbox",
+        "caller_owned": True,
+        "no_autolaunch": True,
+        "no_hidden_daemon": True,
+        "required_phases": ["launch", "list", "capture", "stop", "ledger"],
+        "cleanup_required": True,
+        "capture_delivery": {
+            "context_policy": "hold_file",
+            "marked_file_only": True,
+            "summary_required": True,
+        },
+        "ownership": {
+            "screen_guardian": "prepares session files, ledger schema, route metadata, and hold-file capture settings",
+            "external_caller": "launches the hidden desktop program, lists sandbox windows, captures bounded evidence, stops owned processes, and writes the ledger",
+        },
+        "boundary": "Screen Guardian does not launch sandbox programs, synthesize sandbox input, keep a hidden desktop alive, stop processes, or install a scheduler from this envelope.",
+    }
+
+
+def sandbox_ledger_schema():
+    return {
+        "schemaVersion": "screen-guardian-sandbox-ledger/v1",
+        "required": [
+            "run_id",
+            "caller",
+            "objective",
+            "program",
+            "started_at",
+            "ended_at",
+            "launch",
+            "windows",
+            "captures",
+            "cleanup",
+            "verdict",
+            "summary",
+        ],
+        "fields": {
+            "run_id": "Stable id for this sandbox validation run.",
+            "caller": "External caller or agent that consumed the prepared session.",
+            "objective": "User-facing purpose of the run.",
+            "program": "Program launched in the hidden desktop sandbox.",
+            "started_at": "UTC timestamp when the external caller launched or began the session.",
+            "ended_at": "UTC timestamp when cleanup/accounting finished.",
+            "launch": {
+                "pid": "Process id returned by the sandbox launcher.",
+                "args": "Launch arguments used by the caller.",
+                "cwd": "Working directory used by the caller.",
+                "ok": "Whether launch succeeded.",
+                "error": "Launch failure message when ok=false.",
+            },
+            "windows": "List of sandbox windows with hwnd/title/rect/minimized from sandbox_list.",
+            "captures": "Hold-file capture records with path, hwnd, source_label, guard status, and reason.",
+            "cleanup": {
+                "stop_attempted": "Whether the caller attempted to close/stop owned sandbox resources.",
+                "stop_ok": "Whether cleanup completed.",
+                "method": "External cleanup method, such as graceful close, task kill, or sandbox adapter close.",
+                "leftover_processes": "Any pids that remain after cleanup.",
+                "note": "Cleanup explanation when incomplete.",
+            },
+            "verdict": "pass, fail, partial, blocked, or cleanup_failed.",
+            "summary": "Compact human-readable result for the main channel.",
+        },
+    }
+
+
+def sandbox_session_id(args):
+    provided = safe_filename_part(args.get("session_id") or args.get("run_id") or "", "")
+    if provided:
+        return provided
+    timestamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    suffix = int((time.time() % 1) * 1000)
+    return f"sandbox-{timestamp}-{suffix:03d}"
+
+
+def action_prepare_sandbox_session(args):
+    try:
+        require_feature("capture_chains", args)
+    except Exception as exc:
+        return error(str(exc), feature="capture_chains")
+    objective = str(args.get("objective") or "").strip()
+    if not objective:
+        return error("objective is required")
+    program = str(args.get("program") or "").strip()
+    if not program:
+        return error("program is required for a sandbox session plan")
+    session_id = sandbox_session_id(args)
+    cwd = str(args.get("cwd") or "").strip()
+    program_args = str(args.get("program_args") or args.get("args") or "").strip()
+    caller = str(args.get("caller") or "external-caller").strip()
+    max_captures = int(args.get("max_captures") or 8)
+    ttl_seconds = int(args.get("ttl_seconds") or 300)
+    if max_captures < 1:
+        return error("max_captures must be at least 1")
+    if ttl_seconds < 1:
+        return error("ttl_seconds must be at least 1")
+    capture_args = args.get("capture_args") if isinstance(args.get("capture_args"), dict) else {}
+    capture_defaults = {
+        "context": "sandbox",
+        "source": "composite",
+        "return_mode": "path",
+        "label": session_id,
+    }
+    cleanup = args.get("cleanup") if isinstance(args.get("cleanup"), dict) else {}
+    cleanup_tool = str(cleanup.get("tool") or args.get("cleanup_tool") or "external_caller_stop_required").strip()
+    cleanup_args = cleanup.get("args") if isinstance(cleanup.get("args"), dict) else {}
+    launch_args = {"program": program}
+    if cwd:
+        launch_args["cwd"] = cwd
+    if program_args:
+        launch_args["args"] = program_args
+    steps = [
+        {"phase": "launch", "tool": "screen_organ.sandbox_launch", "args": launch_args, "required": True},
+        {"phase": "list", "tool": "screen_organ.sandbox_list", "args": {}, "required": True},
+        {
+            "phase": "capture",
+            "tool": "screen_organ.capture_screen",
+            "args": deep_merge(capture_defaults, capture_args),
+            "required": True,
+            "repeat_limit": max_captures,
+            "alternate_tool": "capture_window",
+            "alternate_args_note": "If an external sandbox caller returns a direct HWND, pass its sandbox_list record as window_record with desktop_context=sandbox; do not use visible main-desktop bbox fallback as sandbox truth.",
+        },
+        {
+            "phase": "stop",
+            "tool": cleanup_tool,
+            "args": cleanup_args,
+            "required": True,
+            "note": "If no sandbox stop adapter is available, the external caller must use an explicit bounded cleanup method and record the result.",
+        },
+        {"phase": "ledger", "tool": "write_sandbox_ledger", "args": {"schemaVersion": "screen-guardian-sandbox-ledger/v1"}, "required": True},
+    ]
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    ledger_template = {
+        "schemaVersion": "screen-guardian-sandbox-ledger/v1",
+        "run_id": session_id,
+        "caller": caller,
+        "objective": objective,
+        "program": program,
+        "started_at": "",
+        "ended_at": "",
+        "launch": {"pid": None, "args": launch_args, "cwd": cwd, "ok": None, "error": ""},
+        "windows": [],
+        "captures": [],
+        "cleanup": {"stop_attempted": False, "stop_ok": False, "method": cleanup_tool, "leftover_processes": [], "note": ""},
+        "verdict": "pending",
+        "summary": "",
+    }
+    session = {
+        "plugin": PLUGIN_NAME,
+        "created_at": now,
+        "type": "sandbox_session_request",
+        "session_id": session_id,
+        "objective": objective,
+        "route": "sandbox",
+        "caller": caller,
+        "limits": {"ttl_seconds": ttl_seconds, "max_captures": max_captures},
+        "program": {"path": program, "cwd": cwd, "args": program_args},
+        "steps": steps,
+        "lifecycle_contract": sandbox_lifecycle_contract(),
+        "ledger_schema": sandbox_ledger_schema(),
+        "ledger_template": ledger_template,
+        "context": capture_context(args),
+        "execution": {
+            "status": "prepared",
+            "note": "This session is a local plan only. Screen Guardian does not launch, control, or stop hidden desktop programs from this envelope.",
+        },
+    }
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    stem = safe_filename_part(session_id, "sandbox-session")
+    request_path = output_dir / f"{PLUGIN_NAME}-{stem}-session.json"
+    ledger_path = output_dir / f"{PLUGIN_NAME}-{stem}-ledger.template.json"
+    write_json_file(request_path, session)
+    write_json_file(ledger_path, ledger_template)
+    session["ledger_template_path"] = str(ledger_path)
+    write_json_file(request_path, session)
+    return write_json({"ok": True, "request_path": str(request_path), "ledger_template_path": str(ledger_path), "session": session})
+
+
+def sandbox_ledger_validation(ledger):
+    errors = []
+    warnings = []
+    required = sandbox_ledger_schema()["required"]
+    if not isinstance(ledger, dict):
+        return {"ok": False, "errors": ["ledger must be an object"], "warnings": warnings}
+    if ledger.get("schemaVersion") != "screen-guardian-sandbox-ledger/v1":
+        errors.append("schemaVersion must be screen-guardian-sandbox-ledger/v1")
+    for key in required:
+        if key not in ledger:
+            errors.append(f"missing required field: {key}")
+    verdict = str(ledger.get("verdict") or "").strip()
+    allowed_verdicts = {"pending", "pass", "fail", "partial", "blocked", "cleanup_failed"}
+    if verdict not in allowed_verdicts:
+        errors.append("verdict must be pending, pass, fail, partial, blocked, or cleanup_failed")
+    launch = ledger.get("launch") if isinstance(ledger.get("launch"), dict) else {}
+    captures = ledger.get("captures") if isinstance(ledger.get("captures"), list) else []
+    cleanup = ledger.get("cleanup") if isinstance(ledger.get("cleanup"), dict) else {}
+    if verdict != "pending":
+        if not str(ledger.get("started_at") or "").strip():
+            errors.append("started_at is required when verdict is not pending")
+        if not str(ledger.get("ended_at") or "").strip():
+            errors.append("ended_at is required when verdict is not pending")
+        if not str(ledger.get("summary") or "").strip():
+            errors.append("summary is required when verdict is not pending")
+    if verdict == "pass":
+        if launch.get("ok") is not True:
+            errors.append("pass verdict requires launch.ok=true")
+        if not captures:
+            errors.append("pass verdict requires at least one capture record")
+        if cleanup.get("stop_attempted") is not True:
+            errors.append("pass verdict requires cleanup.stop_attempted=true")
+        if cleanup.get("stop_ok") is not True:
+            errors.append("pass verdict requires cleanup.stop_ok=true")
+        if cleanup.get("leftover_processes"):
+            errors.append("pass verdict requires no leftover_processes")
+    if cleanup.get("stop_attempted") is not True:
+        warnings.append("cleanup.stop_attempted is not true")
+    if cleanup.get("leftover_processes"):
+        warnings.append("leftover_processes is non-empty")
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+def action_write_sandbox_ledger(args):
+    ledger = args.get("ledger")
+    if not isinstance(ledger, dict):
+        return error("ledger must be an object")
+    ledger = copy.deepcopy(ledger)
+    if not ledger.get("run_id"):
+        ledger["run_id"] = sandbox_session_id({})
+    validation = sandbox_ledger_validation(ledger)
+    if not validation["ok"]:
+        return error("sandbox ledger invalid", validation=validation)
+    output_dir = ensure_cache_dir(get_cache_dir(args))
+    stem = safe_filename_part(ledger.get("run_id"), "sandbox-ledger")
+    ledger_path = output_dir / f"{PLUGIN_NAME}-{stem}-ledger.json"
+    write_json_file(ledger_path, ledger)
+    return write_json(
+        {
+            "ok": True,
+            "path": str(ledger_path),
+            "validation": validation,
+            "verdict": ledger.get("verdict"),
+            "summary": ledger.get("summary"),
+            "context_delivery": "ledger_summary_only",
+            "privacy": "Sandbox ledger was saved locally only.",
+        }
+    )
+
+
 def action_prepare_capture_chain(args):
     try:
         require_feature("capture_chains", args)
@@ -3401,9 +3967,9 @@ def action_prepare_capture_chain(args):
     if not objective:
         return error("objective is required")
     route = str(args.get("route") or "auto").strip().lower()
-    allowed_routes = ("auto", "desktop", "application", "webpage", "nested_scroll", "mixed")
+    allowed_routes = ("auto", "desktop", "application", "webpage", "nested_scroll", "sandbox", "mixed")
     if route not in allowed_routes:
-        return error("route must be auto, desktop, application, webpage, nested_scroll, or mixed")
+        return error("route must be auto, desktop, application, webpage, nested_scroll, sandbox, or mixed")
     trigger = args.get("trigger") if isinstance(args.get("trigger"), dict) else {"type": "manual"}
     trigger_type = str(trigger.get("type") or "manual").strip().lower()
     allowed_triggers = (
@@ -3422,7 +3988,15 @@ def action_prepare_capture_chain(args):
         return error(f"trigger.type must be one of: {', '.join(allowed_triggers)}")
     steps = args.get("steps") if isinstance(args.get("steps"), list) else []
     if not steps:
-        steps = [{"tool": "capture_webpage" if route in ("webpage", "nested_scroll") else "capture_window" if route == "application" else "capture_screen"}]
+        if route in ("webpage", "nested_scroll"):
+            default_tool = "capture_webpage"
+        elif route == "application":
+            default_tool = "capture_window"
+        elif route == "sandbox":
+            default_tool = "screen_organ.sandbox_list"
+        else:
+            default_tool = "capture_screen"
+        steps = [{"tool": default_tool}]
     normalized_steps = []
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -3466,9 +4040,13 @@ def action_prepare_capture_chain(args):
         "available_execution_paths": {
             "foreground_bounded_watch": "A caller may translate trigger=screen_change/window_change into watch_screen.",
             "browser_quiet_capture": "A caller may translate webpage/nested_scroll steps into capture_webpage when webpage_capture is enabled.",
+            "hidden_desktop_sandbox": "A caller may translate route=sandbox steps into screen_organ.sandbox_launch/sandbox_list, then feed HWNDs into hold-file captures and monitor-tick ledgers.",
             "decision_or_subagent": "A caller may pass this envelope to a decision policy, route, or subagent.",
         },
     }
+    if route == "sandbox":
+        chain["sandbox_lifecycle_contract"] = sandbox_lifecycle_contract()
+        chain["sandbox_ledger_schema"] = sandbox_ledger_schema()
     output_dir = ensure_cache_dir(get_cache_dir(args))
     filename = output_filename({"source_label": "capture-chain", **args}, "json")
     request_path = output_dir / filename
@@ -5875,8 +6453,8 @@ def apply_guardian_capture_modes(forwarded, args):
         forwarded.setdefault("render_retry_count", 4)
         forwarded.setdefault("render_retry_interval_ms", 500)
     else:
-        forwarded.setdefault("wait_for_nonblank", False)
-        forwarded.setdefault("render_guard", "save")
+        strategy["route_defaults_preserved"] = True
+        strategy["route_defaults_note"] = "Fast mode leaves render_guard and wait_for_nonblank unset so screen, region, and window routes keep their own defaults."
     return modes
 
 
@@ -5887,6 +6465,8 @@ def action_guardian_perceive(args):
         if task not in allowed_tasks:
             return error("task must be quick_look, read_text, debug_ui, capture_window, watch_change, or hold_file")
         forwarded = guardian_base_context(args, f"guardian-{task}")
+        forwarded["_guardian_tool"] = "guardian_perceive"
+        forwarded["_guardian_intent"] = task
         modes = apply_guardian_capture_modes(forwarded, args)
         budget = apply_guardian_budget(forwarded, args.get("context_budget") or "normal")
         if task == "hold_file":
@@ -5904,10 +6484,12 @@ def action_guardian_perceive(args):
         target_type = apply_guardian_target(forwarded, args.get("target"))
         if task == "capture_window":
             target_type = "window"
+        forwarded["_guardian_target_type"] = target_type
         if "wait_error" in modes:
             detected_target_type = wait_for_error_signal(args, forwarded)
             if detected_target_type:
                 target_type = detected_target_type
+                forwarded["_guardian_target_type"] = target_type
         if task == "watch_change":
             return action_watch_screen(forwarded)
         if target_type == "window":
@@ -6014,7 +6596,7 @@ def window_survey_status(window, include_visibility_probe):
                 states.append("possibly_occluded")
     if not states:
         states.append("ready")
-    return {
+    record = {
         "hwnd": window.get("hwnd"),
         "title": window.get("title"),
         "process_name": window.get("process_name"),
@@ -6026,6 +6608,32 @@ def window_survey_status(window, include_visibility_probe):
         "states": states,
         "visibility_probe": probe,
     }
+    record["evidence_chain"] = build_evidence_chain(
+        {"_guardian_tool": "guardian_survey_windows", "_guardian_intent": "window_status", "_guardian_target_type": "window"},
+        {"result_state": "status_only"},
+        {},
+        observation_kind="window_status",
+        route={
+            "requested_target": {"hwnd": window.get("hwnd"), "title": window.get("title"), "process_name": window.get("process_name")},
+            "substrate": "window_metadata",
+            "method": "enum_windows",
+            "source_type": "window_status",
+        },
+        residual={
+            "result_state": "status_only",
+            "content_available": False,
+            "filtered": [state for state in states if state != "ready"],
+            "activation_required": [],
+            "meta": {"visible_ratio": round(float(visible_ratio), 3), "visibility_probe_available": bool(probe.get("available"))},
+            "next_actions": [],
+        },
+        candidates={
+            "candidate_count": 1,
+            "selected": {"hwnd": window.get("hwnd"), "title": window.get("title"), "process_name": window.get("process_name")},
+            "states": states,
+        },
+    )
+    return record
 
 
 def apply_window_survey_budget(forwarded, context_budget, capture_mode):
@@ -6140,38 +6748,63 @@ def action_guardian_survey_windows(args):
                     record["capture"] = {"ok": False, "error": str(exc)}
         saved_count = sum(1 for item in captures if item.get("result", {}).get("path"))
         deferred_count = sum(1 for item in captures if item.get("result", {}).get("capture_deferred"))
-        return write_json(
-            {
-                "ok": True,
-                "capture_mode": capture_mode,
-                "windows_total": len(all_windows),
-                "windows_reported": len(records),
-                "window_limit": window_limit,
-                "capture_limit": capture_limit,
-                "saved_count": saved_count,
-                "deferred_count": deferred_count,
-                "error_count": len(capture_errors),
-                "windows": records,
-                "captures": captures,
-                "capture_errors": capture_errors,
-                "runtime_limits": {
-                    "window_survey_window_count_max": limits.get("window_survey_window_count_max"),
-                    "window_survey_capture_count_max": limits.get("window_survey_capture_count_max"),
-                },
-                "recommended_next": "Review windows first, then open only the relevant saved paths or retry individual capture_window calls with hwnd-specific settings.",
-                "privacy": "Local window enumeration and optional local captures only; no upload, model call, subagent call, or background monitor.",
-            }
+        payload = {
+            "ok": True,
+            "capture_mode": capture_mode,
+            "windows_total": len(all_windows),
+            "windows_reported": len(records),
+            "window_limit": window_limit,
+            "capture_limit": capture_limit,
+            "saved_count": saved_count,
+            "deferred_count": deferred_count,
+            "error_count": len(capture_errors),
+            "windows": records,
+            "captures": captures,
+            "capture_errors": capture_errors,
+            "runtime_limits": {
+                "window_survey_window_count_max": limits.get("window_survey_window_count_max"),
+                "window_survey_capture_count_max": limits.get("window_survey_capture_count_max"),
+            },
+            "recommended_next": "Review windows first, then open only the relevant saved paths or retry individual capture_window calls with hwnd-specific settings.",
+            "privacy": "Local window enumeration and optional local captures only; no upload, model call, subagent call, or background monitor.",
+        }
+        payload["evidence_chain"] = build_evidence_chain(
+            {"_guardian_tool": "guardian_survey_windows", "_guardian_intent": "window_survey", "_guardian_target_type": "windows", "context_policy": "hold_file" if capture_mode == "hold_file" else "return_path"},
+            {"result_state": "status_only" if capture_mode == "status_only" else "partial" if capture_errors or deferred_count else "saved", "recommended_next": payload["recommended_next"]},
+            {},
+            observation_kind="window_survey",
+            route={
+                "requested_target": {"limit": window_limit, "capture_limit": capture_limit, "capture_mode": capture_mode},
+                "substrate": "window_metadata" if capture_mode == "status_only" else "window_metadata+pixels",
+                "method": "enum_windows+optional_window_capture",
+                "source_type": "window_survey",
+            },
+            residual={
+                "result_state": "status_only" if capture_mode == "status_only" else "partial" if capture_errors or deferred_count else "saved",
+                "content_available": bool(saved_count),
+                "filtered": ["capture_errors"] if capture_errors else [],
+                "activation_required": ["review_saved_paths"] if saved_count else [],
+                "meta": {"windows_total": len(all_windows), "windows_reported": len(records), "saved_count": saved_count, "deferred_count": deferred_count, "error_count": len(capture_errors)},
+                "next_actions": [payload["recommended_next"]],
+            },
+            candidates={
+                "candidate_count": len(all_windows),
+                "reported_count": len(records),
+                "captured_count": len(captures),
+            },
+            temporal={"unit": "batch_snapshot", "capture_modes": [capture_mode], "freshness_claim": "per-window enumeration time and per-capture local file time"},
         )
+        return write_json(payload)
     except Exception as exc:
         return error(str(exc))
 
 
 def action_guardian_prepare_workflow(args):
     workflow_type = str(args.get("workflow_type") or "").strip().lower()
-    workflow_aliases = {"data": "data_layer_request", "data_layer": "data_layer_request"}
+    workflow_aliases = {"data": "data_layer_request", "data_layer": "data_layer_request", "sandbox": "sandbox_session"}
     workflow_type = workflow_aliases.get(workflow_type, workflow_type)
-    if workflow_type not in ("model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request"):
-        return error("workflow_type must be model_request, decision_request, monitor_tick, capture_chain, or data_layer_request")
+    if workflow_type not in ("model_request", "decision_request", "monitor_tick", "capture_chain", "data_layer_request", "sandbox_session"):
+        return error("workflow_type must be model_request, decision_request, monitor_tick, capture_chain, data_layer_request, or sandbox_session")
     settings = args.get("settings") if isinstance(args.get("settings"), dict) else {}
     objective = str(args.get("objective") or "").strip()
     source_path = str(args.get("source_path") or "").strip()
@@ -6249,6 +6882,25 @@ def action_guardian_prepare_workflow(args):
             if key in args:
                 forwarded[key] = args[key]
         return action_prepare_data_layer_request(forwarded)
+    if workflow_type == "sandbox_session":
+        forwarded = {
+            **common,
+            "objective": objective or "Prepare a hidden desktop sandbox session.",
+            "program": str(args.get("program") or settings.get("program") or ""),
+            "cwd": str(args.get("cwd") or settings.get("cwd") or ""),
+            "program_args": str(args.get("program_args") or settings.get("program_args") or ""),
+            "caller": str(args.get("caller") or settings.get("caller") or "external-caller"),
+        }
+        for key in ("session_id", "run_id", "ttl_seconds", "max_captures", "cleanup_tool"):
+            if key in args:
+                forwarded[key] = args[key]
+            elif key in settings:
+                forwarded[key] = settings[key]
+        if isinstance(settings.get("capture_args"), dict):
+            forwarded["capture_args"] = settings["capture_args"]
+        if isinstance(settings.get("cleanup"), dict):
+            forwarded["cleanup"] = settings["cleanup"]
+        return action_prepare_sandbox_session(forwarded)
     observations = {"objective": objective}
     if source_path:
         observations["source_path"] = source_path
@@ -7112,6 +7764,8 @@ ACTIONS = {
     "guardian_prepare_exec": action_guardian_prepare_exec,
     "guardian_run_exec": action_guardian_run_exec,
     "list_capture_routes": action_list_capture_routes,
+    "prepare_sandbox_session": action_prepare_sandbox_session,
+    "write_sandbox_ledger": action_write_sandbox_ledger,
     "prepare_capture_chain": action_prepare_capture_chain,
     "check": action_check,
     "get_runtime_settings": action_get_runtime_settings,

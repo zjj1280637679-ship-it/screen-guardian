@@ -10,6 +10,7 @@ Screen Guardian now separates capture intent into routes. This keeps the main AI
 | `application` | A specific Windows program, HWND, process, title, or bounded multi-window survey | Quiet-preferred by default. `background_mode="strict"` uses direct HWND graphics without visible-screen bbox fallback; best-effort mode can still return guarded fallback decisions. | `guardian_capture_targets`, `list_windows`, `capture_window`, `guardian_survey_windows` |
 | `webpage` | Browser-rendered viewport, element, or full scrollable webpage | Yes, when optional `webpage_capture` is enabled. Default status is inactive. | `prepare_webpage_capture`, `capture_webpage` |
 | `nested_scroll` | Admin tables, scrollable panels, and embedded iframes inside a page | Yes, through a headless browser route when `webpage_capture=true`. Default status is inactive. | `capture_webpage` with `mode="scroll_container"` |
+| `sandbox` | Background real-machine UI experiments, popup-heavy validation, and hidden desktop app instances | Yes, by isolation through an explicit hidden-desktop caller. | `prepare_sandbox_session`, then `screen_organ.sandbox_launch`, `screen_organ.sandbox_list`, `screen_organ.capture_screen`, optional `capture_window`, cleanup, and `write_sandbox_ledger` |
 | `mixed` or `auto` | A caller wants a route plan before choosing exact tools | Depends on selected steps. | `prepare_capture_chain` |
 
 Use `guardian_capture_targets` when the AI needs concrete capturable targets before taking any screenshot. Use `list_capture_routes` when the AI is unsure which route family to choose.
@@ -29,6 +30,57 @@ Use `quiet_preferred=false` only when the user accepts visible-screen fallback b
 For one-shot application captures, `guardian_perceive` can stack pre-capture modes such as `delay`, `wait_render`, `wait_buffer`, and `wait_error`. These are bounded foreground conditions for one capture call, not a hidden background monitor.
 
 Webpage capture is a browser-rendered route. It does not need the page to be in the desktop foreground. It navigates an explicit URL with an optional Playwright/Chromium adapter, then captures the viewport, full page, element, or nested scroll container. `list_capture_routes` reports `webpage.active=false` and `nested_scroll.active=false` until the persistent `webpage_capture` feature flag is enabled and optional Playwright dependencies are installed.
+
+## Sandbox Route
+
+The `sandbox` route is for real-machine validation that should not disturb the
+user's foreground desktop. It is a hidden-desktop route, not a normal visible
+desktop screenshot. The intended caller launches a target program in a hidden
+desktop sandbox, lists the sandbox windows, captures bounded evidence from the
+target HWND, and writes a compact ledger.
+
+Screen Guardian does not launch sandbox programs by itself. It prepares the
+session, context markers, hold-file capture settings, lifecycle contract, and
+ledger template. A separate explicit caller, such as
+`screen_organ.sandbox_launch` and `screen_organ.sandbox_list`, owns the hidden
+desktop lifecycle.
+
+Use `prepare_sandbox_session` when a real run is expected. It writes a
+`sandbox_session_request` and a `screen-guardian-sandbox-ledger/v1` template.
+The required phases are:
+
+- `launch`: call the external hidden-desktop launcher with the prepared program,
+  cwd, and args.
+- `list`: collect sandbox HWND/title/rect records.
+- `capture`: save bounded sandbox captures, preferably through
+  `screen_organ.capture_screen` with `context="sandbox"` and
+  `source="composite"`.
+- `stop`: close or stop owned sandbox resources through an explicit external
+  cleanup method.
+- `ledger`: write pid/window/capture/cleanup/verdict fields before returning a
+  compact summary to the main channel.
+
+When `sandbox_list` returns a hidden-desktop HWND, pass that whole window record
+to `capture_window` as `window_record` and set `desktop_context="sandbox"`.
+This lets Screen Guardian treat the external sandbox caller as the window truth
+source instead of rejecting the HWND because it is absent from the main desktop
+enumerator. Sandbox context disables visible-screen bbox fallback; if direct
+HWND capture cannot produce a trustworthy frame, record that as a blocked or
+failed sandbox capture instead of capturing foreground desktop pixels.
+
+Use `write_sandbox_ledger` after cleanup. It validates and writes a
+`screen-guardian-sandbox-ledger/v1` record. A `pass` verdict must include
+successful launch, at least one capture record, `stop_attempted=true`,
+`stop_ok=true`, and no leftover owned processes.
+
+If no cleanup adapter is available, the prepared session records
+`external_caller_stop_required`; the caller still has to mark `stop_attempted`,
+`stop_ok`, and any `leftover_processes` in the ledger.
+
+Use this route when many real-machine checks would otherwise create popups,
+focus stealing, or front-channel noise. Keep captures bounded and prefer
+`context_policy="hold_file"` so the main AI channel receives paths and summary
+metadata rather than every frame.
 
 ## Nested Scroll Containers
 
@@ -62,6 +114,7 @@ If the panel is too tall or needs too many segments, Screen Guardian returns a d
 - wait until a webpage selector appears, then capture a nested scroll table
 - detect an error feature, then prepare a model request
 - route a capture result to a decision policy or future subagent
+- run a hidden desktop sandbox experiment and record only bounded evidence
 
 Example:
 
@@ -90,6 +143,12 @@ Example:
 ```
 
 This is prepare-only. It does not execute screenshots, browser navigation, scripts, APIs, subagents, or background schedulers from the envelope. A caller can later consume the plan and run explicit tools under the same feature flags and runtime limits.
+
+For `route="sandbox"`, this also means Screen Guardian does not launch or keep
+the hidden desktop alive. Prefer `prepare_sandbox_session` for executable
+session plans. If a generic capture chain is used instead, the caller must still
+return a ledger with sandbox pid/window ids, capture paths, cleanup result, and
+a short summary.
 
 ## Boundary
 
