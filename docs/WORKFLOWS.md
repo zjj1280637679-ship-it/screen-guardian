@@ -1,6 +1,6 @@
 # Workflow Interface
 
-Screen Guardian `0.1.14` keeps the workflow layer flexible without turning the plugin into a background service.
+Screen Guardian `0.1.15` keeps the workflow layer flexible without turning the plugin into a background service.
 
 For AI agents, start with the default AI-first facade tools: `guardian_check`, `guardian_radar`, `guardian_extract_page_facts`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. They reduce tool-choice overhead by mapping common intents to the existing core capture tools without expanding permissions or starting hidden work.
 

@@ -57,7 +57,17 @@ privacy
 | Adapter | Role | Dependencies | Status |
 | --- | --- | --- | --- |
 | `python-mss` | Lightweight screenshot fallback | `mss`, `Pillow` | Implemented |
-| `pillow-window` | Best-effort visible window capture | `Pillow`, Windows `user32` | Implemented |
+| `pillow-window` | Best-effort HWND/client-area capture | `Pillow>=11.2.1`, Windows `user32` | Implemented |
+
+### Window readiness and coordinates (0.1.15)
+
+The Windows `window=HWND` parameter was added in [Pillow 11.2.1](https://pillow.readthedocs.io/en/stable/reference/ImageGrab.html). Install `scripts/requirements.txt` into the interpreter selected by `SCREEN_GUARDIAN_PYTHON`; installing dependencies into a different Python does not fix that MCP runtime.
+
+`guardian_check` includes `window_capture_ready` and `window_adapter` even in short mode. The window probe checks the platform, imports, and the actual `ImageGrab.grab` signature. `probe.capture_tested=false` means readiness is a capability check, not proof that a particular window will produce usable pixels. Run a bounded capture to verify the target.
+
+Direct Pillow HWND capture returns the client area. Its `source.image_space` is `window_client`, and `capture_box` uses `window.client_rect`. Quality checks sample that image directly. A visible bbox fallback uses `window_outer` and the outer `window.rect` instead. Without a client origin, direct capture keeps `capture_box` unset and `coordinate_mapping.available=false`; it never substitutes the outer origin.
+
+Saved window results and metadata sidecars include `coordinate_mapping`. Convert a saved-image point with `desktop = origin + saved_image_pixel * desktop_units_per_saved_pixel`, independently for x and y. The scales use the final saved dimensions, including integer rounding during resizing. `original_size` describes the acquired image and `saved_size` describes the file.
 
 ## Workflow And Context Strategy
 

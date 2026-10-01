@@ -39,6 +39,16 @@ You can run the encoding guard directly:
 npm run check:encoding
 ```
 
+## Window Capture Regression Tests
+
+After installing `scripts/requirements.txt` into the selected Python, run:
+
+```powershell
+python -m unittest discover -s tests -p test_window_capture.py
+```
+
+These tests simulate capture calls and check unsupported Pillow APIs, platform/dependency readiness, direct HWND client geometry, visible fallback geometry, missing client origins, and coordinate metadata after resizing. They do not activate windows, send UI input, or take real screenshots. Follow with an explicitly scoped MCP screen/window capture to verify the actual Windows backends.
+
 ## Stress Test
 
 Run:
