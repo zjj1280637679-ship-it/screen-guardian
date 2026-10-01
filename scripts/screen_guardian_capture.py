@@ -4,6 +4,7 @@ import array
 import copy
 import difflib
 import hashlib
+import inspect
 import json
 import locale
 import math
@@ -1027,13 +1028,28 @@ def mss_adapter_status():
 
 def window_adapter_status():
     libs, import_error = import_capture_libs()
-    available = os.name == "nt" and import_error is None
+    window_supported = False
+    probe_error = ""
+    if import_error is None:
+        try:
+            window_supported = "window" in inspect.signature(libs["ImageGrab"].grab).parameters
+        except (TypeError, ValueError) as exc:
+            probe_error = str(exc)
+    available = os.name == "nt" and import_error is None and window_supported
     status = {
         "id": "pillow-window",
         "label": "Pillow Window Capture",
         "role": "window_capture",
         "priority": 20,
         "available": available,
+        "dependencies_importable": import_error is None,
+        "minimum_pillow_version": "11.2.1",
+        "probe": {
+            "kind": "platform_and_callable_signature",
+            "window_parameter_supported": window_supported,
+            "capture_tested": False,
+            "note": "Readiness checks dependencies and HWND API support only; actual pixels require a capture call.",
+        },
         "dependencies": ["Pillow", "Windows user32"],
         "capabilities": ["guardian_capture_targets", "list_windows", "capture_window", "strict_background_mode", "non_topmost_best_effort", "no_foreground_activation", "quiet_preferred_default"],
         "compatibility_note": "Best-effort HWND capture. The adapter does not activate or raise the target window. Strict background mode disables visible-screen bbox fallback; some GPU, minimized, protected, or occluded windows may return blank, stale, or decision-only frames.",
@@ -1042,6 +1058,14 @@ def window_adapter_status():
         status["import_error"] = "Window capture is currently Windows-only."
     elif import_error:
         status["import_error"] = import_error
+    elif not window_supported:
+        status["import_error"] = "Pillow HWND capture requires ImageGrab.grab(window=...), available since Pillow 11.2.1."
+        if probe_error:
+            status["probe"]["error"] = probe_error
+    if libs:
+        status["versions"] = {"Pillow": getattr(libs["Image"], "__version__", "unknown")}
+    if not available and os.name == "nt":
+        status["install_hint"] = f"{sys.executable} -m pip install --upgrade -r scripts/requirements.txt"
     return status, libs
 
 
@@ -1386,6 +1410,29 @@ def mirror_media_file(output_path, metadata, args):
     return mirror_paths, mirror_metadata_paths
 
 
+def window_coordinate_mapping(source, saved_size):
+    if source.get("type") != "window":
+        return None
+    box = source.get("capture_box") or {}
+    width, height = saved_size
+    if not box or width <= 0 or height <= 0:
+        return {"available": False, "reason": "missing_window_capture_geometry"}
+    if int(box.get("width", 0)) <= 0 or int(box.get("height", 0)) <= 0:
+        return {"available": False, "reason": "invalid_window_capture_geometry"}
+    return {
+        "available": True,
+        "image_space": source.get("image_space"),
+        "coordinate_space": "virtual_desktop_absolute",
+        "origin": {"x": box["left"], "y": box["top"]},
+        "desktop_units_per_saved_pixel": {
+            "x": box["width"] / float(width),
+            "y": box["height"] / float(height),
+        },
+        "saved_size": {"width": width, "height": height},
+        "formula": "desktop = origin + saved_image_pixel * desktop_units_per_saved_pixel",
+    }
+
+
 def save_capture_image(image, source, libs, args):
     render_guard = render_guard_status(source, args)
     fmt = normalized_format(args.get("format", "png"))
@@ -1455,6 +1502,9 @@ def save_capture_image(image, source, libs, args):
         },
         "privacy": "Saved locally only.",
     }
+    coordinate_mapping = window_coordinate_mapping(source, processed.size)
+    if coordinate_mapping is not None:
+        metadata["coordinate_mapping"] = coordinate_mapping
     preliminary_result = {
         "saved": True,
         "result_state": "saved",
@@ -1508,6 +1558,8 @@ def save_capture_image(image, source, libs, args):
         "cursor_included": False,
         "privacy": "Saved locally only.",
     }
+    if coordinate_mapping is not None:
+        result["coordinate_mapping"] = coordinate_mapping
     if metadata["context"]["marked_file_only"]:
         result["context_delivery"] = "file_marked_only"
         result["note"] = "Capture was saved with metadata. Send the file or analysis explicitly when needed."
@@ -1954,7 +2006,10 @@ def image_blank_metrics(image, libs):
     }
 
 
-def window_client_crop_box(image, window):
+def window_client_crop_box(image, window, image_space="window_outer"):
+    if image_space == "window_client":
+        width, height = image.size
+        return (0, 0, width, height) if width > 32 and height > 32 else None
     rect = window.get("rect") if isinstance(window.get("rect"), dict) else {}
     client = window.get("client_rect") if isinstance(window.get("client_rect"), dict) else {}
     if not rect or not client:
@@ -1972,8 +2027,8 @@ def window_client_crop_box(image, window):
     return (left, top, right, bottom)
 
 
-def window_client_content_status(image, libs, window):
-    box = window_client_crop_box(image, window)
+def window_client_content_status(image, libs, window, image_space="window_outer"):
+    box = window_client_crop_box(image, window, image_space=image_space)
     if not box:
         return {"available": False, "reason": "missing_or_too_small_client_rect", "client_rect": window.get("client_rect") or {}}
     client_image = image.crop(box)
@@ -1984,6 +2039,7 @@ def window_client_content_status(image, libs, window):
     low_information = bool(metrics.get("likely_blank", False))
     return {
         "available": True,
+        "image_space": image_space,
         "client_crop_box": {"left": box[0], "top": box[1], "right": box[2], "bottom": box[3], "width": box[2] - box[0], "height": box[3] - box[1]},
         "client_area_ratio": round(client_area / float(image_area), 3),
         "client_metrics": metrics,
@@ -3088,7 +3144,7 @@ def grab_window_once(args, status, libs, window):
     direct_hwnd_error = ""
     try:
         image = libs["ImageGrab"].grab(window=hwnd)
-        direct_content_status = window_client_content_status(image.convert("RGB"), libs, window)
+        direct_content_status = window_client_content_status(image.convert("RGB"), libs, window, image_space="window_client")
         direct_black = image_looks_black(image, libs)
         direct_client_low_info = bool(direct_content_status.get("client_low_information", False))
         if fallback_allowed and (direct_black or direct_client_low_info):
@@ -3166,7 +3222,9 @@ def grab_window_once(args, status, libs, window):
         "desktop_context": desktop_context,
         "window": window,
         "virtual_screen": virtual_screen_rect(),
-        "capture_box": window.get("rect"),
+        "image_space": "window_outer" if visible_fallback_used else "window_client",
+        "coordinate_space": "virtual_desktop_absolute" if visible_fallback_used or window.get("client_rect") else "window_client_local",
+        "capture_box": window.get("rect") if visible_fallback_used else window.get("client_rect"),
         "direct_window_content": direct_content_status,
         "compatibility_note": "HWND capture is best-effort and does not activate or raise the target window. Strict background mode avoids visible-screen fallback but may return a decision when the app exposes only blank, stale, protected, or GPU-rendered client pixels. Sandbox context disables visible-screen bbox fallback because main-desktop pixels are not sandbox truth.",
     }
@@ -4792,6 +4850,8 @@ def action_guardian_check(args):
         "ok": True,
         "plugin": PLUGIN_NAME,
         "capture_ready": capture_ready,
+        "window_capture_ready": bool(flags.get("window_capture") and window_status.get("available")),
+        "window_adapter": window_status,
         "best_adapter": best_adapter,
         "python": sys.executable,
         "active_cache_dir": str(primary),

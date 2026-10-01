@@ -1,6 +1,6 @@
 {
   "name": "screen-guardian",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Ultra-light compatibility-first AI screen access with fallback adapters.",
   "private": false,
   "license": "MIT",
@@ -14,6 +14,7 @@
     "target-range": "python ./scripts/target_range_server.py",
     "target-range:check": "python ./scripts/target_range_server.py --self-test",
     "validate": "python ./scripts/validate_contracts.py",
+    "test:window": "python -m unittest discover -s tests -p test_window_capture.py",
     "stress": "python ./scripts/validate_contracts.py --stress",
     "smoke:windows": "python ./scripts/windows_smoke_test.py"
   }

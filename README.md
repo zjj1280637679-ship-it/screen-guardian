@@ -4,6 +4,8 @@
 
 Screen Guardian is a lightweight local screenshot plugin for Codex on Windows.
 
+Current version: **0.1.15**. See [CHANGELOG.md](CHANGELOG.md) for the Windows capture compatibility fixes.
+
 It is meant to provide compatibility-first capability infrastructure for personal AI.
 
 For Codex, start with `guardian_check`, `guardian_radar`, `guardian_extract_page_facts`, `guardian_capture_targets`, `guardian_sniff_context`, `guardian_perceive`, and `guardian_survey_windows`. Use the older low-level tools only when exact adapter, storage, limit, audio, or envelope control is needed.

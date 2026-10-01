@@ -5,7 +5,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 
 const SERVER_NAME = "screen-guardian";
-const SERVER_VERSION = "0.1.14";
+const SERVER_VERSION = "0.1.15";
 const ROOT = path.resolve(__dirname, "..");
 const CAPTURE_SCRIPT_NAME = "screen_guardian_capture.py";
 const HELPER_EXE_NAME = "screen-guardian-helper.exe";
